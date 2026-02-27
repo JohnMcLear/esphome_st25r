@@ -47,6 +47,10 @@ bool ST25R3916::reset_() {
   this->write_register_(MODE, 0x08); 
   this->write_register_(BIT_RATE, 0x00); 
 
+  // Enable regulators and adjust receiver
+  this->write_register_(ST25R3916Register::RX_CONF1, 0x04);
+  this->write_register_(ST25R3916Register::RX_CONF2, 0x2D);
+
   this->field_on_();
   return true;
 }
@@ -54,31 +58,41 @@ bool ST25R3916::reset_() {
 void ST25R3916::update() {
   if (this->is_failed()) return;
 
-  // ISO14443A Poll using built-in REQA command
+  // Manual ISO14443A REQA Poll
   this->write_command_(ST25R3916_CMD_CLEAR_FIFO);
-  
-  // Clear any pending IRQs
   this->read_register_(ST25R3916Register::IRQ_MAIN);
   
-  // Command 0xC6 is CMD_TRANSMIT_REQA
-  this->write_command_(0xC6); 
+  uint8_t reqa = 0x26;
+  this->write_fifo_(&reqa, 1);
+  
+  // Set 7-bit framing for REQA
+  this->write_register_(NUM_TX_BYTES2, 0x80); 
+  this->write_register_(NUM_TX_BYTES1, 0x00);
+  
+  this->write_command_(ST25R3916_CMD_TRANSMIT_WITHOUT_CRC);
   delay(20);
 
   uint8_t fifo_status = this->read_register_(FIFO_STATUS1);
   if (fifo_status > 0) {
-    ESP_LOGI(TAG, "Tag detected! Reading UID...");
+    ESP_LOGI(TAG, "Tag response detected! FIFO size: %d", fifo_status);
     
-    // Simplistic UID read for verification
-    uint8_t resp[10];
-    this->read_fifo_(resp, 10);
+    uint8_t resp[16];
+    size_t len = (fifo_status > 16) ? 16 : fifo_status;
+    this->read_fifo_(resp, len);
     
+    // Extract UID bytes (shifted)
+    uint8_t uid[4];
+    for (int i = 0; i < 4; i++) {
+      uid[i] = (uint8_t)(resp[i] >> this->bit_shift_);
+    }
+
     char uid_str[30];
-    snprintf(uid_str, 30, "%02X-%02X-%02X-%02X", resp[0], resp[1], resp[2], resp[3]);
-    ESP_LOGI(TAG, "New Tag Found: %s", uid_str);
+    snprintf(uid_str, 30, "%02X-%02X-%02X-%02X", uid[0], uid[1], uid[2], uid[3]);
     
     if (this->current_uid_ != uid_str) {
       this->current_uid_ = uid_str;
       this->tag_present_ = true;
+      ESP_LOGI(TAG, "Tag Found! UID: %s", uid_str);
       for (auto *trigger : this->on_tag_triggers_) {
         trigger->trigger(uid_str);
       }
@@ -123,17 +137,17 @@ void ST25R3916::read_fifo_(uint8_t *data, size_t len) {
   this->enable();
   this->write_byte((uint8_t)(0xBF << this->bit_shift_));
   for (size_t i = 0; i < len; i++) {
-    data[i] = (uint8_t)(this->read_byte() >> this->bit_shift_);
+    data[i] = this->read_byte();
   }
   this->disable();
 }
 
 void ST25R3916::field_on_() {
-  this->write_register_(OP_CONTROL, 0x80); // OSC ON
+  this->write_register_(OP_CONTROL, 0x80); 
   delay(10);
-  this->write_command_(0xC8); // INITIAL_FIELD_ON
+  this->write_command_(0xC8); 
   delay(10);
-  this->write_register_(OP_CONTROL, 0xC0); // OSC + TX ON
+  this->write_register_(OP_CONTROL, 0xC0); 
 }
 
 void ST25R3916::dump_config() {
