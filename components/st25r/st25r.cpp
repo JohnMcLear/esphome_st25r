@@ -75,7 +75,7 @@ void ST25R::update() {
   this->write_command(ST25R_CMD_TRANSMIT_WUPA);
   
   // Wait for IRQ (up to 10ms for ATQA)
-  bool tag_found = this->wait_for_irq_(0x40, 10); // 0x40 = TX end / RX start or similar mask
+  bool tag_found = this->wait_for_irq_(0xF8, 10); // 0xF8 = most common interrupt bits
 
   if (tag_found) {
     this->read_register(IRQ_MAIN);
@@ -129,7 +129,7 @@ std::string ST25R::read_uid_() {
     this->write_register(NUM_TX_BYTES2, 0x10); 
     this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
     
-    if (!this->wait_for_irq_(0x40, 20)) break;
+    if (!this->wait_for_irq_(0xF8, 20)) break;
 
     this->read_register(IRQ_MAIN);
     uint8_t f1 = this->read_register(FIFO_STATUS1);
@@ -150,7 +150,7 @@ std::string ST25R::read_uid_() {
       this->write_register(NUM_TX_BYTES1, 0x00);
       this->write_register(NUM_TX_BYTES2, 0x38); 
       this->write_command(ST25R_CMD_TRANSMIT_WITH_CRC);
-      this->wait_for_irq_(0x40, 10);
+      this->wait_for_irq_(0xF8, 10);
       this->read_register(IRQ_MAIN);
     } else {
       for(int i=0; i<4; i++) {
@@ -170,9 +170,10 @@ bool ST25R::wait_for_irq_(uint8_t mask, uint32_t timeout_ms) {
     if (this->irq_pin_ != nullptr) {
       if (this->irq_pin_->digital_read()) return true;
     } else {
-      if (this->read_register(IRQ_MAIN) & mask) return true;
+      uint8_t irq = this->read_register(IRQ_MAIN);
+      if (irq & mask) return true;
     }
-    yield();
+    delay(1);
   }
   return false;
 }
