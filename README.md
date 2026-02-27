@@ -3,7 +3,15 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![ESPHome](https://img.shields.io/badge/ESPHome-compatible-green.svg)](https://esphome.io)
 
-An ESPHome component for the ST Microelectronics ST25R3916(B) NFC reader IC, supporting ISO14443A/B, NFC-A/B/F/V protocols.
+An ESPHome component for the STMicroelectronics ST25R3916 family of NFC reader ICs.
+
+## Supported Units
+
+This component supports the following STMicroelectronics NFC ICs:
+
+- **ST25R3916 / ST25R3916B**: High-performance NFC universal device.
+- **ST25R3917 / ST25R3917B**: Reduced feature set version of the 3916.
+- **ST25R3919 / ST25R3920**: Automotive grade versions.
 
 ## Features
 
@@ -356,7 +364,7 @@ If tags are detected intermittently or incorrectly:
 
 ### Chip Information
 
-- **Chip**: ST25R3916 / ST25R3916B
+- **Chips**: ST25R3916, ST25R3916B, ST25R3917, ST25R3919, ST25R3920
 - **Manufacturer**: STMicroelectronics
 - **Interface**: SPI (up to 10 MHz)
 - **Supported Protocols**:
