@@ -23,13 +23,13 @@ external_components:
     components: [st25r3916]
 
 spi:
-  clk_pin: GPIO18
-  miso_pin: GPIO19
-  mosi_pin: GPIO23
+  clk_pin: GPIO19
+  miso_pin: GPIO20
+  mosi_pin: GPIO18
 
 st25r3916:
   id: my_st25r
-  cs_pin: GPIO5
+  cs_pin: GPIO9
   irq_pin: GPIO21
   update_interval: 1s
   on_tag:

@@ -19,37 +19,37 @@ void ST25RSpi::dump_config() {
 
 uint8_t ST25RSpi::read_register(uint8_t reg) {
   this->enable();
-  this->transfer_byte(0x40 | (reg & 0x3F));
-  uint8_t value = this->transfer_byte(0x00);
+  this->write_byte(0x40 | (reg & 0x3F));
+  uint8_t value = this->read_byte();
   this->disable();
   return value;
 }
 
 void ST25RSpi::write_register(uint8_t reg, uint8_t value) {
   this->enable();
-  this->transfer_byte(0x00 | (reg & 0x3F));
-  this->transfer_byte(value);
+  this->write_byte(0x00 | (reg & 0x3F));
+  this->write_byte(value);
   this->disable();
 }
 
 void ST25RSpi::write_command(uint8_t command) {
   this->enable();
-  this->transfer_byte(0xC0 | (command & 0x3F));
+  this->write_byte(0xC0 | (command & 0x3F));
   this->disable();
 }
 
 void ST25RSpi::write_fifo(const uint8_t *data, size_t len) {
   this->enable();
-  this->transfer_byte(0x80);
-  this->transfer_array(data, len);
+  this->write_byte(0x80);
+  this->write_array(data, len);
   this->disable();
 }
 
 void ST25RSpi::read_fifo(uint8_t *data, size_t len) {
   this->enable();
-  this->transfer_byte(0xBF);
+  this->write_byte(0xBF);
   for (size_t i = 0; i < len; i++) {
-    data[i] = this->transfer_byte(0x00);
+    data[i] = this->read_byte();
   }
   this->disable();
 }
