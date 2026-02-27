@@ -14,7 +14,7 @@ void ST25RSpi::setup() {
 
 void ST25RSpi::dump_config() {
   this->ST25R::dump_config();
-  LOG_PIN("  CS Pin: ", this->cs_pin_);
+  LOG_PIN("  CS Pin: ", this->cs_);
 }
 
 uint8_t ST25RSpi::read_register(uint8_t reg) {

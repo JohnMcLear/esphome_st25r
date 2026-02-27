@@ -20,17 +20,16 @@ external_components:
   - source:
       type: local
       path: components
-    components: [st25r3916]
+    components: [st25r, st25r_spi]
 
 spi:
   clk_pin: GPIO19
   miso_pin: GPIO20
   mosi_pin: GPIO18
 
-st25r3916:
+st25r_spi:
   id: my_st25r
   cs_pin: GPIO9
-  irq_pin: GPIO21
   update_interval: 1s
   on_tag:
     then:
@@ -39,7 +38,7 @@ st25r3916:
           args: ['x.c_str()']
 
 binary_sensor:
-  - platform: template
-    name: "Tag Present"
-    lambda: |-
-      return id(my_st25r)->is_tag_present();
+  - platform: st25r
+    st25r_id: my_st25r
+    name: "Test Tag"
+    uid: "01-02-03-04"
