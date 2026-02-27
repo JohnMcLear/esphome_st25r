@@ -1,288 +1,63 @@
-# Advanced ESPHome configuration for ST25R3916 NFC Reader
-# Access control system with multiple authorized tags
+# Advanced ESPHome configuration for ST25R NFC Reader
+# Implementation of an Access Control System
 
 esphome:
-  name: nfc-access-control
-  platform: ESP32
-  board: esp32dev
-  
-  # Custom C++ code for tag authorization
-  includes:
-    - authorized_tags.h
+  name: st25r-access-control
+  friendly_name: ST25R Access Control
+
+esp32:
+  board: esp32-c6-devkitc-1
+  variant: esp32c6
 
 logger:
   level: INFO
 
-api:
-  encryption:
-    key: "your-encryption-key-here"
-
-ota:
-  password: "your-ota-password-here"
-
 wifi:
-  ssid: "YourWiFiSSID"
-  password: "YourWiFiPassword"
-  ap:
-    ssid: "NFC Access Control"
-    password: "fallback-password"
+  ssid: "WIFI_SSID"
+  password: "WIFI_PASSWORD"
 
-captive_portal:
-web_server:
+external_components:
+  - source: github://JohnMcLear/esphome-st25r
+    components: [ st25r, st25r_spi, st25r_i2c ]
 
-# Time sync
-time:
-  - platform: homeassistant
-    id: homeassistant_time
-
-# SPI Configuration
+# Enable SPI bus
 spi:
-  clk_pin: GPIO18
-  mosi_pin: GPIO23
-  miso_pin: GPIO19
+  clk_pin: GPIO19
+  mosi_pin: GPIO10
+  miso_pin: GPIO18
 
-# ST25R3916 NFC Reader
-st25r3916:
-  cs_pin: GPIO5
-  irq_pin: GPIO21
-  reset_pin: GPIO22
+# ST25R NFC Reader via SPI
+st25r_spi:
+  id: nfc_reader
+  cs_pin: GPIO7
+  irq_pin: GPIO6
   update_interval: 500ms
   
   on_tag:
-    # Log detection
-    - logger.log:
-        format: "Tag detected: %s"
-        args: [ 'x.c_str()' ]
-        level: INFO
-    
-    # Check authorization
     - lambda: |-
-        // List of authorized UIDs
-        static const std::vector<std::string> authorized_tags = {
-          "04A1B2C3D4E5F0",  // Admin card
-          "04B1C2D3E4F5A0",  // User 1
-          "04C1D2E3F4A5B0",  // User 2
-          "04D1E2F3A4B5C0",  // User 3
+        // List of authorized UIDs (Hex format without separators)
+        std::vector<std::string> authorized = {
+          "041AA7675F6180",
+          "01020304"
         };
         
-        // Check if tag is authorized
-        bool is_authorized = false;
-        std::string tag_name = "Unknown";
-        
-        if (x == "04A1B2C3D4E5F0") {
-          is_authorized = true;
-          tag_name = "Admin";
-        } else if (x == "04B1C2D3E4F5A0") {
-          is_authorized = true;
-          tag_name = "Alice";
-        } else if (x == "04C1D2E3F4A5B0") {
-          is_authorized = true;
-          tag_name = "Bob";
-        } else if (x == "04D1E2F3A4B5C0") {
-          is_authorized = true;
-          tag_name = "Charlie";
-        }
-        
-        // Update sensors
-        id(last_tag_uid).publish_state(x);
-        id(last_tag_name).publish_state(tag_name);
-        id(access_granted_sensor).publish_state(is_authorized);
-        
-        if (is_authorized) {
-          ESP_LOGI("access", "Access GRANTED for %s (UID: %s)", tag_name.c_str(), x.c_str());
-          
-          // Unlock door
+        if (std::find(authorized.begin(), authorized.end(), x) != authorized.end()) {
+          ESP_LOGI("access", "Access GRANTED for Tag: %s", x.c_str());
           id(door_lock).turn_on();
-          
-          // Beep success
-          id(buzzer).turn_on();
-          delay(100);
-          id(buzzer).turn_off();
-          
-          // Green LED
-          id(led_green).turn_on();
-          
-          // Send notification to Home Assistant
-          id(access_log).publish_state(tag_name + " granted access");
-          
         } else {
-          ESP_LOGE("access", "Access DENIED for unknown tag: %s", x.c_str());
-          
-          // Beep error (3 short beeps)
-          for (int i = 0; i < 3; i++) {
-            id(buzzer).turn_on();
-            delay(100);
-            id(buzzer).turn_off();
-            delay(100);
-          }
-          
-          // Red LED
-          id(led_red).turn_on();
-          
-          // Log unauthorized access attempt
-          id(access_log).publish_state("Unauthorized: " + x);
+          ESP_LOGW("access", "Access DENIED for Tag: %s", x.c_str());
         }
-    
-    # Send event to Home Assistant
-    - homeassistant.event:
-        event: esphome.nfc_access_event
-        data:
-          uid: !lambda 'return x;'
-          reader: "front_door"
-          authorized: !lambda |-
-            static const std::vector<std::string> authorized = {
-              "04A1B2C3D4E5F0", "04B1C2D3E4F5A0",
-              "04C1D2E3F4A5B0", "04D1E2F3A4B5C0"
-            };
-            return std::find(authorized.begin(), authorized.end(), x) != authorized.end();
-  
-  on_tag_removed:
-    - logger.log:
-        format: "Tag removed: %s"
-        args: [ 'x.c_str()' ]
-    
-    # Turn off LEDs after delay
-    - delay: 3s
-    - switch.turn_off: led_green
-    - switch.turn_off: led_red
-    
-    # Auto-lock after 5 seconds
-    - delay: 2s
-    - switch.turn_off: door_lock
 
-# Text Sensors
-text_sensor:
-  - platform: template
-    name: "Last Tag UID"
-    id: last_tag_uid
-    icon: "mdi:nfc-variant"
-  
-  - platform: template
-    name: "Last Tag Name"
-    id: last_tag_name
-    icon: "mdi:account"
-  
-  - platform: template
-    name: "Access Log"
-    id: access_log
-    icon: "mdi:history"
-
-# Binary Sensors
-binary_sensor:
-  - platform: template
-    name: "Tag Present"
-    id: tag_present
-    device_class: presence
-  
-  - platform: template
-    name: "Access Granted"
-    id: access_granted_sensor
-    device_class: lock
-    icon: "mdi:lock-open"
-  
-  - platform: gpio
-    name: "Door Sensor"
-    id: door_sensor
-    pin:
-      number: GPIO25
-      mode: INPUT_PULLUP
-      inverted: true
-    device_class: door
-  
-  - platform: status
-    name: "Device Status"
-
-# Switches
+# Control a relay or electronic lock
 switch:
   - platform: gpio
     name: "Door Lock"
     id: door_lock
-    pin: GPIO16
-    restore_mode: ALWAYS_OFF
+    pin: GPIO15
     on_turn_on:
-      - logger.log: "Door unlocked"
       - delay: 5s
       - switch.turn_off: door_lock
-    on_turn_off:
-      - logger.log: "Door locked"
-  
-  - platform: gpio
-    name: "Green LED"
-    id: led_green
-    pin: GPIO17
-    internal: true
-  
-  - platform: gpio
-    name: "Red LED"
-    id: led_red
-    pin: GPIO19
-    internal: true
-  
-  - platform: gpio
-    name: "Buzzer"
-    id: buzzer
-    pin: GPIO26
-    internal: true
 
-# Sensors
-sensor:
-  - platform: wifi_signal
-    name: "WiFi Signal"
-    update_interval: 60s
-  
-  - platform: uptime
-    name: "Uptime"
-  
-  # Count successful access attempts
-  - platform: template
-    name: "Access Count"
-    id: access_count
-    icon: "mdi:counter"
-    accuracy_decimals: 0
-
-# Buttons
-button:
-  - platform: restart
-    name: "Restart Device"
-  
-  - platform: template
-    name: "Reset Access Count"
-    on_press:
-      - sensor.template.publish:
-          id: access_count
-          state: 0
-
-# Status LED
+# Status LEDs
 status_led:
-  pin:
-    number: GPIO2
-    inverted: false
-
-# Scripts
-script:
-  - id: grant_access
-    mode: restart
-    then:
-      - switch.turn_on: door_lock
-      - switch.turn_on: led_green
-      - rtttl.play: "success:d=4,o=5,b=100:16e6,16e6"
-      - delay: 5s
-      - switch.turn_off: door_lock
-      - switch.turn_off: led_green
-  
-  - id: deny_access
-    mode: restart
-    then:
-      - switch.turn_on: led_red
-      - rtttl.play: "error:d=4,o=5,b=100:8e,8e,8e"
-      - delay: 3s
-      - switch.turn_off: led_red
-
-# RTTTL Buzzer (optional, for tone feedback)
-rtttl:
-  output: buzzer_output
-
-output:
-  - platform: gpio
-    pin: GPIO26
-    id: buzzer_output
+  pin: GPIO8

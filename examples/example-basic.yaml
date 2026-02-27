@@ -1,138 +1,48 @@
-# Example ESPHome configuration for ST25R3916 NFC Reader
-# This example demonstrates basic tag detection and logging
-
+# Example ESPHome configuration for ST25R NFC Reader
 esphome:
-  name: st25r3916-nfc-reader
-  platform: ESP32
-  board: esp32dev
+  name: st25r-nfc-reader
+  friendly_name: ST25R NFC Reader
 
-# Enable logging
+esp32:
+  board: esp32-c6-devkitc-1
+  variant: esp32c6
+
 logger:
   level: DEBUG
 
-# Enable Home Assistant API
-api:
-  encryption:
-    key: "your-encryption-key-here"
-
-# Enable OTA updates
-ota:
-  password: "your-ota-password-here"
-
-# WiFi configuration
 wifi:
-  ssid: "YourWiFiSSID"
-  password: "YourWiFiPassword"
-  
-  # Fallback AP mode
-  ap:
-    ssid: "ST25R3916 Fallback"
-    password: "fallback-password"
+  ssid: "ST25R Fallback"
+  password: "PASSWORD"
 
-# Captive portal for fallback AP
-captive_portal:
+external_components:
+  - source: github://JohnMcLear/esphome-st25r
+    components: [ st25r, st25r_spi, st25r_i2c ]
 
-# Enable web server
-web_server:
-  port: 80
-
-# Configure SPI bus
+# Enable SPI bus
 spi:
-  clk_pin: GPIO18
-  mosi_pin: GPIO23
-  miso_pin: GPIO19
+  clk_pin: GPIO19
+  mosi_pin: GPIO10
+  miso_pin: GPIO18
 
-# Configure ST25R3916 NFC reader
-st25r3916:
-  cs_pin: GPIO5
-  irq_pin: GPIO21
-  reset_pin: GPIO22  # Optional, can be omitted
+# Configure ST25R NFC reader via SPI
+st25r_spi:
+  id: my_st25r
+  cs_pin: GPIO7
+  irq_pin: GPIO6
   update_interval: 1s
   
-  # Tag detection callback
+  # Tag detection triggers
   on_tag:
-    - logger.log:
-        format: "NFC Tag detected - UID: %s"
-        args: [ 'x.c_str()' ]
-    
-    - homeassistant.event:
-        event: esphome.nfc_tag_scanned
-        data:
-          uid: !lambda 'return x;'
-          device: "entrance_reader"
-          timestamp: !lambda 'return to_string(id(homeassistant_time).now().timestamp);'
-    
-    # Store in text sensor
-    - text_sensor.template.publish:
-        id: last_tag_scanned
-        state: !lambda 'return x;'
-    
-    # Update binary sensor
-    - binary_sensor.template.publish:
-        id: tag_present
-        state: ON
-  
-  # Tag removal callback
+    - lambda: |-
+        ESP_LOGI("main", "Tag detected: %s", x.c_str());
+        
   on_tag_removed:
-    - logger.log:
-        format: "NFC Tag removed - UID: %s"
-        args: [ 'x.c_str()' ]
-    
-    - homeassistant.event:
-        event: esphome.nfc_tag_removed
-        data:
-          uid: !lambda 'return x;'
-          device: "entrance_reader"
-    
-    - binary_sensor.template.publish:
-        id: tag_present
-        state: OFF
+    - lambda: |-
+        ESP_LOGI("main", "Tag removed: %s", x.c_str());
 
-# Time component (for timestamps)
-time:
-  - platform: homeassistant
-    id: homeassistant_time
-
-# Text sensor to display last scanned tag
-text_sensor:
-  - platform: template
-    name: "Last NFC Tag"
-    id: last_tag_scanned
-    icon: "mdi:nfc-variant"
-  
-  - platform: wifi_info
-    ip_address:
-      name: "IP Address"
-    ssid:
-      name: "Connected SSID"
-
-# Binary sensor for tag presence
+# Optional: Create a binary sensor for a specific tag
 binary_sensor:
-  - platform: template
-    name: "NFC Tag Present"
-    id: tag_present
-    device_class: presence
-    icon: "mdi:nfc"
-  
-  - platform: status
-    name: "Status"
-
-# Sensor for WiFi signal strength
-sensor:
-  - platform: wifi_signal
-    name: "WiFi Signal"
-    update_interval: 60s
-  
-  - platform: uptime
-    name: "Uptime"
-
-# Status LED
-status_led:
-  pin:
-    number: GPIO2
-    inverted: false
-
-# Button to restart device
-button:
-  - platform: restart
-    name: "Restart"
+  - platform: st25r
+    st25r_id: my_st25r
+    name: "Master Key"
+    uid: "04-1A-A7-67-5F-61-80"
