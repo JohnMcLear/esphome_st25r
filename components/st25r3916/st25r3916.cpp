@@ -82,7 +82,7 @@ void ST25R3916::update() {
     this->read_register_(IRQ_MAIN);
     uint8_t f1 = this->read_register_(FIFO_STATUS1);
     
-    if (f1 >= 2) { 
+    if (f1 > 0) { 
       std::string uid = this->read_uid_();
       if (!uid.empty()) {
         this->missed_updates_ = 0;
@@ -121,7 +121,6 @@ std::string ST25R3916::read_uid_() {
     this->write_command_(ST25R3916_CMD_CLEAR_FIFO);
     this->read_register_(IRQ_MAIN);
 
-    // Anticollision
     uint8_t cl[] = {sel_cmds[cascade], 0x20};
     this->write_fifo_(cl, 2);
     this->write_register_(NUM_TX_BYTES1, 0x00);
@@ -143,27 +142,20 @@ std::string ST25R3916::read_uid_() {
     this->read_fifo_(resp, 5);
 
     if (resp[0] == 0x88) {
-      // Cascade Tag - add next 3 bytes to UID
       for(int i=1; i<4; i++) {
         char buf[3];
         sprintf(buf, "%02X", resp[i]);
         full_uid += buf;
       }
-      // Select this cascade level to proceed to next
       this->write_command_(ST25R3916_CMD_CLEAR_FIFO);
       uint8_t sel_pk[7] = {sel_cmds[cascade], 0x70, resp[0], resp[1], resp[2], resp[3], resp[4]};
       this->write_fifo_(sel_pk, 7);
       this->write_register_(NUM_TX_BYTES1, 0x00);
-      this->write_register_(NUM_TX_BYTES2, 0x38); // 7 bytes = 56 bits
+      this->write_register_(NUM_TX_BYTES2, 0x38); 
       this->write_command_(ST25R3916_CMD_TRANSMIT_WITH_CRC);
-      
-      for (int i = 0; i < 10; i++) {
-        if (this->irq_pin_->digital_read()) break;
-        delay(1);
-      }
+      for (int i = 0; i < 10; i++) { if (this->irq_pin_->digital_read()) break; delay(1); }
       this->read_register_(IRQ_MAIN);
     } else {
-      // Final level - add all 4 bytes
       for(int i=0; i<4; i++) {
         char buf[3];
         sprintf(buf, "%02X", resp[i]);
@@ -207,7 +199,7 @@ void ST25R3916::write_fifo_(const uint8_t *data, size_t len) {
 
 void ST25R3916::read_fifo_(uint8_t *data, size_t len) {
   this->enable();
-  this->write_byte(0xBF);
+  this->write_byte(0x9F); // Standard FIFO read (no shift)
   for (size_t i = 0; i < len; i++) {
     data[i] = this->read_byte();
   }

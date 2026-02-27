@@ -37,6 +37,7 @@ enum ST25R3916Command : uint8_t {
   ST25R3916_CMD_SET_DEFAULT = 0xC1,
   ST25R3916_CMD_STOP_ALL = 0xC2,
   ST25R3916_CMD_CLEAR_FIFO = 0xC3,
+  ST25R3916_CMD_TRANSMIT_WITH_CRC = 0xC4,
   ST25R3916_CMD_TRANSMIT_WITHOUT_CRC = 0xC5,
   ST25R3916_CMD_TRANSMIT_REQA = 0xC6,
   ST25R3916_CMD_TRANSMIT_WUPA = 0xC7,
@@ -63,7 +64,7 @@ class ST25R3916TagRemovedTrigger : public Trigger<std::string> {
 
 class ST25R3916 : public PollingComponent,
                   public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARITY_LOW,
-                                        spi::CLOCK_PHASE_TRAILING, spi::DATA_RATE_200KHZ> {
+                                        spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_200KHZ> {
  public:
   void setup() override;
   void dump_config() override;
