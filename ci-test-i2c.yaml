@@ -30,8 +30,8 @@ i2c:
 st25r_i2c:
   id: st25r_board
   address: 0x50
+  irq_pin: GPIO4
   update_interval: 1s
-  rf_field_enabled: true
   on_tag:
     then:
       - logger.log:

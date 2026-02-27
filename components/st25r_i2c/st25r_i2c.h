@@ -7,10 +7,13 @@
 namespace esphome {
 namespace st25r_i2c {
 
-class ST25RI2C : public st25r::ST25R, public i2c::I2CDevice {
+class ST25RI2c : public st25r::ST25R, public i2c::I2CDevice {
  public:
   void setup() override;
   void dump_config() override;
+
+  using i2c::I2CDevice::read_register;
+  using i2c::I2CDevice::write_register;
 
  protected:
   uint8_t read_register(uint8_t reg) override;

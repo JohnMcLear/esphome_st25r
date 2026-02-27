@@ -21,14 +21,14 @@ external_components:
   - source:
       type: local
       path: components
-    components: [st25r3916]
+    components: [st25r, st25r_spi, st25r_i2c]
 
 spi:
   clk_pin: GPIO19
   miso_pin: GPIO10
   mosi_pin: GPIO18
 
-st25r3916:
+st25r_spi:
   id: my_st25r
   cs_pin: GPIO7
   irq_pin: GPIO6

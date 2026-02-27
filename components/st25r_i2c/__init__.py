@@ -9,12 +9,12 @@ DEPENDENCIES = ["i2c"]
 MULTI_CONF = True
 
 st25r_i2c_ns = cg.esphome_ns.namespace("st25r_i2c")
-ST25RI2C = st25r_i2c_ns.class_("ST25RI2C", st25r.ST25R, i2c.I2CDevice)
+ST25RI2c = st25r_i2c_ns.class_("ST25RI2c", st25r.ST25R, i2c.I2CDevice)
 
 CONFIG_SCHEMA = cv.All(
     st25r.ST25R_SCHEMA.extend(
         {
-            cv.GenerateID(): cv.declare_id(ST25RI2C),
+            cv.GenerateID(): cv.declare_id(ST25RI2c),
         }
     ).extend(i2c.i2c_device_schema(0x50))
 )

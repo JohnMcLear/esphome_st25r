@@ -1,47 +1,86 @@
 #pragma once
 
 #include "esphome/core/component.h"
-#include "esphome/core/automation.h"
 #include "esphome/core/hal.h"
+#include "esphome/core/automation.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
-#include "esphome/components/nfc/nfc_tag.h"
-#include "esphome/components/nfc/nfc.h"
-#include "esphome/components/nfc/automation.h"
-
-#include "st25r_registers.h"
-
 #include <vector>
+#include <string>
 
 namespace esphome {
 namespace st25r {
 
 class ST25RBinarySensor;
 
+// ST25R Register Definitions
+enum ST25RRegister : uint8_t {
+  IO_CONF1 = 0x00,
+  IO_CONF2 = 0x01,
+  OP_CONTROL = 0x02,
+  MODE = 0x03,
+  BIT_RATE = 0x04,
+  RX_CONF1 = 0x0B,
+  RX_CONF2 = 0x0C,
+  RX_CONF3 = 0x0D,
+  RX_CONF4 = 0x0E,
+  MASK_MAIN = 0x16,
+  IRQ_MAIN = 0x1A,
+  IRQ_TIMER = 0x1B,
+  IRQ_ERROR = 0x1C,
+  FIFO_STATUS1 = 0x1E,
+  FIFO_STATUS2 = 0x1F,
+  NUM_TX_BYTES1 = 0x22,
+  NUM_TX_BYTES2 = 0x23,
+  IC_IDENTITY = 0x3F,
+};
+
+// ST25R Commands
+enum ST25RCommand : uint8_t {
+  ST25R_CMD_SET_DEFAULT = 0xC1,
+  ST25R_CMD_STOP_ALL = 0xC2,
+  ST25R_CMD_CLEAR_FIFO = 0xC3,
+  ST25R_CMD_TRANSMIT_WITH_CRC = 0xC4,
+  ST25R_CMD_TRANSMIT_WITHOUT_CRC = 0xC5,
+  ST25R_CMD_TRANSMIT_REQA = 0xC6,
+  ST25R_CMD_TRANSMIT_WUPA = 0xC7,
+  ST25R_CMD_FIELD_ON = 0xC8,
+};
+
+class ST25R;
+
+class ST25RTagTrigger : public Trigger<std::string> {
+ public:
+  explicit ST25RTagTrigger(ST25R *parent) : parent_(parent) {}
+
+ protected:
+  ST25R *parent_;
+};
+
+class ST25RTagRemovedTrigger : public Trigger<std::string> {
+ public:
+  explicit ST25RTagRemovedTrigger(ST25R *parent) : parent_(parent) {}
+
+ protected:
+  ST25R *parent_;
+};
+
 class ST25R : public PollingComponent {
  public:
   void setup() override;
   void dump_config() override;
   void update() override;
-  void loop() override;
+  float get_setup_priority() const override { return setup_priority::DATA; }
 
-  void set_rf_field_enabled(bool enabled) { this->rf_field_enabled_ = enabled; }
-  void set_max_failed_checks(uint8_t n) { this->max_failed_checks_ = n; }
-  void set_auto_reset(bool v) { this->auto_reset_ = v; }
+  void set_reset_pin(GPIOPin *reset_pin) { this->reset_pin_ = reset_pin; }
+  void set_irq_pin(InternalGPIOPin *irq_pin) { this->irq_pin_ = irq_pin; }
 
-  void register_tag(ST25RBinarySensor *tag) { this->binary_sensors_.push_back(tag); }
-  void register_ontag_trigger(nfc::NfcOnTagTrigger *trig) { this->triggers_ontag_.push_back(trig); }
-  void register_ontagremoved_trigger(nfc::NfcOnTagTrigger *trig) { this->triggers_ontagremoved_.push_back(trig); }
-
-  void add_on_finished_write_callback(std::function<void()> callback) {
-    this->on_finished_write_callback_.add(std::move(callback));
+  void register_on_tag_trigger(ST25RTagTrigger *trig) { this->on_tag_triggers_.push_back(trig); }
+  void register_on_tag_removed_trigger(ST25RTagRemovedTrigger *trig) {
+    this->on_tag_removed_triggers_.push_back(trig);
   }
+  void register_tag(ST25RBinarySensor *tag) { this->binary_sensors_.push_back(tag); }
 
-  bool is_writing() { return this->next_task_ != READ; };
-
-  void read_mode();
-  void clean_mode();
-  void format_mode();
-  void write_mode(nfc::NdefMessage *message);
+  bool is_tag_present() const { return this->tag_present_; }
 
  protected:
   virtual uint8_t read_register(uint8_t reg) = 0;
@@ -50,37 +89,26 @@ class ST25R : public PollingComponent {
   virtual void write_fifo(const uint8_t *data, size_t len) = 0;
   virtual void read_fifo(uint8_t *data, size_t len) = 0;
 
-  bool initialize_chip_();
-  void turn_off_rf_();
-  void turn_on_rf_();
-
-  std::vector<ST25RBinarySensor *> binary_sensors_;
-  std::vector<nfc::NfcOnTagTrigger *> triggers_ontag_;
-  std::vector<nfc::NfcOnTagTrigger *> triggers_ontagremoved_;
+  bool reset_();
+  void field_on_();
+  std::string read_uid_();
   
-  std::vector<uint8_t> current_uid_;
-  nfc::NdefMessage *next_task_message_to_write_{nullptr};
+  GPIOPin *reset_pin_{nullptr};
+  InternalGPIOPin *irq_pin_{nullptr};
 
-  enum NfcTask {
-    READ = 0,
-    CLEAN,
-    FORMAT,
-    WRITE,
-  } next_task_{READ};
+  bool tag_present_{false};
+  std::string current_uid_;
+  uint8_t missed_updates_{0};
 
-  uint8_t consecutive_failures_{0};
-  uint8_t max_failed_checks_{3};
-  bool auto_reset_{true};
-  bool rf_field_enabled_{false};
-  bool initialized_{false};
-
-  CallbackManager<void()> on_finished_write_callback_;
+  std::vector<ST25RTagTrigger *> on_tag_triggers_;
+  std::vector<ST25RTagRemovedTrigger *> on_tag_removed_triggers_;
+  std::vector<ST25RBinarySensor *> binary_sensors_;
 };
 
 class ST25RBinarySensor : public binary_sensor::BinarySensor {
  public:
   void set_uid(const std::vector<uint8_t> &uid) { uid_ = uid; }
-  bool process(const std::vector<uint8_t> &data);
+  bool process(const std::string &uid);
   void on_scan_end() {
     if (!this->found_) {
       this->publish_state(false);
@@ -91,18 +119,6 @@ class ST25RBinarySensor : public binary_sensor::BinarySensor {
  protected:
   std::vector<uint8_t> uid_;
   bool found_{false};
-};
-
-class ST25ROnFinishedWriteTrigger : public Trigger<> {
- public:
-  explicit ST25ROnFinishedWriteTrigger(ST25R *parent) {
-    parent->add_on_finished_write_callback([this]() { this->trigger(); });
-  }
-};
-
-template<typename... Ts> class ST25RIsWritingCondition : public Condition<Ts...>, public Parented<ST25R> {
- public:
-  bool check(const Ts &...x) override { return this->parent_->is_writing(); }
 };
 
 }  // namespace st25r
