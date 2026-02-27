@@ -2,7 +2,7 @@
 
 #include "esphome/core/component.h"
 #include "esphome/components/i2c/i2c.h"
-#include "../st25r/st25r.h"
+#include "esphome/components/st25r/st25r.h"
 
 namespace esphome {
 namespace st25r_i2c {
