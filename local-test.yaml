@@ -1,0 +1,45 @@
+esphome:
+  name: st25r-local-test
+  on_boot:
+    priority: 600
+    then:
+      - delay: 5s
+      - logger.log: "BOOT_SIGNAL"
+
+esp32:
+  board: esp32-c6-devkitc-1
+  variant: esp32c6
+  framework:
+    type: esp-idf
+
+logger:
+  level: VERY_VERBOSE
+  hardware_uart: USB_SERIAL_JTAG
+
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [st25r3916]
+
+spi:
+  clk_pin: GPIO18
+  miso_pin: GPIO19
+  mosi_pin: GPIO23
+
+st25r3916:
+  id: my_st25r
+  cs_pin: GPIO5
+  irq_pin: GPIO21
+  update_interval: 1s
+  on_tag:
+    then:
+      - logger.log:
+          format: "Tag detected: %s"
+          args: ['x.c_str()']
+
+binary_sensor:
+  - platform: template
+    name: "Tag Present"
+    lambda: |-
+      return id(my_st25r)->is_tag_present();

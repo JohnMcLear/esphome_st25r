@@ -1,0 +1,11 @@
+__pycache__
+.esphome/
+debug.yaml
+*.yaml.json
+*.bin
+*.elf
+*.csv
+.pio/
+.pioenvs/
+.piolibdeps/
+*.log

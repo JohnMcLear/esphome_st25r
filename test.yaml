@@ -1,0 +1,31 @@
+esphome:
+  name: test_st25r
+
+esp32:
+  board: esp32dev
+
+i2c:
+  sda: GPIO23
+  scl: GPIO21
+  scan: true
+
+external_components:
+  - source:
+      type: local
+      path: components
+
+st25r_i2c:
+  id: my_st25r
+  address: 0x50
+  update_interval: 1s
+  on_tag:
+    then:
+      - logger.log: "Tag detected!"
+
+binary_sensor:
+  - platform: st25r
+    uid: 01-02-03-04
+    name: "My Tag"
+
+logger:
+  level: VERY_VERBOSE

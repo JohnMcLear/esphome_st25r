@@ -1,0 +1,68 @@
+name: ESPHome Compile
+
+on:
+  push:
+    branches:
+      - main
+      - claude
+  pull_request:
+    branches:
+      - main
+      - claude
+
+jobs:
+  compile:
+    name: Compile ST25R firmware (${{ matrix.config }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - ci-test-spi.yaml
+          - ci-test-i2c.yaml
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Cache ESPHome build files
+        uses: actions/cache@v4
+        with:
+          path: |
+            .esphome
+            ~/.platformio
+          key: esphome-${{ runner.os }}-${{ matrix.config }}-${{ hashFiles(matrix.config, 'components/**') }}
+          restore-keys: |
+            esphome-${{ runner.os }}-${{ matrix.config }}-
+            esphome-${{ runner.os }}-
+
+      - name: Fix cache permissions (Docker runs as root)
+        run: |
+          sudo chown -R $USER:$USER .esphome ~/.platformio 2>/dev/null || true
+
+      - name: Compile ST25R firmware
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}":/config \
+            ghcr.io/esphome/esphome:latest \
+            compile "${{ matrix.config }}"
+          EXIT_CODE=$?
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "::error::ESPHome compilation failed for ${{ matrix.config }} with exit code $EXIT_CODE"
+            exit $EXIT_CODE
+          fi
+
+      - name: Fix permissions before cache save
+        if: always()
+        run: |
+          sudo chown -R $USER:$USER .esphome ~/.platformio 2>/dev/null || true
+
+      - name: Upload build artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.config }}
+          path: |
+            .esphome/build/*/firmware.bin
+          if-no-files-found: ignore
+          retention-days: 7

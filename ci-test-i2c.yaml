@@ -1,0 +1,50 @@
+esphome:
+  name: st25r-i2c-ci-test
+  friendly_name: ST25R I2C CI Test
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+logger:
+  level: DEBUG
+
+wifi:
+  ssid: "CI_DUMMY_SSID"
+  password: "CI_DUMMY_PASSWORD"
+
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [st25r, st25r_i2c, st25r_spi, st25r3916]
+    refresh: 0s
+
+i2c:
+  sda: GPIO21
+  scl: GPIO22
+  scan: false
+  frequency: 100kHz
+
+st25r_i2c:
+  id: st25r_board
+  address: 0x50
+  update_interval: 1s
+  rf_field_enabled: true
+  on_tag:
+    then:
+      - logger.log:
+          format: "Tag scanned: %s"
+          args: ['x.c_str()']
+  on_tag_removed:
+    then:
+      - logger.log:
+          format: "Tag removed: %s"
+          args: ['x.c_str()']
+
+binary_sensor:
+  - platform: st25r
+    st25r_id: st25r_board
+    name: "Test Badge I2C"
+    uid: "01-02-03-04"
