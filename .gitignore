@@ -9,3 +9,4 @@ debug.yaml
 .pioenvs/
 .piolibdeps/
 *.log
+*.txt
