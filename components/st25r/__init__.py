@@ -15,6 +15,7 @@ AUTO_LOAD = ["binary_sensor"]
 MULTI_CONF = True
 
 CONF_ST25R_ID = "st25r_id"
+CONF_RF_FIELD_ENABLED = "rf_field_enabled"
 
 st25r_ns = cg.esphome_ns.namespace("st25r")
 ST25R = st25r_ns.class_("ST25R", cg.PollingComponent)
@@ -29,8 +30,9 @@ ST25RTagRemovedTrigger = st25r_ns.class_(
 ST25R_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(ST25R),
-        cv.Required(CONF_IRQ_PIN): pins.internal_gpio_input_pin_schema,
+        cv.Optional(CONF_IRQ_PIN): pins.internal_gpio_input_pin_schema,
         cv.Optional(CONF_RESET_PIN): pins.gpio_output_pin_schema,
+        cv.Optional(CONF_RF_FIELD_ENABLED, default=True): cv.boolean,
         cv.Optional(CONF_ON_TAG): automation.validate_automation(
             {
                 cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(ST25RTagTrigger),
@@ -48,13 +50,16 @@ ST25R_SCHEMA = cv.Schema(
 async def setup_st25r(var, config):
     await cg.register_component(var, config)
     
-    irq = await cg.gpio_pin_expression(config[CONF_IRQ_PIN])
-    cg.add(var.set_irq_pin(irq))
+    if CONF_IRQ_PIN in config:
+        irq = await cg.gpio_pin_expression(config[CONF_IRQ_PIN])
+        cg.add(var.set_irq_pin(irq))
 
     if CONF_RESET_PIN in config:
         reset = await cg.gpio_pin_expression(config[CONF_RESET_PIN])
         cg.add(var.set_reset_pin(reset))
     
+    cg.add(var.set_rf_field_enabled(config[CONF_RF_FIELD_ENABLED]))
+
     for conf in config.get(CONF_ON_TAG, []):
         trigger = cg.new_Pvariable(conf[CONF_TRIGGER_ID], var)
         cg.add(var.register_on_tag_trigger(trigger))

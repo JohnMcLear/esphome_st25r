@@ -48,7 +48,9 @@ bool ST25R::reset_() {
   this->write_register(RX_CONF1, 0x00); 
   this->write_register(RX_CONF2, 0x68); 
 
-  this->field_on_();
+  if (this->rf_field_enabled_) {
+    this->field_on_();
+  }
   delay(10);
   
   this->write_register(0x28, 0xF0); 
@@ -64,19 +66,16 @@ void ST25R::update() {
   this->read_register(IRQ_ERROR);
   this->write_command(ST25R_CMD_CLEAR_FIFO);
 
-  this->write_register(OP_CONTROL, 0xC8); 
-  delay(2);
+  if (this->rf_field_enabled_) {
+    // Ensure field is on (wu=0, rf_en=1, rx_en=1, tx_en=1)
+    this->write_register(OP_CONTROL, 0xC8); 
+    delay(2);
+  }
 
   this->write_command(ST25R_CMD_TRANSMIT_WUPA);
   
-  bool tag_found = false;
-  for (int i = 0; i < 10; i++) {
-    if (this->irq_pin_->digital_read()) {
-      tag_found = true;
-      break;
-    }
-    delay(1);
-  }
+  // Wait for IRQ (up to 10ms for ATQA)
+  bool tag_found = this->wait_for_irq_(0x40, 10); // 0x40 = TX end / RX start or similar mask
 
   if (tag_found) {
     this->read_register(IRQ_MAIN);
@@ -130,12 +129,7 @@ std::string ST25R::read_uid_() {
     this->write_register(NUM_TX_BYTES2, 0x10); 
     this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
     
-    bool irq_fired = false;
-    for (int i = 0; i < 20; i++) {
-      if (this->irq_pin_->digital_read()) { irq_fired = true; break; }
-      delay(1);
-    }
-    if (!irq_fired) break;
+    if (!this->wait_for_irq_(0x40, 20)) break;
 
     this->read_register(IRQ_MAIN);
     uint8_t f1 = this->read_register(FIFO_STATUS1);
@@ -156,7 +150,7 @@ std::string ST25R::read_uid_() {
       this->write_register(NUM_TX_BYTES1, 0x00);
       this->write_register(NUM_TX_BYTES2, 0x38); 
       this->write_command(ST25R_CMD_TRANSMIT_WITH_CRC);
-      for (int i = 0; i < 10; i++) { if (this->irq_pin_->digital_read()) break; delay(1); }
+      this->wait_for_irq_(0x40, 10);
       this->read_register(IRQ_MAIN);
     } else {
       for(int i=0; i<4; i++) {
@@ -168,6 +162,19 @@ std::string ST25R::read_uid_() {
     }
   }
   return full_uid;
+}
+
+bool ST25R::wait_for_irq_(uint8_t mask, uint32_t timeout_ms) {
+  uint32_t start = millis();
+  while (millis() - start < timeout_ms) {
+    if (this->irq_pin_ != nullptr) {
+      if (this->irq_pin_->digital_read()) return true;
+    } else {
+      if (this->read_register(IRQ_MAIN) & mask) return true;
+    }
+    yield();
+  }
+  return false;
 }
 
 void ST25R::field_on_() {
