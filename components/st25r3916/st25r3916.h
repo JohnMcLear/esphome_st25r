@@ -17,23 +17,30 @@ enum ST25R3916Register : uint8_t {
   OP_CONTROL = 0x02,
   MODE = 0x03,
   BIT_RATE = 0x04,
-  RX_CONF1 = 0x0A,
-  RX_CONF2 = 0x0B,
-  RX_CONF3 = 0x0C,
-  RX_CONF4 = 0x0D,
-  NUM_TX_BYTES1 = 0x1E,
-  NUM_TX_BYTES2 = 0x1F,
-  FIFO_STATUS1 = 0x1B,
-  FIFO_STATUS2 = 0x1C,
-  IRQ_MAIN = 0x18,
+  RX_CONF1 = 0x0B,
+  RX_CONF2 = 0x0C,
+  RX_CONF3 = 0x0D,
+  RX_CONF4 = 0x0E,
+  MASK_MAIN = 0x16,
+  IRQ_MAIN = 0x1A,
+  IRQ_TIMER = 0x1B,
+  IRQ_ERROR = 0x1C,
+  FIFO_STATUS1 = 0x1E,
+  FIFO_STATUS2 = 0x1F,
+  NUM_TX_BYTES1 = 0x22,
+  NUM_TX_BYTES2 = 0x23,
   IC_IDENTITY = 0x3F,
 };
 
 // ST25R3916 Commands
 enum ST25R3916Command : uint8_t {
   ST25R3916_CMD_SET_DEFAULT = 0xC1,
-  ST25R3916_CMD_CLEAR_FIFO = 0xC2,
+  ST25R3916_CMD_STOP_ALL = 0xC2,
+  ST25R3916_CMD_CLEAR_FIFO = 0xC3,
   ST25R3916_CMD_TRANSMIT_WITHOUT_CRC = 0xC5,
+  ST25R3916_CMD_TRANSMIT_REQA = 0xC6,
+  ST25R3916_CMD_TRANSMIT_WUPA = 0xC7,
+  ST25R3916_CMD_FIELD_ON = 0xC8,
 };
 
 class ST25R3916;
@@ -56,7 +63,7 @@ class ST25R3916TagRemovedTrigger : public Trigger<std::string> {
 
 class ST25R3916 : public PollingComponent,
                   public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARITY_LOW,
-                                        spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_1MHZ> {
+                                        spi::CLOCK_PHASE_TRAILING, spi::DATA_RATE_200KHZ> {
  public:
   void setup() override;
   void dump_config() override;
@@ -76,6 +83,7 @@ class ST25R3916 : public PollingComponent,
  protected:
   bool reset_();
   void field_on_();
+  std::string read_uid_();
   
   uint8_t read_register_(ST25R3916Register reg);
   void write_register_(ST25R3916Register reg, uint8_t value);
@@ -88,7 +96,7 @@ class ST25R3916 : public PollingComponent,
 
   bool tag_present_{false};
   std::string current_uid_;
-  uint8_t bit_shift_{0};
+  uint8_t missed_updates_{0};
 
   std::vector<ST25R3916TagTrigger *> on_tag_triggers_;
   std::vector<ST25R3916TagRemovedTrigger *> on_tag_removed_triggers_;

@@ -3,6 +3,7 @@ esphome:
   on_boot:
     priority: 600
     then:
+      - logger.log: "DEVICE_STARTING"
       - delay: 5s
       - logger.log: "BOOT_SIGNAL"
 
@@ -24,14 +25,14 @@ external_components:
 
 spi:
   clk_pin: GPIO19
-  miso_pin: GPIO18
-  mosi_pin: GPIO10
+  miso_pin: GPIO10
+  mosi_pin: GPIO18
 
 st25r3916:
   id: my_st25r
-  cs_pin: GPIO9
-  irq_pin: GPIO21
-  update_interval: 1s
+  cs_pin: GPIO7
+  irq_pin: GPIO6
+  update_interval: 2s
   on_tag:
     then:
       - logger.log:
