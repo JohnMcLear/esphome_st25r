@@ -136,6 +136,7 @@ void ST25R::update() {
   }
 
   this->write_command(ST25R_CMD_TRANSMIT_WUPA);
+  delay(1);
   this->state_ = STATE_WUPA;
   this->last_state_change_ = millis();
 }
@@ -151,6 +152,7 @@ bool ST25R::transceive_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t 
   this->write_register(NUM_TX_BYTES2, len & 0xFF);
   
   this->write_command(ST25R_CMD_TRANSMIT_WITH_CRC);
+  delay(5);
 
   if (!this->wait_for_irq_(0xF8, timeout_ms)) {
     return false;
@@ -171,6 +173,7 @@ bool ST25R::transceive_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t 
 }
 
 std::unique_ptr<nfc::NfcTag> ST25R::read_tag_(std::vector<uint8_t> &uid) {
+  ESP_LOGD(TAG, "Reading tag data for UID: %s", nfc::format_bytes(uid).c_str());
   uint8_t type = nfc::guess_tag_type(uid.size());
   
   if (type == nfc::TAG_TYPE_2) {
@@ -226,6 +229,14 @@ void ST25R::loop() {
       if (millis() - this->last_state_change_ > 50) { // Timeout
         ESP_LOGV(TAG, "WUPA Timeout");
         this->state_ = STATE_IDLE;
+        this->missed_updates_++;
+        if (this->tag_present_ && this->missed_updates_ >= 2) {
+           ESP_LOGD(TAG, "Resetting field to recover tag...");
+           this->write_register(OP_CONTROL, 0x08); // Field OFF
+           delay(10);
+           this->write_register(OP_CONTROL, 0xC8); // Field ON
+           delay(10);
+        }
         return;
       }
 
@@ -278,8 +289,9 @@ void ST25R::loop() {
       }
 
       if (irq) {
+        delay(5);
         uint8_t main_irq = this->read_register(IRQ_MAIN);
-        ESP_LOGV(TAG, "READ_UID IRQ received: 0x%02X at cascade %u", main_irq, this->cascade_level_);
+        ESP_LOGD(TAG, "READ_UID IRQ received: 0x%02X at cascade %u", main_irq, this->cascade_level_);
         
         if ((main_irq & 0x08) || main_irq == 0x28) { // Collision or Partial RX
           uint8_t col_reg = 0;
@@ -287,18 +299,14 @@ void ST25R::loop() {
             col_reg = this->read_register(COLLISION_DISPLAY);
             ESP_LOGW(TAG, "Collision detected at bit %u of cascade %u. Resolving...", col_reg >> 4, this->cascade_level_);
           } else {
-            ESP_LOGW(TAG, "Partial response (0x28) at cascade %u. Treating as collision.", this->cascade_level_);
+            ESP_LOGW(TAG, "Partial response (0x28) at cascade %u. Resetting field...", this->cascade_level_);
           }
-          // Resolve: retry cascade
-          delay(5);
-          this->write_command(ST25R_CMD_CLEAR_FIFO);
-          uint8_t sel_cmds[] = {0x93, 0x95, 0x97};
-          uint8_t cl[] = {sel_cmds[this->cascade_level_], 0x20};
-          this->write_fifo(cl, 2);
-          this->write_register(NUM_TX_BYTES1, 0x00);
-          this->write_register(NUM_TX_BYTES2, 0x10); 
-          this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
-          this->last_state_change_ = millis();
+          // Reset field to clear tag state
+          this->write_register(OP_CONTROL, 0x08); // Field OFF
+          delay(10);
+          this->write_register(OP_CONTROL, 0xC8); // Field ON
+          delay(10);
+          this->state_ = STATE_IDLE;
           return;
         }
 
@@ -310,8 +318,8 @@ void ST25R::loop() {
         }
 
         uint8_t resp[16];
-        size_t len = (f1 > 16) ? 16 : f1;
-        this->read_fifo(resp, len);
+        uint8_t actual_len = (f1 > 16) ? 16 : f1;
+        this->read_fifo(resp, actual_len);
 
         if (resp[0] == 0x88) {
           for (int i = 1; i < 4; i++) {
@@ -335,7 +343,9 @@ void ST25R::loop() {
           }
           
           // Wait for SELECT IRQ then start next level
-          delay(5); // Small delay for SELECT to finish - still better than full block
+          delay(10); // increased delay
+          this->read_register(IRQ_MAIN); // Clear select IRQ
+
           this->write_command(ST25R_CMD_CLEAR_FIFO);
           uint8_t next_cl[] = {sel_cmds[this->cascade_level_], 0x20};
           this->write_fifo(next_cl, 2);
