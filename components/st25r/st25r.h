@@ -24,6 +24,7 @@ enum ST25RRegister : uint8_t {
   RX_CONF2 = 0x0C,
   RX_CONF3 = 0x0D,
   RX_CONF4 = 0x0E,
+  ISO14443A_CONF = 0x05,
   MASK_MAIN = 0x16,
   IRQ_MAIN = 0x1A,
   IRQ_TIMER = 0x1B,
@@ -32,6 +33,7 @@ enum ST25RRegister : uint8_t {
   FIFO_STATUS2 = 0x1F,
   NUM_TX_BYTES1 = 0x22,
   NUM_TX_BYTES2 = 0x23,
+  TX_DRIVER_CONF = 0x28,
   AD_CONV_RESULT = 0x2A,
   IC_IDENTITY = 0x3F,
 };

@@ -32,6 +32,10 @@ st25r_i2c:
   address: 0x50
   irq_pin: GPIO4
   update_interval: 1s
+  status:
+    name: "ST25R I2C Health"
+  field_strength:
+    name: "ST25R I2C Field Strength"
   on_tag:
     then:
       - logger.log:

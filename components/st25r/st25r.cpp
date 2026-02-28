@@ -55,17 +55,17 @@ bool ST25R::reset_() {
   this->write_register(RX_CONF2, 0x68); 
 
   // ISO14443A settings: Enable automatic CRC
-  this->write_register(0x05, 0x00); 
+  this->write_register(ISO14443A_CONF, 0x00); 
 
   if (this->rf_field_enabled_) {
     this->field_on_();
   }
   delay(10);
   
-  // Apply RF Power setting to TX Driver register (0x28)
+  // Apply RF Power setting to TX Driver register
   // Mapping: 15 (Max) -> 0x00 (Min Resistance), 0 (Min) -> 0xF0 (Max Resistance/High Z)
   uint8_t d_res = (15 - this->rf_power_) << 4;
-  this->write_register(0x28, d_res); 
+  this->write_register(TX_DRIVER_CONF, d_res); 
 
   return true;
 }
@@ -269,6 +269,9 @@ void ST25R::field_on_() {
 void ST25R::dump_config() {
   ESP_LOGCONFIG(TAG, "ST25R:");
   LOG_PIN("  IRQ Pin: ", this->irq_pin_);
+  LOG_PIN("  Reset Pin: ", this->reset_pin_);
+  ESP_LOGCONFIG(TAG, "  RF Power: %u", this->rf_power_);
+  ESP_LOGCONFIG(TAG, "  RF Field Enabled: %s", YESNO(this->rf_field_enabled_));
   LOG_UPDATE_INTERVAL(this);
 }
 

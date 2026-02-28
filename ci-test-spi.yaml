@@ -31,6 +31,10 @@ st25r_spi:
   cs_pin: GPIO5
   update_interval: 1s
   rf_field_enabled: true
+  status:
+    name: "ST25R SPI Health"
+  field_strength:
+    name: "ST25R SPI Field Strength"
   on_tag:
     then:
       - logger.log:
