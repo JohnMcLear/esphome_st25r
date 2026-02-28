@@ -71,9 +71,17 @@ class ST25RTagRemovedTrigger : public Trigger<std::string> {
 
 class ST25R : public PollingComponent {
  public:
+  enum State {
+    STATE_IDLE,
+    STATE_WUPA,
+    STATE_READ_UID,
+    STATE_REINITIALIZING,
+  };
+
   void setup() override;
   void dump_config() override;
   void update() override;
+  void loop() override;
   float get_setup_priority() const override { return setup_priority::DATA; }
 
   void set_reset_pin(GPIOPin *reset_pin) { this->reset_pin_ = reset_pin; }
@@ -100,7 +108,7 @@ class ST25R : public PollingComponent {
 
   bool reset_();
   void field_on_();
-  std::string read_uid_();
+  void process_tag_removed_();
   bool wait_for_irq_(uint8_t mask, uint32_t timeout_ms);
   void reinitialize_();
   
@@ -108,10 +116,14 @@ class ST25R : public PollingComponent {
   InternalGPIOPin *irq_pin_{nullptr};
 
   bool tag_present_{false};
+  std::string tag_present_uid_;
   bool rf_field_enabled_{true};
   uint8_t rf_power_{15};
   uint8_t health_check_failures_{0};
   uint8_t reinitialization_attempts_{0};
+  State state_{STATE_IDLE};
+  uint32_t last_state_change_{0};
+  uint8_t cascade_level_{0};
   std::string current_uid_;
   uint8_t missed_updates_{0};
 
