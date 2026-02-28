@@ -48,6 +48,9 @@ bool ST25R::reset_() {
   this->write_register(RX_CONF1, 0x00); 
   this->write_register(RX_CONF2, 0x68); 
 
+  // ISO14443A settings: Enable automatic CRC
+  this->write_register(0x05, 0x00); 
+
   if (this->rf_field_enabled_) {
     this->field_on_();
   }
@@ -67,22 +70,26 @@ void ST25R::update() {
   this->write_command(ST25R_CMD_CLEAR_FIFO);
 
   if (this->rf_field_enabled_) {
-    // Ensure field is on (wu=0, rf_en=1, rx_en=1, tx_en=1)
     this->write_register(OP_CONTROL, 0xC8); 
     delay(2);
   }
 
   this->write_command(ST25R_CMD_TRANSMIT_WUPA);
   
-  // Wait for IRQ (up to 10ms for ATQA)
-  bool tag_found = this->wait_for_irq_(0xF8, 10); // 0xF8 = most common interrupt bits
+  bool tag_found = this->wait_for_irq_(0xF8, 20); 
 
   if (tag_found) {
     this->read_register(IRQ_MAIN);
     uint8_t f1 = this->read_register(FIFO_STATUS1);
     
     if (f1 > 0) { 
-      std::string uid = this->read_uid_();
+      std::string uid = "";
+      for (int retry = 0; retry < 3; retry++) {
+        uid = this->read_uid_();
+        if (!uid.empty()) break;
+        delay(5);
+      }
+
       if (!uid.empty()) {
         this->missed_updates_ = 0;
         if (!this->tag_present_ || this->current_uid_ != uid) {
@@ -103,7 +110,7 @@ void ST25R::update() {
 
   if (this->tag_present_) {
     this->missed_updates_++;
-    if (this->missed_updates_ >= 2) {
+    if (this->missed_updates_ >= 3) {
       ESP_LOGI(TAG, "Tag Removed: %s", this->current_uid_.c_str());
       for (auto *trigger : this->on_tag_removed_triggers_) {
         trigger->trigger(this->current_uid_);
@@ -129,31 +136,54 @@ std::string ST25R::read_uid_() {
     this->write_register(NUM_TX_BYTES2, 0x10); 
     this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
     
-    if (!this->wait_for_irq_(0xF8, 20)) break;
+    if (!this->wait_for_irq_(0xF8, 20)) {
+      ESP_LOGV(TAG, "Cascade %d: No Anticollision Response", cascade);
+      break;
+    }
 
     this->read_register(IRQ_MAIN);
     uint8_t f1 = this->read_register(FIFO_STATUS1);
     if (f1 < 5) break;
 
-    uint8_t resp[5];
-    this->read_fifo(resp, 5);
+    uint8_t resp[16];
+    this->read_fifo(resp, 16);
+    ESP_LOGV(TAG, "Cascade %d Data: %02X %02X %02X %02X %02X", cascade, resp[0], resp[1], resp[2], resp[3], resp[4]);
 
     if (resp[0] == 0x88) {
-      for(int i=1; i<4; i++) {
+      // Cascade Tag present
+      for (int i = 1; i < 4; i++) {
         char buf[3];
         sprintf(buf, "%02X", resp[i]);
         full_uid += buf;
       }
+      // SELECT this level
       this->write_command(ST25R_CMD_CLEAR_FIFO);
       uint8_t sel_pk[7] = {sel_cmds[cascade], 0x70, resp[0], resp[1], resp[2], resp[3], resp[4]};
       this->write_fifo(sel_pk, 7);
       this->write_register(NUM_TX_BYTES1, 0x00);
       this->write_register(NUM_TX_BYTES2, 0x38); 
       this->write_command(ST25R_CMD_TRANSMIT_WITH_CRC);
-      this->wait_for_irq_(0xF8, 10);
-      this->read_register(IRQ_MAIN);
+      
+      if (!this->wait_for_irq_(0xF8, 20)) {
+        ESP_LOGV(TAG, "Cascade %d: No SELECT Response", cascade);
+        break;
+      }
+      uint8_t select_irq = this->read_register(IRQ_MAIN);
+      uint8_t select_f1 = this->read_register(FIFO_STATUS1);
+      if (select_f1 > 0) {
+        uint8_t sak[3];
+        this->read_fifo(sak, (select_f1 > 3) ? 3 : select_f1);
+        ESP_LOGV(TAG, "Cascade %d SAK: 0x%02X", cascade, sak[0]);
+      }
+      ESP_LOGV(TAG, "Cascade %d SELECT IRQ: 0x%02X, FIFO: %d", cascade, select_irq, select_f1);
+      
+      this->read_register(IRQ_MAIN); // Clear again
+      delay(10); // Increased delay for smart cards
+      this->write_command(ST25R_CMD_CLEAR_FIFO);
+      continue; // Move to next cascade level
     } else {
-      for(int i=0; i<4; i++) {
+      // Final level
+      for (int i = 0; i < 4; i++) {
         char buf[3];
         sprintf(buf, "%02X", resp[i]);
         full_uid += buf;
