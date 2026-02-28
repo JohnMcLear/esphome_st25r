@@ -127,6 +127,13 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   uint8_t health_check_failures_{0};
   uint8_t reinitialization_attempts_{0};
   volatile bool irq_triggered_{false};
+  volatile uint8_t irq_status_{0};
+  
+  static const uint8_t IRQ_RXS = 0x80;
+  static const uint8_t IRQ_RXE = 0x40;
+  static const uint8_t IRQ_TXE = 0x20;
+  static const uint8_t IRQ_ERR = 0x10;
+  static const uint8_t IRQ_COL = 0x08;
   State state_{STATE_IDLE};
   uint32_t last_state_change_{0};
   uint8_t cascade_level_{0};

@@ -95,20 +95,20 @@ bool ST25R::transceive_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t 
   
   this->irq_triggered_ = false;
   this->write_command(ST25R_CMD_TRANSMIT_WITH_CRC);
-  delay(5);
-
+  
   uint32_t start = millis();
   while (millis() - start < timeout_ms) {
     if (this->irq_triggered_) {
       this->irq_triggered_ = false;
-      uint8_t irq = this->read_register(IRQ_MAIN);
-      if (irq & 0x40) { // RXE
+      this->irq_status_ = this->read_register(IRQ_MAIN);
+      
+      if (this->irq_status_ & IRQ_RXE) { 
         uint8_t f1 = this->read_register(FIFO_STATUS1);
         resp_len = (f1 > 64) ? 64 : f1;
         this->read_fifo(resp, resp_len);
         return true;
       }
-      if (irq & 0x10) return false; 
+      if (this->irq_status_ & IRQ_ERR) return false; 
     }
     delay(1);
   }
@@ -175,23 +175,26 @@ void ST25R::loop() {
 
       if (this->irq_triggered_) {
         this->irq_triggered_ = false;
-        uint8_t main_irq = this->read_register(IRQ_MAIN);
-        uint8_t f1 = this->read_register(FIFO_STATUS1);
-        if (f1 > 0) {
-          this->cascade_level_ = 0;
-          this->current_uid_ = "";
-          this->state_ = STATE_READ_UID;
-          this->last_state_change_ = millis();
-          this->write_command(ST25R_CMD_CLEAR_FIFO);
-          uint8_t cl[] = {0x93, 0x20};
-          this->irq_triggered_ = false;
-          this->write_fifo(cl, 2);
-          this->write_register(NUM_TX_BYTES1, 0x00);
-          this->write_register(NUM_TX_BYTES2, 0x10); 
-          this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
-        } else {
-          this->state_ = STATE_IDLE;
-          this->process_tag_removed_(false);
+        this->irq_status_ = this->read_register(IRQ_MAIN);
+        
+        if (this->irq_status_ & (IRQ_RXE | IRQ_TXE)) {
+          uint8_t f1 = this->read_register(FIFO_STATUS1);
+          if (f1 > 0) {
+            this->cascade_level_ = 0;
+            this->current_uid_ = "";
+            this->state_ = STATE_READ_UID;
+            this->last_state_change_ = millis();
+            this->write_command(ST25R_CMD_CLEAR_FIFO);
+            uint8_t cl[] = {0x93, 0x20};
+            this->irq_triggered_ = false;
+            this->write_fifo(cl, 2);
+            this->write_register(NUM_TX_BYTES1, 0x00);
+            this->write_register(NUM_TX_BYTES2, 0x10); 
+            this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
+          } else {
+            this->state_ = STATE_IDLE;
+            this->process_tag_removed_(false);
+          }
         }
       }
       break;
@@ -206,87 +209,86 @@ void ST25R::loop() {
 
       if (this->irq_triggered_) {
         this->irq_triggered_ = false;
-        delay(10);
-        uint8_t main_irq = this->read_register(IRQ_MAIN);
-        uint8_t f1 = this->read_register(FIFO_STATUS1);
+        this->irq_status_ = this->read_register(IRQ_MAIN);
         
-        if (f1 == 0) {
-          this->state_ = STATE_IDLE;
-          this->process_tag_removed_(false);
-          return;
-        }
+        if (this->irq_status_ & (IRQ_RXE | IRQ_TXE)) {
+          uint8_t f1 = this->read_register(FIFO_STATUS1);
+          
+          if (f1 == 0) {
+            this->state_ = STATE_IDLE;
+            this->process_tag_removed_(false);
+            return;
+          }
 
-        uint8_t resp[16];
-        uint8_t actual_len = (f1 > 16) ? 16 : f1;
-        this->read_fifo(resp, actual_len);
-        
-        std::vector<uint8_t> resp_vec(resp, resp + actual_len);
-        ESP_LOGV(TAG, "CL %u response: %s (b0=0x%02X, f1=%u, IRQ:0x%02X)", this->cascade_level_, nfc::format_bytes(resp_vec).c_str(), resp[0], f1, main_irq);
-
-        if (resp[0] == 0x88) {
-          for (int i = 1; i < 4; i++) {
-            char buf[3];
-            sprintf(buf, "%02X", resp[i]);
-            this->current_uid_ += buf;
-          }
-          uint8_t sel_cmds[] = {0x93, 0x95, 0x97};
-          uint8_t sel_pk[7] = {sel_cmds[this->cascade_level_], 0x70, resp[0], resp[1], resp[2], resp[3], resp[4]};
-          this->write_command(ST25R_CMD_CLEAR_FIFO);
-          this->irq_triggered_ = false;
-          this->write_fifo(sel_pk, 7);
-          this->write_register(NUM_TX_BYTES1, 0x00);
-          this->write_register(NUM_TX_BYTES2, 0x38); 
-          this->write_command(ST25R_CMD_TRANSMIT_WITH_CRC);
+          uint8_t resp[16];
+          uint8_t actual_len = (f1 > 16) ? 16 : f1;
+          this->read_fifo(resp, actual_len);
           
-          this->cascade_level_++;
-          delay(20); 
-          this->read_register(IRQ_MAIN); 
-          this->write_command(ST25R_CMD_CLEAR_FIFO);
-          uint8_t next_cl[] = {sel_cmds[this->cascade_level_], 0x20};
-          this->irq_triggered_ = false;
-          this->write_fifo(next_cl, 2);
-          this->write_register(NUM_TX_BYTES1, 0x00);
-          this->write_register(NUM_TX_BYTES2, 0x10); 
-          this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
-          this->last_state_change_ = millis();
-        } else {
-          for (int i = 0; i < 4; i++) {
-            char buf[3];
-            sprintf(buf, "%02X", resp[i]);
-            this->current_uid_ += buf;
-          }
-          
-          std::vector<uint8_t> uid_bytes;
-          for (size_t i = 0; i < this->current_uid_.length(); i += 2) {
-            std::string byteString = this->current_uid_.substr(i, 2);
-            uint8_t byte = (uint8_t) strtol(byteString.c_str(), nullptr, 16);
-            uid_bytes.push_back(byte);
-          }
-          
-          auto nfc_tag = this->read_tag_(uid_bytes);
-          if (nfc_tag->has_ndef_message()) {
-            auto &message = nfc_tag->get_ndef_message();
-            for (auto &record : message->get_records()) {
-              ESP_LOGI(TAG, "  NDEF Record type: %s", record->get_type().c_str());
-              ESP_LOGI(TAG, "  NDEF Payload: %s", record->get_payload().c_str());
+          if (resp[0] == 0x88) {
+            for (int i = 1; i < 4; i++) {
+              char buf[3];
+              sprintf(buf, "%02X", resp[i]);
+              this->current_uid_ += buf;
             }
-          }
-
-          if (!this->tag_present_ || this->tag_present_uid_ != this->current_uid_) {
-            this->tag_present_ = true;
-            this->tag_present_uid_ = this->current_uid_;
-
-            for (auto *listener : this->tag_listeners_) {
-              listener->tag_on(*nfc_tag);
+            uint8_t sel_cmds[] = {0x93, 0x95, 0x97};
+            uint8_t sel_pk[7] = {sel_cmds[this->cascade_level_], 0x70, resp[0], resp[1], resp[2], resp[3], resp[4]};
+            this->write_command(ST25R_CMD_CLEAR_FIFO);
+            this->irq_triggered_ = false;
+            this->write_fifo(sel_pk, 7);
+            this->write_register(NUM_TX_BYTES1, 0x00);
+            this->write_register(NUM_TX_BYTES2, 0x38); 
+            this->write_command(ST25R_CMD_TRANSMIT_WITH_CRC);
+            
+            this->cascade_level_++;
+            delay(20); 
+            this->read_register(IRQ_MAIN); 
+            this->write_command(ST25R_CMD_CLEAR_FIFO);
+            uint8_t next_cl[] = {sel_cmds[this->cascade_level_], 0x20};
+            this->irq_triggered_ = false;
+            this->write_fifo(next_cl, 2);
+            this->write_register(NUM_TX_BYTES1, 0x00);
+            this->write_register(NUM_TX_BYTES2, 0x10); 
+            this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
+            this->last_state_change_ = millis();
+          } else {
+            for (int i = 0; i < 4; i++) {
+              char buf[3];
+              sprintf(buf, "%02X", resp[i]);
+              this->current_uid_ += buf;
+            }
+            
+            std::vector<uint8_t> uid_bytes;
+            for (size_t i = 0; i < this->current_uid_.length(); i += 2) {
+              std::string byteString = this->current_uid_.substr(i, 2);
+              uint8_t byte = (uint8_t) strtol(byteString.c_str(), nullptr, 16);
+              uid_bytes.push_back(byte);
+            }
+            
+            auto nfc_tag = this->read_tag_(uid_bytes);
+            if (nfc_tag->has_ndef_message()) {
+              auto &message = nfc_tag->get_ndef_message();
+              for (auto &record : message->get_records()) {
+                ESP_LOGI(TAG, "  NDEF Record type: %s", record->get_type().c_str());
+                ESP_LOGI(TAG, "  NDEF Payload: %s", record->get_payload().c_str());
+              }
             }
 
-            for (auto *trigger : this->on_tag_triggers_) {
-              trigger->trigger(this->current_uid_);
+            if (!this->tag_present_ || this->tag_present_uid_ != this->current_uid_) {
+              this->tag_present_ = true;
+              this->tag_present_uid_ = this->current_uid_;
+
+              for (auto *listener : this->tag_listeners_) {
+                listener->tag_on(*nfc_tag);
+              }
+
+              for (auto *trigger : this->on_tag_triggers_) {
+                trigger->trigger(this->current_uid_);
+              }
             }
+            for (auto *obj : this->binary_sensors_) obj->process(this->current_uid_);
+            this->state_ = STATE_IDLE;
+            this->process_tag_removed_(true);
           }
-          for (auto *obj : this->binary_sensors_) obj->process(this->current_uid_);
-          this->state_ = STATE_IDLE;
-          this->process_tag_removed_(true);
         }
       }
       break;
