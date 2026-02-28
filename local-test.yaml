@@ -30,10 +30,10 @@ spi:
 
 st25r_spi:
   id: my_st25r
-  cs_pin: GPIO7
-  irq_pin: GPIO6
+  cs_pin: GPIO6
+  irq_pin: GPIO7
   rf_power: 15
-  update_interval: 5s
+  update_interval: 1s
   status:
     name: "ST25R Health"
   field_strength:
@@ -43,6 +43,24 @@ st25r_spi:
       - logger.log:
           format: "Tag detected: %s"
           args: ['x.c_str()']
+      - light.turn_on: tag_led
+  on_tag_removed:
+    then:
+      - logger.log:
+          format: "Tag removed: %s"
+          args: ['x.c_str()']
+      - light.turn_off: tag_led
+
+output:
+  - platform: gpio
+    pin: GPIO2
+    id: led_output
+
+light:
+  - platform: binary
+    name: "Tag LED"
+    id: tag_led
+    output: led_output
 
 binary_sensor:
   - platform: template

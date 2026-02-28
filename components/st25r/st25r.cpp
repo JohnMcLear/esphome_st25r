@@ -164,13 +164,12 @@ void ST25R::loop() {
 
   switch (this->state_) {
     case STATE_IDLE:
-      this->process_tag_removed_();
       break;
 
     case STATE_WUPA: {
       if (millis() - this->last_state_change_ > 50) { 
         this->state_ = STATE_IDLE;
-        this->missed_updates_++;
+        this->process_tag_removed_(false);
         return;
       }
 
@@ -192,6 +191,7 @@ void ST25R::loop() {
           this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
         } else {
           this->state_ = STATE_IDLE;
+          this->process_tag_removed_(false);
         }
       }
       break;
@@ -200,6 +200,7 @@ void ST25R::loop() {
     case STATE_READ_UID: {
       if (millis() - this->last_state_change_ > 500) { 
         this->state_ = STATE_IDLE;
+        this->process_tag_removed_(false);
         return;
       }
 
@@ -211,6 +212,7 @@ void ST25R::loop() {
         
         if (f1 == 0) {
           this->state_ = STATE_IDLE;
+          this->process_tag_removed_(false);
           return;
         }
 
@@ -219,7 +221,7 @@ void ST25R::loop() {
         this->read_fifo(resp, actual_len);
         
         std::vector<uint8_t> resp_vec(resp, resp + actual_len);
-        ESP_LOGD(TAG, "CL %u response: %s (b0=0x%02X, f1=%u, IRQ:0x%02X)", this->cascade_level_, nfc::format_bytes(resp_vec).c_str(), resp[0], f1, main_irq);
+        ESP_LOGV(TAG, "CL %u response: %s (b0=0x%02X, f1=%u, IRQ:0x%02X)", this->cascade_level_, nfc::format_bytes(resp_vec).c_str(), resp[0], f1, main_irq);
 
         if (resp[0] == 0x88) {
           for (int i = 1; i < 4; i++) {
@@ -254,7 +256,6 @@ void ST25R::loop() {
             this->current_uid_ += buf;
           }
           
-          this->missed_updates_ = 0;
           std::vector<uint8_t> uid_bytes;
           for (size_t i = 0; i < this->current_uid_.length(); i += 2) {
             std::string byteString = this->current_uid_.substr(i, 2);
@@ -285,6 +286,7 @@ void ST25R::loop() {
           }
           for (auto *obj : this->binary_sensors_) obj->process(this->current_uid_);
           this->state_ = STATE_IDLE;
+          this->process_tag_removed_(true);
         }
       }
       break;
@@ -297,8 +299,13 @@ void ST25R::loop() {
   }
 }
 
-void ST25R::process_tag_removed_() {
+void ST25R::process_tag_removed_(bool found) {
   for (auto *obj : this->binary_sensors_) obj->on_scan_end();
+
+  if (found) {
+    this->missed_updates_ = 0;
+    return;
+  }
 
   if (this->tag_present_) {
     this->missed_updates_++;
