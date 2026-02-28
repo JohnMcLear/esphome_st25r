@@ -26,5 +26,5 @@
 - [ ] **Card Emulation**: Allow the ESP32 to act as an NFC tag.
 
 ## Integration
-- [ ] **NFC Base Class Integration**: Inherit from `esphome::nfc::NFCComponent` for standard ESPHome NFC automation compatibility.
+- [x] **NFC Base Class Integration**: Inherit from `esphome::nfc::Nfcc` for standard ESPHome NFC automation compatibility.
 - [ ] **Hardware IRQ Mapping**: Move from polling the IRQ pin to true hardware interrupts.

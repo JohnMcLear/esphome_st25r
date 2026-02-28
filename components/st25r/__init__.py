@@ -14,7 +14,7 @@ from esphome.const import (
 )
 
 CODEOWNERS = ["@JohnMcLear"]
-AUTO_LOAD = ["binary_sensor", "sensor"]
+AUTO_LOAD = ["binary_sensor", "sensor", "nfc"]
 MULTI_CONF = True
 
 CONF_ST25R_ID = "st25r_id"

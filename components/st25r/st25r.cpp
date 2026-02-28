@@ -1,6 +1,7 @@
 #include "st25r.h"
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"
+#include "esphome/components/nfc/nfc_tag.h"
 #include <cinttypes>
 #include <algorithm>
 
@@ -145,6 +146,7 @@ void ST25R::loop() {
 
     case STATE_WUPA: {
       if (millis() - this->last_state_change_ > 50) { // Timeout
+        ESP_LOGV(TAG, "WUPA Timeout");
         this->state_ = STATE_IDLE;
         this->process_tag_removed_();
         return;
@@ -158,9 +160,11 @@ void ST25R::loop() {
       }
 
       if (irq) {
-        this->read_register(IRQ_MAIN);
+        uint8_t main_irq = this->read_register(IRQ_MAIN);
+        ESP_LOGV(TAG, "WUPA IRQ received: 0x%02X", main_irq);
         uint8_t f1 = this->read_register(FIFO_STATUS1);
         if (f1 > 0) {
+          ESP_LOGV(TAG, "Tag detected via WUPA, switching to READ_UID");
           this->cascade_level_ = 0;
           this->current_uid_ = "";
           this->state_ = STATE_READ_UID;
@@ -174,6 +178,7 @@ void ST25R::loop() {
           this->write_register(NUM_TX_BYTES2, 0x10); 
           this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
         } else {
+          ESP_LOGV(TAG, "WUPA IRQ but empty FIFO");
           this->state_ = STATE_IDLE;
           this->process_tag_removed_();
         }
@@ -183,6 +188,7 @@ void ST25R::loop() {
 
     case STATE_READ_UID: {
       if (millis() - this->last_state_change_ > 100) { // Timeout
+        ESP_LOGV(TAG, "READ_UID Timeout at cascade %u", this->cascade_level_);
         this->state_ = STATE_IDLE;
         this->process_tag_removed_();
         return;
@@ -196,7 +202,8 @@ void ST25R::loop() {
       }
 
       if (irq) {
-        this->read_register(IRQ_MAIN);
+        uint8_t main_irq = this->read_register(IRQ_MAIN);
+        ESP_LOGV(TAG, "READ_UID IRQ received: 0x%02X at cascade %u", main_irq, this->cascade_level_);
         uint8_t f1 = this->read_register(FIFO_STATUS1);
         if (f1 < 5) {
           this->state_ = STATE_IDLE;
@@ -251,6 +258,18 @@ void ST25R::loop() {
             ESP_LOGI(TAG, "New Tag Detected: %s", this->current_uid_.c_str());
             this->tag_present_ = true;
             this->tag_present_uid_ = this->current_uid_;
+
+            std::vector<uint8_t> uid_bytes;
+            for (size_t i = 0; i < this->current_uid_.length(); i += 2) {
+              std::string byteString = this->current_uid_.substr(i, 2);
+              uint8_t byte = (uint8_t) strtol(byteString.c_str(), nullptr, 16);
+              uid_bytes.push_back(byte);
+            }
+            nfc::NfcTag nfc_tag(uid_bytes);
+            for (auto *listener : this->tag_listeners_) {
+              listener->tag_on(nfc_tag);
+            }
+
             for (auto *trigger : this->on_tag_triggers_) {
               trigger->trigger(this->current_uid_);
             }
@@ -276,6 +295,18 @@ void ST25R::process_tag_removed_() {
     this->missed_updates_++;
     if (this->missed_updates_ >= 3) {
       ESP_LOGI(TAG, "Tag Removed: %s", this->tag_present_uid_.c_str());
+
+      std::vector<uint8_t> uid_bytes;
+      for (size_t i = 0; i < this->tag_present_uid_.length(); i += 2) {
+        std::string byteString = this->tag_present_uid_.substr(i, 2);
+        uint8_t byte = (uint8_t) strtol(byteString.c_str(), nullptr, 16);
+        uid_bytes.push_back(byte);
+      }
+      nfc::NfcTag nfc_tag(uid_bytes);
+      for (auto *listener : this->tag_listeners_) {
+        listener->tag_off(nfc_tag);
+      }
+
       for (auto *trigger : this->on_tag_removed_triggers_) {
         trigger->trigger(this->tag_present_uid_);
       }

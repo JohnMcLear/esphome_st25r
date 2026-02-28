@@ -5,6 +5,7 @@
 #include "esphome/core/automation.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/sensor/sensor.h"
+#include "esphome/components/nfc/nfc.h"
 #include <vector>
 #include <string>
 
@@ -69,7 +70,7 @@ class ST25RTagRemovedTrigger : public Trigger<std::string> {
   ST25R *parent_;
 };
 
-class ST25R : public PollingComponent {
+class ST25R : public PollingComponent, public nfc::Nfcc {
  public:
   enum State {
     STATE_IDLE,
