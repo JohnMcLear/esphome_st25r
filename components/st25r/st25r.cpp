@@ -116,6 +116,8 @@ bool ST25R::transceive_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t 
 }
 
 std::unique_ptr<nfc::NfcTag> ST25R::read_tag_(std::vector<uint8_t> &uid) {
+  nfc::NfcTagUid tag_uid;
+  for (auto b : uid) tag_uid.push_back(b);
   uint8_t type = nfc::guess_tag_type(uid.size());
   
   if (type == nfc::TAG_TYPE_2) {
@@ -150,13 +152,13 @@ std::unique_ptr<nfc::NfcTag> ST25R::read_tag_(std::vector<uint8_t> &uid) {
         
         if (data.size() >= (size_t)(msg_start_idx + msg_len)) {
           std::vector<uint8_t> ndef_data(data.begin() + msg_start_idx, data.begin() + msg_start_idx + msg_len);
-          return make_unique<nfc::NfcTag>(uid, nfc::NFC_FORUM_TYPE_2, ndef_data);
+          return make_unique<nfc::NfcTag>(tag_uid, nfc::NFC_FORUM_TYPE_2, ndef_data);
         }
       }
     }
   }
 
-  return make_unique<nfc::NfcTag>(uid);
+  return make_unique<nfc::NfcTag>(tag_uid);
 }
 
 void ST25R::loop() {
@@ -320,7 +322,9 @@ void ST25R::process_tag_removed_(bool found) {
         uint8_t byte = (uint8_t) strtol(byteString.c_str(), nullptr, 16);
         uid_bytes.push_back(byte);
       }
-      nfc::NfcTag nfc_tag(uid_bytes);
+      nfc::NfcTagUid tag_uid;
+      for (auto b : uid_bytes) tag_uid.push_back(b);
+      nfc::NfcTag nfc_tag(tag_uid);
       for (auto *listener : this->tag_listeners_) {
         listener->tag_off(nfc_tag);
       }

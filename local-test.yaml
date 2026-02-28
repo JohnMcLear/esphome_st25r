@@ -14,8 +14,8 @@ esp32:
     type: esp-idf
 
 logger:
-  level: VERY_VERBOSE
-  hardware_uart: USB_SERIAL_JTAG
+#  level: VERY_VERBOSE
+#  hardware_uart: USB_SERIAL_JTAG
 
 external_components:
   - source:
