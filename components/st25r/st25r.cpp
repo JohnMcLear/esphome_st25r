@@ -145,13 +145,13 @@ void ST25R::loop() {
 
   switch (this->state_) {
     case STATE_IDLE:
+      this->process_tag_removed_();
       break;
 
     case STATE_WUPA: {
       if (millis() - this->last_state_change_ > 50) { // Timeout
         ESP_LOGV(TAG, "WUPA Timeout");
         this->state_ = STATE_IDLE;
-        this->process_tag_removed_();
         return;
       }
 
@@ -193,7 +193,6 @@ void ST25R::loop() {
       if (millis() - this->last_state_change_ > 100) { // Timeout
         ESP_LOGV(TAG, "READ_UID Timeout at cascade %u", this->cascade_level_);
         this->state_ = STATE_IDLE;
-        this->process_tag_removed_();
         return;
       }
 
@@ -208,10 +207,15 @@ void ST25R::loop() {
         uint8_t main_irq = this->read_register(IRQ_MAIN);
         ESP_LOGV(TAG, "READ_UID IRQ received: 0x%02X at cascade %u", main_irq, this->cascade_level_);
         
-        if (main_irq & 0x08) { // Collision
-          uint8_t col_reg = this->read_register(COLLISION_DISPLAY);
-          ESP_LOGW(TAG, "Collision detected at bit %u of cascade %u. Resolving...", col_reg >> 4, this->cascade_level_);
-          // Basic resolution: just retry the same level, the hardware/tag might resolve on next attempt or we can implement bitwise logic later
+        if ((main_irq & 0x08) || main_irq == 0x28) { // Collision or Partial RX
+          uint8_t col_reg = 0;
+          if (main_irq & 0x08) {
+            col_reg = this->read_register(COLLISION_DISPLAY);
+            ESP_LOGW(TAG, "Collision detected at bit %u of cascade %u. Resolving...", col_reg >> 4, this->cascade_level_);
+          } else {
+            ESP_LOGW(TAG, "Partial response (0x28) at cascade %u. Treating as collision.", this->cascade_level_);
+          }
+          // Resolve: retry cascade
           this->write_command(ST25R_CMD_CLEAR_FIFO);
           uint8_t sel_cmds[] = {0x93, 0x95, 0x97};
           uint8_t cl[] = {sel_cmds[this->cascade_level_], 0x20};
