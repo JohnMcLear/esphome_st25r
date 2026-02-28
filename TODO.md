@@ -13,7 +13,7 @@
 
 ## Protocol Support
 - [ ] **Mifare Classic Support**: Implementation of authentication and sector reading/writing.
-- [ ] **NDEF Parsing**: Support for reading NDEF records (URLs, Text, etc.).
+- [x] **NDEF Parsing**: Support for reading NDEF records (URLs, Text, etc.) for Type 2 tags.
 - [x] **Multi-Tag Anticollision**: Robust handling when multiple tags are in the field simultaneously.
 - [ ] **ISO14443B Support**: Implementation of the Type B protocol.
 - [ ] **FeliCa (NFC-F) Support**: Support for FeliCa cards.

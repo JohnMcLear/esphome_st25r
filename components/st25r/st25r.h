@@ -113,6 +113,8 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   void process_tag_removed_();
   bool wait_for_irq_(uint8_t mask, uint32_t timeout_ms);
   void reinitialize_();
+  bool transceive_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, uint32_t timeout_ms = 50);
+  std::unique_ptr<nfc::NfcTag> read_tag_(std::vector<uint8_t> &uid);
   
   GPIOPin *reset_pin_{nullptr};
   InternalGPIOPin *irq_pin_{nullptr};

@@ -140,6 +140,80 @@ void ST25R::update() {
   this->last_state_change_ = millis();
 }
 
+bool ST25R::transceive_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, uint32_t timeout_ms) {
+  this->write_command(ST25R_CMD_CLEAR_FIFO);
+  this->read_register(IRQ_MAIN); // Clear IRQs
+
+  this->write_fifo(data, len);
+  
+  // Set number of bytes to transmit
+  this->write_register(NUM_TX_BYTES1, (len >> 8) & 0xFF);
+  this->write_register(NUM_TX_BYTES2, len & 0xFF);
+  
+  this->write_command(ST25R_CMD_TRANSMIT_WITH_CRC);
+
+  if (!this->wait_for_irq_(0xF8, timeout_ms)) {
+    return false;
+  }
+
+  uint8_t irq = this->read_register(IRQ_MAIN);
+  if (irq & 0x08) return false; // Collision
+
+  uint8_t f1 = this->read_register(FIFO_STATUS1);
+  if (f1 == 0) {
+    resp_len = 0;
+    return true;
+  }
+
+  resp_len = (f1 > 64) ? 64 : f1;
+  this->read_fifo(resp, resp_len);
+  return true;
+}
+
+std::unique_ptr<nfc::NfcTag> ST25R::read_tag_(std::vector<uint8_t> &uid) {
+  uint8_t type = nfc::guess_tag_type(uid.size());
+  
+  if (type == nfc::TAG_TYPE_2) {
+    ESP_LOGD(TAG, "Mifare Ultralight/NTAG detected, reading NDEF...");
+    
+    std::vector<uint8_t> data;
+    uint8_t buffer[16];
+    uint8_t len;
+
+    // Read pages 3-6 (standard NDEF area start for Type 2)
+    uint8_t read_cmd[2] = {0x30, 0x03}; // READ page 0x03
+    if (this->transceive_(read_cmd, 2, buffer, len) && len >= 16) {
+      data.insert(data.end(), buffer, buffer + 16);
+      
+      // Basic check if NDEF formatted
+      if (data[5] == 0x03 || (data.size() > 9 && data[9] == 0x03)) {
+        uint8_t msg_len = (data[5] == 0x03) ? data[6] : data[10];
+        uint8_t msg_start = (data[5] == 0x03) ? 7 : 11;
+        
+        ESP_LOGD(TAG, "Found NDEF message of length %u", msg_len);
+        
+        // Read more if needed
+        uint8_t current_page = 0x07;
+        while (data.size() < (size_t)(msg_len + msg_start)) {
+          read_cmd[1] = current_page;
+          if (!this->transceive_(read_cmd, 2, buffer, len) || len < 16) break;
+          data.insert(data.end(), buffer, buffer + 16);
+          current_page += 4;
+        }
+        
+        // Trim to actual message content
+        if (data.size() >= (size_t)(msg_len + msg_start)) {
+          std::vector<uint8_t> ndef_data(data.begin() + (msg_start - 4), data.begin() + (msg_start - 4) + msg_len + 4);
+          // Standard ESPHome NfcTag constructor handles parsing if type and data are provided
+          return make_unique<nfc::NfcTag>(uid, nfc::NFC_FORUM_TYPE_2, ndef_data);
+        }
+      }
+    }
+  }
+
+  return make_unique<nfc::NfcTag>(uid);
+}
+
 void ST25R::loop() {
   if (this->is_failed()) return;
 
@@ -288,9 +362,10 @@ void ST25R::loop() {
               uint8_t byte = (uint8_t) strtol(byteString.c_str(), nullptr, 16);
               uid_bytes.push_back(byte);
             }
-            nfc::NfcTag nfc_tag(uid_bytes);
+            
+            auto nfc_tag = this->read_tag_(uid_bytes);
             for (auto *listener : this->tag_listeners_) {
-              listener->tag_on(nfc_tag);
+              listener->tag_on(*nfc_tag);
             }
 
             for (auto *trigger : this->on_tag_triggers_) {
