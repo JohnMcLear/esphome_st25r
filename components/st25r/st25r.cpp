@@ -136,21 +136,18 @@ std::string ST25R::read_uid_() {
     this->write_register(NUM_TX_BYTES2, 0x10); 
     this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
     
-    if (!this->wait_for_irq_(0xF8, 20)) {
-      ESP_LOGV(TAG, "Cascade %d: No Anticollision Response", cascade);
-      break;
-    }
+    if (!this->wait_for_irq_(0xF8, 20)) break;
 
     this->read_register(IRQ_MAIN);
     uint8_t f1 = this->read_register(FIFO_STATUS1);
     if (f1 < 5) break;
 
     uint8_t resp[16];
-    this->read_fifo(resp, 16);
-    ESP_LOGV(TAG, "Cascade %d Data: %02X %02X %02X %02X %02X", cascade, resp[0], resp[1], resp[2], resp[3], resp[4]);
+    size_t len = (f1 > 16) ? 16 : f1;
+    this->read_fifo(resp, len);
 
     if (resp[0] == 0x88) {
-      // Cascade Tag present
+      // Cascade Tag present - add bytes 1, 2, 3
       for (int i = 1; i < 4; i++) {
         char buf[3];
         sprintf(buf, "%02X", resp[i]);
@@ -164,25 +161,14 @@ std::string ST25R::read_uid_() {
       this->write_register(NUM_TX_BYTES2, 0x38); 
       this->write_command(ST25R_CMD_TRANSMIT_WITH_CRC);
       
-      if (!this->wait_for_irq_(0xF8, 20)) {
-        ESP_LOGV(TAG, "Cascade %d: No SELECT Response", cascade);
-        break;
-      }
-      uint8_t select_irq = this->read_register(IRQ_MAIN);
-      uint8_t select_f1 = this->read_register(FIFO_STATUS1);
-      if (select_f1 > 0) {
-        uint8_t sak[3];
-        this->read_fifo(sak, (select_f1 > 3) ? 3 : select_f1);
-        ESP_LOGV(TAG, "Cascade %d SAK: 0x%02X", cascade, sak[0]);
-      }
-      ESP_LOGV(TAG, "Cascade %d SELECT IRQ: 0x%02X, FIFO: %d", cascade, select_irq, select_f1);
-      
-      this->read_register(IRQ_MAIN); // Clear again
-      delay(10); // Increased delay for smart cards
+      if (!this->wait_for_irq_(0xF8, 20)) break;
+
+      this->read_register(IRQ_MAIN); 
+      delay(10); 
       this->write_command(ST25R_CMD_CLEAR_FIFO);
-      continue; // Move to next cascade level
+      continue; 
     } else {
-      // Final level
+      // Final level - add all 4 bytes
       for (int i = 0; i < 4; i++) {
         char buf[3];
         sprintf(buf, "%02X", resp[i]);

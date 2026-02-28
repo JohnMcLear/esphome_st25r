@@ -1,11 +1,11 @@
-# TODO: Feature & Reliability Parity with PN532
+# TODO List
 
-This list tracks the features and functionality required to bring the ST25R3916 component to parity with robust implementations like the PN532 component.
+## v1.1 Priorities
+- [ ] **RF Power Control**: Implement ability to adjust RF output power/field strength to optimize for different antennas and power constraints.
+- [ ] **Health Check**: Periodically verify chip communication (e.g., via `IC_IDENTITY`) and implement auto-recovery if the hardware hangs.
 
-## Health Checks & Reliability
-- [ ] **Heartbeat Health Check**: Periodically verify chip communication by reading the `IC_IDENTITY` register.
-- [ ] **Component Status Tracking**: Mark the component as failed/unavailable if the hardware becomes unresponsive.
-- [ ] **Auto-Recovery**: Automatically trigger a hardware reset and re-initialization sequence on communication failure.
+## Feature & Reliability Parity with PN532
+- [ ] **Component Status Tracking**: Mark the component as failed/unavailable in ESPHome if the hardware becomes unresponsive.
 - [ ] **Connectivity Binary Sensor**: Expose a binary sensor to Home Assistant indicating if the reader hardware is healthy.
 - [ ] **Non-Blocking Logic**: Refactor the `update()` loop into a non-blocking state machine to avoid ESPHome "took too long" warnings.
 
