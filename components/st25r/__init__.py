@@ -16,6 +16,7 @@ MULTI_CONF = True
 
 CONF_ST25R_ID = "st25r_id"
 CONF_RF_FIELD_ENABLED = "rf_field_enabled"
+CONF_RF_POWER = "rf_power"
 
 st25r_ns = cg.esphome_ns.namespace("st25r")
 ST25R = st25r_ns.class_("ST25R", cg.PollingComponent)
@@ -33,6 +34,7 @@ ST25R_SCHEMA = cv.Schema(
         cv.Optional(CONF_IRQ_PIN): pins.internal_gpio_input_pin_schema,
         cv.Optional(CONF_RESET_PIN): pins.gpio_output_pin_schema,
         cv.Optional(CONF_RF_FIELD_ENABLED, default=True): cv.boolean,
+        cv.Optional(CONF_RF_POWER, default=15): cv.int_range(min=0, max=15),
         cv.Optional(CONF_ON_TAG): automation.validate_automation(
             {
                 cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(ST25RTagTrigger),
@@ -59,6 +61,7 @@ async def setup_st25r(var, config):
         cg.add(var.set_reset_pin(reset))
     
     cg.add(var.set_rf_field_enabled(config[CONF_RF_FIELD_ENABLED]))
+    cg.add(var.set_rf_power(config[CONF_RF_POWER]))
 
     for conf in config.get(CONF_ON_TAG, []):
         trigger = cg.new_Pvariable(conf[CONF_TRIGGER_ID], var)

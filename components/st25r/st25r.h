@@ -74,6 +74,7 @@ class ST25R : public PollingComponent {
   void set_reset_pin(GPIOPin *reset_pin) { this->reset_pin_ = reset_pin; }
   void set_irq_pin(InternalGPIOPin *irq_pin) { this->irq_pin_ = irq_pin; }
   void set_rf_field_enabled(bool enabled) { this->rf_field_enabled_ = enabled; }
+  void set_rf_power(uint8_t power) { this->rf_power_ = power; }
 
   void register_on_tag_trigger(ST25RTagTrigger *trig) { this->on_tag_triggers_.push_back(trig); }
   void register_on_tag_removed_trigger(ST25RTagRemovedTrigger *trig) {
@@ -100,6 +101,7 @@ class ST25R : public PollingComponent {
 
   bool tag_present_{false};
   bool rf_field_enabled_{true};
+  uint8_t rf_power_{15};
   std::string current_uid_;
   uint8_t missed_updates_{0};
 

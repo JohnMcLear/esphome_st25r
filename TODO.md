@@ -1,7 +1,7 @@
 # TODO List
 
 ## v1.1 Priorities
-- [ ] **RF Power Control**: Implement ability to adjust RF output power/field strength to optimize for different antennas and power constraints.
+- [x] **RF Power Control**: Implement ability to adjust RF output power/field strength to optimize for different antennas and power constraints.
 - [ ] **Health Check**: Periodically verify chip communication (e.g., via `IC_IDENTITY`) and implement auto-recovery if the hardware hangs.
 
 ## Feature & Reliability Parity with PN532

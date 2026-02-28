@@ -56,7 +56,10 @@ bool ST25R::reset_() {
   }
   delay(10);
   
-  this->write_register(0x28, 0xF0); 
+  // Apply RF Power setting to TX Driver register (0x28)
+  // Mapping: 15 (Max) -> 0x00 (Min Resistance), 0 (Min) -> 0xF0 (Max Resistance/High Z)
+  uint8_t d_res = (15 - this->rf_power_) << 4;
+  this->write_register(0x28, d_res); 
 
   return true;
 }
