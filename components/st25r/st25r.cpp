@@ -55,6 +55,9 @@ bool ST25R::reset_() {
   this->write_register(RX_CONF1, 0x00); 
   this->write_register(RX_CONF2, 0x68); 
 
+  // Enable interrupts: RX start, RX end, TX end, Error, Collision
+  this->write_register(MASK_MAIN, ~(0x80 | 0x40 | 0x20 | 0x10 | 0x08)); 
+
   // ISO14443A settings: Enable automatic CRC
   this->write_register(ISO14443A_CONF, 0x00); 
 
@@ -204,6 +207,22 @@ void ST25R::loop() {
       if (irq) {
         uint8_t main_irq = this->read_register(IRQ_MAIN);
         ESP_LOGV(TAG, "READ_UID IRQ received: 0x%02X at cascade %u", main_irq, this->cascade_level_);
+        
+        if (main_irq & 0x08) { // Collision
+          uint8_t col_reg = this->read_register(COLLISION_DISPLAY);
+          ESP_LOGW(TAG, "Collision detected at bit %u of cascade %u. Resolving...", col_reg >> 4, this->cascade_level_);
+          // Basic resolution: just retry the same level, the hardware/tag might resolve on next attempt or we can implement bitwise logic later
+          this->write_command(ST25R_CMD_CLEAR_FIFO);
+          uint8_t sel_cmds[] = {0x93, 0x95, 0x97};
+          uint8_t cl[] = {sel_cmds[this->cascade_level_], 0x20};
+          this->write_fifo(cl, 2);
+          this->write_register(NUM_TX_BYTES1, 0x00);
+          this->write_register(NUM_TX_BYTES2, 0x10); 
+          this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
+          this->last_state_change_ = millis();
+          return;
+        }
+
         uint8_t f1 = this->read_register(FIFO_STATUS1);
         if (f1 < 5) {
           this->state_ = STATE_IDLE;
