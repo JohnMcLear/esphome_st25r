@@ -2,12 +2,13 @@
 
 ## v1.1 Priorities
 - [x] **RF Power Control**: Implement ability to adjust RF output power/field strength to optimize for different antennas and power constraints.
-- [ ] **Health Check**: Periodically verify chip communication (e.g., via `IC_IDENTITY`) and implement auto-recovery if the hardware hangs.
+- [x] **Health Check**: Periodically verify chip communication (e.g., via `IC_IDENTITY`) and implement auto-recovery if the hardware hangs.
 
 ## Feature & Reliability Parity with PN532
-- [ ] **Component Status Tracking**: Mark the component as failed/unavailable in ESPHome if the hardware becomes unresponsive.
-- [ ] **Connectivity Binary Sensor**: Expose a binary sensor to Home Assistant indicating if the reader hardware is healthy.
+- [x] **Component Status Tracking**: Mark the component as failed/unavailable in ESPHome if the hardware becomes unresponsive.
+- [x] **Connectivity Binary Sensor**: Expose a binary sensor to Home Assistant indicating if the reader hardware is healthy.
 - [ ] **Non-Blocking Logic**: Refactor the `update()` loop into a non-blocking state machine to avoid ESPHome "took too long" warnings.
+- [ ] **I2C Verification**: Comprehensive testing of the I2C transport layer with actual hardware.
 
 ## Protocol Support
 - [ ] **Mifare Classic Support**: Implementation of authentication and sector reading/writing.
@@ -19,7 +20,7 @@
 
 ## Advanced Features
 - [ ] **Low Power "Sense" Mode**: Use capacitive/inductive wake-up to keep the RF field off until a tag is detected.
-- [ ] **RSSI Sensor**: Expose tag signal strength as a sensor.
+- [x] **RSSI Sensor**: Expose tag signal strength as a sensor (implemented as `field_strength`).
 - [ ] **Supply Voltage Sensor**: Monitor internal chip voltage levels.
 - [ ] **Card Emulation**: Allow the ESP32 to act as an NFC tag.
 

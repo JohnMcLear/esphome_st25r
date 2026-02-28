@@ -4,6 +4,7 @@
 #include "esphome/core/hal.h"
 #include "esphome/core/automation.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
+#include "esphome/components/sensor/sensor.h"
 #include <vector>
 #include <string>
 
@@ -31,6 +32,7 @@ enum ST25RRegister : uint8_t {
   FIFO_STATUS2 = 0x1F,
   NUM_TX_BYTES1 = 0x22,
   NUM_TX_BYTES2 = 0x23,
+  AD_CONV_RESULT = 0x2A,
   IC_IDENTITY = 0x3F,
 };
 
@@ -44,6 +46,7 @@ enum ST25RCommand : uint8_t {
   ST25R_CMD_TRANSMIT_REQA = 0xC6,
   ST25R_CMD_TRANSMIT_WUPA = 0xC7,
   ST25R_CMD_FIELD_ON = 0xC8,
+  ST25R_CMD_MEASURE_AMPLITUDE = 0xD3,
 };
 
 class ST25R;
@@ -81,6 +84,8 @@ class ST25R : public PollingComponent {
     this->on_tag_removed_triggers_.push_back(trig);
   }
   void register_tag(ST25RBinarySensor *tag) { this->binary_sensors_.push_back(tag); }
+  void set_status_binary_sensor(binary_sensor::BinarySensor *sensor) { this->status_binary_sensor_ = sensor; }
+  void set_field_strength_sensor(sensor::Sensor *sensor) { this->field_strength_sensor_ = sensor; }
 
   bool is_tag_present() const { return this->tag_present_; }
 
@@ -95,6 +100,7 @@ class ST25R : public PollingComponent {
   void field_on_();
   std::string read_uid_();
   bool wait_for_irq_(uint8_t mask, uint32_t timeout_ms);
+  void reinitialize_();
   
   GPIOPin *reset_pin_{nullptr};
   InternalGPIOPin *irq_pin_{nullptr};
@@ -102,12 +108,16 @@ class ST25R : public PollingComponent {
   bool tag_present_{false};
   bool rf_field_enabled_{true};
   uint8_t rf_power_{15};
+  uint8_t health_check_failures_{0};
+  uint8_t reinitialization_attempts_{0};
   std::string current_uid_;
   uint8_t missed_updates_{0};
 
   std::vector<ST25RTagTrigger *> on_tag_triggers_;
   std::vector<ST25RTagRemovedTrigger *> on_tag_removed_triggers_;
   std::vector<ST25RBinarySensor *> binary_sensors_;
+  binary_sensor::BinarySensor *status_binary_sensor_{nullptr};
+  sensor::Sensor *field_strength_sensor_{nullptr};
 };
 
 class ST25RBinarySensor : public binary_sensor::BinarySensor {

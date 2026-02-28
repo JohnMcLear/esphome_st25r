@@ -32,8 +32,11 @@ st25r_spi:
   id: my_st25r
   cs_pin: GPIO7
   irq_pin: GPIO6
-  rf_power: 15
   update_interval: 2s
+  status:
+    name: "ST25R Health"
+  field_strength:
+    name: "ST25R Field Strength"
   on_tag:
     then:
       - logger.log:

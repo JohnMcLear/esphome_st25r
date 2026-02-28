@@ -23,8 +23,14 @@ void ST25R::setup() {
 
   if (!this->reset_()) {
     ESP_LOGE(TAG, "Failed to reset chip");
+    if (this->status_binary_sensor_ != nullptr) {
+      this->status_binary_sensor_->publish_initial_state(false);
+    }
     this->mark_failed();
     return;
+  }
+  if (this->status_binary_sensor_ != nullptr) {
+    this->status_binary_sensor_->publish_initial_state(true);
   }
   ESP_LOGCONFIG(TAG, "ST25R initialized successfully.");
 }
@@ -64,8 +70,57 @@ bool ST25R::reset_() {
   return true;
 }
 
+void ST25R::reinitialize_() {
+  this->reinitialization_attempts_++;
+  ESP_LOGW(TAG, "Reinitializing ST25R (Attempt %u)...", this->reinitialization_attempts_);
+  if (this->reset_pin_ != nullptr) {
+    this->reset_pin_->digital_write(true);
+    delay(10);
+    this->reset_pin_->digital_write(false);
+    delay(10);
+  }
+  if (this->reset_()) {
+    this->health_check_failures_ = 0;
+    this->reinitialization_attempts_ = 0;
+    ESP_LOGI(TAG, "ST25R reinitialized successfully.");
+  } else {
+    ESP_LOGE(TAG, "ST25R reinitialization failed.");
+    if (this->reinitialization_attempts_ >= 3) {
+      ESP_LOGE(TAG, "Too many reinitialization failures, marking component as FAILED.");
+      this->mark_failed();
+    }
+  }
+}
+
 void ST25R::update() {
   if (this->is_failed()) return;
+
+  // Health Check: Verify chip communication
+  uint8_t ic_identity = this->read_register(IC_IDENTITY);
+  if ((ic_identity >> 3) != 0x05) {
+    this->health_check_failures_++;
+    ESP_LOGW(TAG, "Health check failed (%u/3). IC Identity: 0x%02X", this->health_check_failures_, ic_identity);
+    if (this->status_binary_sensor_ != nullptr) {
+      this->status_binary_sensor_->publish_state(false);
+    }
+    if (this->health_check_failures_ >= 3) {
+      this->reinitialize_();
+    }
+    return;
+  }
+  
+  this->health_check_failures_ = 0;
+  if (this->status_binary_sensor_ != nullptr) {
+    this->status_binary_sensor_->publish_state(true);
+  }
+
+  // Field Strength Measurement
+  if (this->rf_field_enabled_ && this->field_strength_sensor_ != nullptr) {
+    this->write_command(ST25R_CMD_MEASURE_AMPLITUDE);
+    delay(2);
+    uint8_t amplitude = this->read_register(AD_CONV_RESULT);
+    this->field_strength_sensor_->publish_state(amplitude);
+  }
 
   this->read_register(IRQ_MAIN);
   this->read_register(IRQ_TIMER);
@@ -190,7 +245,10 @@ bool ST25R::wait_for_irq_(uint8_t mask, uint32_t timeout_ms) {
       if (this->irq_pin_->digital_read()) return true;
     } else {
       uint8_t irq = this->read_register(IRQ_MAIN);
-      if (irq & mask) return true;
+      if (irq > 0) {
+        ESP_LOGV(TAG, "IRQ Seen: 0x%02X (mask: 0x%02X)", irq, mask);
+        if (irq & mask) return true;
+      }
     }
     delay(1);
   }
@@ -203,7 +261,9 @@ void ST25R::field_on_() {
   delay(10);
   this->write_command(ST25R_CMD_FIELD_ON);
   delay(10);
-  this->write_register(OP_CONTROL, 0xC0); 
+  this->write_register(OP_CONTROL, 0xC8); // en=1, rf_en=1, rx_en=1, tx_en=1
+  uint8_t op = this->read_register(OP_CONTROL);
+  ESP_LOGD(TAG, "Field ON status - OP_CONTROL: 0x%02X", op);
 }
 
 void ST25R::dump_config() {
