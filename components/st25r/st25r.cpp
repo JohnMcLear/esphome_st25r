@@ -357,8 +357,8 @@ bool ST25R::reset_() {
   uint8_t ic_identity = this->read_register(IC_IDENTITY);
   if ((ic_identity >> 3) != 0x05) return false;
 
-  this->write_register(IO_CONF1, 0x80); 
-  this->write_register(IO_CONF2, 0x80); 
+  this->write_register(IO_CONF1, 0x00);  // single=0: differential antenna driving (full power)
+  this->write_register(IO_CONF2, 0x00);  // sup3V=0: 5V supply
   this->write_register(MODE, 0x08); 
   this->write_register(BIT_RATE, 0x00); 
   this->write_register(RX_CONF1, 0x00); 
