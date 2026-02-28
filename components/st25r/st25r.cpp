@@ -290,6 +290,7 @@ void ST25R::loop() {
             ESP_LOGW(TAG, "Partial response (0x28) at cascade %u. Treating as collision.", this->cascade_level_);
           }
           // Resolve: retry cascade
+          delay(5);
           this->write_command(ST25R_CMD_CLEAR_FIFO);
           uint8_t sel_cmds[] = {0x93, 0x95, 0x97};
           uint8_t cl[] = {sel_cmds[this->cascade_level_], 0x20};
