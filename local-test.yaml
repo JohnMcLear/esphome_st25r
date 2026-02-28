@@ -32,7 +32,8 @@ st25r_spi:
   id: my_st25r
   cs_pin: GPIO7
   irq_pin: GPIO6
-  update_interval: 2s
+  rf_power: 15
+  update_interval: 5s
   status:
     name: "ST25R Health"
   field_strength:

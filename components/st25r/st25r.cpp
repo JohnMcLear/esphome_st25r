@@ -10,17 +10,24 @@ namespace st25r {
 
 static const char *const TAG = "st25r";
 
+void ST25R::isr(ST25R *arg) {
+  arg->irq_triggered_ = true;
+}
+
 void ST25R::setup() {
   ESP_LOGCONFIG(TAG, "Setting up ST25R...");
-
   if (this->reset_pin_ != nullptr) {
     this->reset_pin_->setup();
-    this->reset_pin_->digital_write(true); 
+    this->reset_pin_->digital_write(true);
     delay(10);
     this->reset_pin_->digital_write(false); 
     delay(10);
   }
-  this->irq_pin_->setup();
+  
+  if (this->irq_pin_ != nullptr) {
+    this->irq_pin_->setup();
+    this->irq_pin_->attach_interrupt(ST25R::isr, this, gpio::INTERRUPT_RISING_EDGE);
+  }
 
   if (!this->reset_()) {
     ESP_LOGE(TAG, "Failed to reset chip");
@@ -36,74 +43,12 @@ void ST25R::setup() {
   ESP_LOGCONFIG(TAG, "ST25R initialized successfully.");
 }
 
-bool ST25R::reset_() {
-  this->write_command(ST25R_CMD_SET_DEFAULT);
-  delay(10);
-
-  uint8_t ic_identity = this->read_register(IC_IDENTITY);
-  ESP_LOGD(TAG, "IC Identity: 0x%02X", ic_identity);
-
-  if ((ic_identity >> 3) != 0x05) {
-    ESP_LOGE(TAG, "Chip not responding correctly (ID: 0x%02X)", ic_identity);
-    return false;
-  }
-
-  this->write_register(IO_CONF1, 0x80); 
-  this->write_register(IO_CONF2, 0x80); 
-  this->write_register(MODE, 0x08); 
-  this->write_register(BIT_RATE, 0x00); 
-  this->write_register(RX_CONF1, 0x00); 
-  this->write_register(RX_CONF2, 0x68); 
-
-  // Enable interrupts: RX start, RX end, TX end, Error, Collision
-  this->write_register(MASK_MAIN, ~(0x80 | 0x40 | 0x20 | 0x10 | 0x08)); 
-
-  // ISO14443A settings: Enable automatic CRC
-  this->write_register(ISO14443A_CONF, 0x00); 
-
-  if (this->rf_field_enabled_) {
-    this->field_on_();
-  }
-  delay(10);
-  
-  // Apply RF Power setting to TX Driver register
-  // Mapping: 15 (Max) -> 0x00 (Min Resistance), 0 (Min) -> 0xF0 (Max Resistance/High Z)
-  uint8_t d_res = (15 - this->rf_power_) << 4;
-  this->write_register(TX_DRIVER_CONF, d_res); 
-
-  return true;
-}
-
-void ST25R::reinitialize_() {
-  this->reinitialization_attempts_++;
-  ESP_LOGW(TAG, "Reinitializing ST25R (Attempt %u)...", this->reinitialization_attempts_);
-  if (this->reset_pin_ != nullptr) {
-    this->reset_pin_->digital_write(true);
-    delay(10);
-    this->reset_pin_->digital_write(false);
-    delay(10);
-  }
-  if (this->reset_()) {
-    this->health_check_failures_ = 0;
-    this->reinitialization_attempts_ = 0;
-    ESP_LOGI(TAG, "ST25R reinitialized successfully.");
-  } else {
-    ESP_LOGE(TAG, "ST25R reinitialization failed.");
-    if (this->reinitialization_attempts_ >= 3) {
-      ESP_LOGE(TAG, "Too many reinitialization failures, marking component as FAILED.");
-      this->mark_failed();
-    }
-  }
-}
-
 void ST25R::update() {
   if (this->is_failed() || this->state_ != STATE_IDLE) return;
 
-  // Health Check: Verify chip communication
   uint8_t ic_identity = this->read_register(IC_IDENTITY);
   if ((ic_identity >> 3) != 0x05) {
     this->health_check_failures_++;
-    ESP_LOGW(TAG, "Health check failed (%u/3). IC Identity: 0x%02X", this->health_check_failures_, ic_identity);
     if (this->status_binary_sensor_ != nullptr) {
       this->status_binary_sensor_->publish_state(false);
     }
@@ -118,10 +63,8 @@ void ST25R::update() {
     this->status_binary_sensor_->publish_state(true);
   }
 
-  // Field Strength Measurement
   if (this->rf_field_enabled_ && this->field_strength_sensor_ != nullptr) {
     this->write_command(ST25R_CMD_MEASURE_AMPLITUDE);
-    // Result will be read in the next cycle or after a short delay
     uint8_t amplitude = this->read_register(AD_CONV_RESULT);
     this->field_strength_sensor_->publish_state(amplitude);
   }
@@ -135,6 +78,7 @@ void ST25R::update() {
     this->write_register(OP_CONTROL, 0xC8); 
   }
 
+  this->irq_triggered_ = false;
   this->write_command(ST25R_CMD_TRANSMIT_WUPA);
   delay(1);
   this->state_ = STATE_WUPA;
@@ -143,71 +87,69 @@ void ST25R::update() {
 
 bool ST25R::transceive_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, uint32_t timeout_ms) {
   this->write_command(ST25R_CMD_CLEAR_FIFO);
-  this->read_register(IRQ_MAIN); // Clear IRQs
+  this->read_register(IRQ_MAIN); 
 
   this->write_fifo(data, len);
-  
-  // Set number of bytes to transmit
   this->write_register(NUM_TX_BYTES1, (len >> 8) & 0xFF);
-  this->write_register(NUM_TX_BYTES2, len & 0xFF);
+  this->write_register(NUM_TX_BYTES2, (len & 0x1F) << 3); 
   
+  this->irq_triggered_ = false;
   this->write_command(ST25R_CMD_TRANSMIT_WITH_CRC);
   delay(5);
 
-  if (!this->wait_for_irq_(0xF8, timeout_ms)) {
-    return false;
+  uint32_t start = millis();
+  while (millis() - start < timeout_ms) {
+    if (this->irq_triggered_) {
+      this->irq_triggered_ = false;
+      uint8_t irq = this->read_register(IRQ_MAIN);
+      if (irq & 0x40) { // RXE
+        uint8_t f1 = this->read_register(FIFO_STATUS1);
+        resp_len = (f1 > 64) ? 64 : f1;
+        this->read_fifo(resp, resp_len);
+        return true;
+      }
+      if (irq & 0x10) return false; 
+    }
+    delay(1);
   }
-
-  uint8_t irq = this->read_register(IRQ_MAIN);
-  if (irq & 0x08) return false; // Collision
-
-  uint8_t f1 = this->read_register(FIFO_STATUS1);
-  if (f1 == 0) {
-    resp_len = 0;
-    return true;
-  }
-
-  resp_len = (f1 > 64) ? 64 : f1;
-  this->read_fifo(resp, resp_len);
-  return true;
+  return false;
 }
 
 std::unique_ptr<nfc::NfcTag> ST25R::read_tag_(std::vector<uint8_t> &uid) {
-  ESP_LOGD(TAG, "Reading tag data for UID: %s", nfc::format_bytes(uid).c_str());
   uint8_t type = nfc::guess_tag_type(uid.size());
   
   if (type == nfc::TAG_TYPE_2) {
-    ESP_LOGD(TAG, "Mifare Ultralight/NTAG detected, reading NDEF...");
-    
     std::vector<uint8_t> data;
     uint8_t buffer[16];
     uint8_t len;
 
-    // Read pages 3-6 (standard NDEF area start for Type 2)
-    uint8_t read_cmd[2] = {0x30, 0x03}; // READ page 0x03
+    uint8_t read_cmd[2] = {0x30, 0x03}; 
     if (this->transceive_(read_cmd, 2, buffer, len) && len >= 16) {
       data.insert(data.end(), buffer, buffer + 16);
       
-      // Basic check if NDEF formatted
-      if (data[5] == 0x03 || (data.size() > 9 && data[9] == 0x03)) {
-        uint8_t msg_len = (data[5] == 0x03) ? data[6] : data[10];
-        uint8_t msg_start = (data[5] == 0x03) ? 7 : 11;
+      size_t tlv_index = 0;
+      bool found = false;
+      for (size_t i = 0; i < 15; i++) { 
+        if (data[i] == 0x03) {
+          tlv_index = i;
+          found = true;
+          break;
+        }
+      }
+
+      if (found) {
+        uint8_t msg_len = data[tlv_index + 1];
+        size_t msg_start_idx = tlv_index + 2;
         
-        ESP_LOGD(TAG, "Found NDEF message of length %u", msg_len);
-        
-        // Read more if needed
-        uint8_t current_page = 0x07;
-        while (data.size() < (size_t)(msg_len + msg_start)) {
-          read_cmd[1] = current_page;
+        while (data.size() < (size_t)(msg_start_idx + msg_len)) {
+          uint8_t next_page = data.size() / 4;
+          read_cmd[1] = next_page;
           if (!this->transceive_(read_cmd, 2, buffer, len) || len < 16) break;
           data.insert(data.end(), buffer, buffer + 16);
-          current_page += 4;
         }
         
-        // Trim to actual message content
-        if (data.size() >= (size_t)(msg_len + msg_start)) {
-          std::vector<uint8_t> ndef_data(data.begin() + (msg_start - 4), data.begin() + (msg_start - 4) + msg_len + 4);
-          // Standard ESPHome NfcTag constructor handles parsing if type and data are provided
+        if (data.size() >= (size_t)(msg_start_idx + msg_len)) {
+          std::vector<uint8_t> ndef_data(data.begin() + msg_start_idx, data.begin() + msg_start_idx + msg_len);
           return make_unique<nfc::NfcTag>(uid, nfc::NFC_FORUM_TYPE_2, ndef_data);
         }
       }
@@ -226,100 +168,58 @@ void ST25R::loop() {
       break;
 
     case STATE_WUPA: {
-      if (millis() - this->last_state_change_ > 50) { // Timeout
-        ESP_LOGV(TAG, "WUPA Timeout");
+      if (millis() - this->last_state_change_ > 50) { 
         this->state_ = STATE_IDLE;
         this->missed_updates_++;
-        if (this->tag_present_ && this->missed_updates_ >= 2) {
-           ESP_LOGD(TAG, "Resetting field to recover tag...");
-           this->write_register(OP_CONTROL, 0x08); // Field OFF
-           delay(10);
-           this->write_register(OP_CONTROL, 0xC8); // Field ON
-           delay(10);
-        }
         return;
       }
 
-      bool irq = false;
-      if (this->irq_pin_ != nullptr) {
-        irq = this->irq_pin_->digital_read();
-      } else {
-        irq = (this->read_register(IRQ_MAIN) & 0xF8) != 0;
-      }
-
-      if (irq) {
+      if (this->irq_triggered_) {
+        this->irq_triggered_ = false;
         uint8_t main_irq = this->read_register(IRQ_MAIN);
-        ESP_LOGV(TAG, "WUPA IRQ received: 0x%02X", main_irq);
         uint8_t f1 = this->read_register(FIFO_STATUS1);
         if (f1 > 0) {
-          ESP_LOGV(TAG, "Tag detected via WUPA, switching to READ_UID");
           this->cascade_level_ = 0;
           this->current_uid_ = "";
           this->state_ = STATE_READ_UID;
           this->last_state_change_ = millis();
-          // Start first cascade
           this->write_command(ST25R_CMD_CLEAR_FIFO);
-          uint8_t sel_cmds[] = {0x93, 0x95, 0x97};
-          uint8_t cl[] = {sel_cmds[0], 0x20};
+          uint8_t cl[] = {0x93, 0x20};
+          this->irq_triggered_ = false;
           this->write_fifo(cl, 2);
           this->write_register(NUM_TX_BYTES1, 0x00);
           this->write_register(NUM_TX_BYTES2, 0x10); 
           this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
         } else {
-          ESP_LOGV(TAG, "WUPA IRQ but empty FIFO");
           this->state_ = STATE_IDLE;
-          this->process_tag_removed_();
         }
       }
       break;
     }
 
     case STATE_READ_UID: {
-      if (millis() - this->last_state_change_ > 100) { // Timeout
-        ESP_LOGV(TAG, "READ_UID Timeout at cascade %u", this->cascade_level_);
+      if (millis() - this->last_state_change_ > 500) { 
         this->state_ = STATE_IDLE;
         return;
       }
 
-      bool irq = false;
-      if (this->irq_pin_ != nullptr) {
-        irq = this->irq_pin_->digital_read();
-      } else {
-        irq = (this->read_register(IRQ_MAIN) & 0xF8) != 0;
-      }
-
-      if (irq) {
-        delay(5);
+      if (this->irq_triggered_) {
+        this->irq_triggered_ = false;
+        delay(10);
         uint8_t main_irq = this->read_register(IRQ_MAIN);
-        ESP_LOGD(TAG, "READ_UID IRQ received: 0x%02X at cascade %u", main_irq, this->cascade_level_);
-        
-        if ((main_irq & 0x08) || main_irq == 0x28) { // Collision or Partial RX
-          uint8_t col_reg = 0;
-          if (main_irq & 0x08) {
-            col_reg = this->read_register(COLLISION_DISPLAY);
-            ESP_LOGW(TAG, "Collision detected at bit %u of cascade %u. Resolving...", col_reg >> 4, this->cascade_level_);
-          } else {
-            ESP_LOGW(TAG, "Partial response (0x28) at cascade %u. Resetting field...", this->cascade_level_);
-          }
-          // Reset field to clear tag state
-          this->write_register(OP_CONTROL, 0x08); // Field OFF
-          delay(10);
-          this->write_register(OP_CONTROL, 0xC8); // Field ON
-          delay(10);
-          this->state_ = STATE_IDLE;
-          return;
-        }
-
         uint8_t f1 = this->read_register(FIFO_STATUS1);
-        if (f1 < 5) {
+        
+        if (f1 == 0) {
           this->state_ = STATE_IDLE;
-          this->process_tag_removed_();
           return;
         }
 
         uint8_t resp[16];
         uint8_t actual_len = (f1 > 16) ? 16 : f1;
         this->read_fifo(resp, actual_len);
+        
+        std::vector<uint8_t> resp_vec(resp, resp + actual_len);
+        ESP_LOGD(TAG, "CL %u response: %s (b0=0x%02X, f1=%u, IRQ:0x%02X)", this->cascade_level_, nfc::format_bytes(resp_vec).c_str(), resp[0], f1, main_irq);
 
         if (resp[0] == 0x88) {
           for (int i = 1; i < 4; i++) {
@@ -327,27 +227,21 @@ void ST25R::loop() {
             sprintf(buf, "%02X", resp[i]);
             this->current_uid_ += buf;
           }
-          // SELECT this level
-          this->write_command(ST25R_CMD_CLEAR_FIFO);
           uint8_t sel_cmds[] = {0x93, 0x95, 0x97};
           uint8_t sel_pk[7] = {sel_cmds[this->cascade_level_], 0x70, resp[0], resp[1], resp[2], resp[3], resp[4]};
+          this->write_command(ST25R_CMD_CLEAR_FIFO);
+          this->irq_triggered_ = false;
           this->write_fifo(sel_pk, 7);
           this->write_register(NUM_TX_BYTES1, 0x00);
           this->write_register(NUM_TX_BYTES2, 0x38); 
           this->write_command(ST25R_CMD_TRANSMIT_WITH_CRC);
           
           this->cascade_level_++;
-          if (this->cascade_level_ >= 3) { // Should not happen for standard cards
-            this->state_ = STATE_IDLE;
-            return;
-          }
-          
-          // Wait for SELECT IRQ then start next level
-          delay(10); // increased delay
-          this->read_register(IRQ_MAIN); // Clear select IRQ
-
+          delay(20); 
+          this->read_register(IRQ_MAIN); 
           this->write_command(ST25R_CMD_CLEAR_FIFO);
           uint8_t next_cl[] = {sel_cmds[this->cascade_level_], 0x20};
+          this->irq_triggered_ = false;
           this->write_fifo(next_cl, 2);
           this->write_register(NUM_TX_BYTES1, 0x00);
           this->write_register(NUM_TX_BYTES2, 0x10); 
@@ -360,21 +254,27 @@ void ST25R::loop() {
             this->current_uid_ += buf;
           }
           
-          // Tag found!
           this->missed_updates_ = 0;
+          std::vector<uint8_t> uid_bytes;
+          for (size_t i = 0; i < this->current_uid_.length(); i += 2) {
+            std::string byteString = this->current_uid_.substr(i, 2);
+            uint8_t byte = (uint8_t) strtol(byteString.c_str(), nullptr, 16);
+            uid_bytes.push_back(byte);
+          }
+          
+          auto nfc_tag = this->read_tag_(uid_bytes);
+          if (nfc_tag->has_ndef_message()) {
+            auto &message = nfc_tag->get_ndef_message();
+            for (auto &record : message->get_records()) {
+              ESP_LOGI(TAG, "  NDEF Record type: %s", record->get_type().c_str());
+              ESP_LOGI(TAG, "  NDEF Payload: %s", record->get_payload().c_str());
+            }
+          }
+
           if (!this->tag_present_ || this->tag_present_uid_ != this->current_uid_) {
-            ESP_LOGI(TAG, "New Tag Detected: %s", this->current_uid_.c_str());
             this->tag_present_ = true;
             this->tag_present_uid_ = this->current_uid_;
 
-            std::vector<uint8_t> uid_bytes;
-            for (size_t i = 0; i < this->current_uid_.length(); i += 2) {
-              std::string byteString = this->current_uid_.substr(i, 2);
-              uint8_t byte = (uint8_t) strtol(byteString.c_str(), nullptr, 16);
-              uid_bytes.push_back(byte);
-            }
-            
-            auto nfc_tag = this->read_tag_(uid_bytes);
             for (auto *listener : this->tag_listeners_) {
               listener->tag_on(*nfc_tag);
             }
@@ -429,29 +329,63 @@ void ST25R::process_tag_removed_() {
 bool ST25R::wait_for_irq_(uint8_t mask, uint32_t timeout_ms) {
   uint32_t start = millis();
   while (millis() - start < timeout_ms) {
-    if (this->irq_pin_ != nullptr) {
-      if (this->irq_pin_->digital_read()) return true;
-    } else {
-      uint8_t irq = this->read_register(IRQ_MAIN);
-      if (irq > 0) {
-        ESP_LOGV(TAG, "IRQ Seen: 0x%02X (mask: 0x%02X)", irq, mask);
-        if (irq & mask) return true;
-      }
+    if (this->irq_triggered_) {
+       return true;
     }
     delay(1);
   }
   return false;
 }
 
+bool ST25R::reset_() {
+  this->write_command(ST25R_CMD_SET_DEFAULT);
+  delay(10);
+
+  uint8_t ic_identity = this->read_register(IC_IDENTITY);
+  if ((ic_identity >> 3) != 0x05) return false;
+
+  this->write_register(IO_CONF1, 0x80); 
+  this->write_register(IO_CONF2, 0x80); 
+  this->write_register(MODE, 0x08); 
+  this->write_register(BIT_RATE, 0x00); 
+  this->write_register(RX_CONF1, 0x00); 
+  this->write_register(RX_CONF2, 0x68); 
+  this->write_register(0x09, 0x01); 
+  this->write_register(0x0A, 0x10); 
+  this->write_register(MASK_MAIN, 0x07); 
+  this->write_register(ISO14443A_CONF, 0x00); 
+
+  if (this->rf_field_enabled_) this->field_on_();
+  delay(10);
+  
+  uint8_t d_res = (15 - this->rf_power_) << 4;
+  this->write_register(TX_DRIVER_CONF, d_res); 
+
+  return true;
+}
+
+void ST25R::reinitialize_() {
+  this->reinitialization_attempts_++;
+  if (this->reset_pin_ != nullptr) {
+    this->reset_pin_->digital_write(true);
+    delay(10);
+    this->reset_pin_->digital_write(false);
+    delay(10);
+  }
+  if (this->reset_()) {
+    this->health_check_failures_ = 0;
+    this->reinitialization_attempts_ = 0;
+  } else {
+    if (this->reinitialization_attempts_ >= 3) this->mark_failed();
+  }
+}
+
 void ST25R::field_on_() {
-  ESP_LOGD(TAG, "Turning field ON...");
   this->write_register(OP_CONTROL, 0x80); 
   delay(10);
   this->write_command(ST25R_CMD_FIELD_ON);
   delay(10);
-  this->write_register(OP_CONTROL, 0xC8); // en=1, rf_en=1, rx_en=1, tx_en=1
-  uint8_t op = this->read_register(OP_CONTROL);
-  ESP_LOGD(TAG, "Field ON status - OP_CONTROL: 0x%02X", op);
+  this->write_register(OP_CONTROL, 0xC8); 
 }
 
 void ST25R::dump_config() {
@@ -470,7 +404,6 @@ bool ST25RBinarySensor::process(const std::string &uid) {
     sprintf(buf, "%02X", b);
     target_uid += buf;
   }
-
   if (uid == target_uid) {
     this->publish_state(true);
     this->found_ = true;

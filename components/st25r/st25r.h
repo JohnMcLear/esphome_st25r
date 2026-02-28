@@ -115,6 +115,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   void reinitialize_();
   bool transceive_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, uint32_t timeout_ms = 50);
   std::unique_ptr<nfc::NfcTag> read_tag_(std::vector<uint8_t> &uid);
+  static void isr(ST25R *arg);
   
   GPIOPin *reset_pin_{nullptr};
   InternalGPIOPin *irq_pin_{nullptr};
@@ -125,6 +126,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   uint8_t rf_power_{15};
   uint8_t health_check_failures_{0};
   uint8_t reinitialization_attempts_{0};
+  volatile bool irq_triggered_{false};
   State state_{STATE_IDLE};
   uint32_t last_state_change_{0};
   uint8_t cascade_level_{0};
