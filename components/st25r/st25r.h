@@ -43,6 +43,7 @@ enum ST25RRegister : uint8_t {
 // ST25R Commands
 enum ST25RCommand : uint8_t {
   ST25R_CMD_SET_DEFAULT = 0xC1,
+  ST25R_CMD_READ_FIFO = 0x9F,
   ST25R_CMD_STOP_ALL = 0xC2,
   ST25R_CMD_CLEAR_FIFO = 0xC3,
   ST25R_CMD_TRANSMIT_WITH_CRC = 0xC4,
@@ -51,6 +52,7 @@ enum ST25RCommand : uint8_t {
   ST25R_CMD_TRANSMIT_WUPA = 0xC7,
   ST25R_CMD_FIELD_ON = 0xC8,
   ST25R_CMD_MEASURE_AMPLITUDE = 0xD3,
+  ST25R_CMD_ADJUST_REGULATORS = 0xD6,
 };
 
 class ST25R;
@@ -76,7 +78,8 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   enum State {
     STATE_IDLE,
     STATE_WUPA,
-    STATE_READ_UID,
+    STATE_ANTICOL,
+    STATE_SELECT,
     STATE_REINITIALIZING,
   };
 
@@ -86,10 +89,14 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   void loop() override;
   float get_setup_priority() const override { return setup_priority::DATA; }
 
+  bool ndef_write(nfc::NdefMessage *message);
+  bool clean_tag();
+
   void set_reset_pin(GPIOPin *reset_pin) { this->reset_pin_ = reset_pin; }
   void set_irq_pin(InternalGPIOPin *irq_pin) { this->irq_pin_ = irq_pin; }
   void set_rf_field_enabled(bool enabled) { this->rf_field_enabled_ = enabled; }
   void set_rf_power(uint8_t power) { this->rf_power_ = power; }
+  void set_supply_3v3(bool supply_3v3) { this->supply_3v3_ = supply_3v3; }
 
   void register_on_tag_trigger(ST25RTagTrigger *trig) { this->on_tag_triggers_.push_back(trig); }
   void register_on_tag_removed_trigger(ST25RTagRemovedTrigger *trig) {
@@ -114,6 +121,8 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   bool wait_for_irq_(uint8_t mask, uint32_t timeout_ms);
   void reinitialize_();
   bool transceive_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, uint32_t timeout_ms = 50);
+  bool transceive_no_crc_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, uint32_t timeout_ms = 50);
+  bool transceive_ex_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, bool with_crc, uint32_t timeout_ms = 50);
   std::unique_ptr<nfc::NfcTag> read_tag_(std::vector<uint8_t> &uid);
   static void isr(ST25R *arg);
   
@@ -124,16 +133,22 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   std::string tag_present_uid_;
   bool rf_field_enabled_{true};
   uint8_t rf_power_{15};
+  bool supply_3v3_{true};
   uint8_t health_check_failures_{0};
   uint8_t reinitialization_attempts_{0};
   volatile bool irq_triggered_{false};
   volatile uint8_t irq_status_{0};
   
-  static const uint8_t IRQ_RXS = 0x80;
-  static const uint8_t IRQ_RXE = 0x40;
-  static const uint8_t IRQ_TXE = 0x20;
-  static const uint8_t IRQ_ERR = 0x10;
+  static const uint8_t IRQ_OSC = 0x80;
+  static const uint8_t IRQ_WL  = 0x40;
+  static const uint8_t IRQ_RXS = 0x20;
+  static const uint8_t IRQ_TXE = 0x10;
   static const uint8_t IRQ_COL = 0x08;
+  static const uint8_t IRQ_RX_REST = 0x04;
+  static const uint8_t IRQ_RXE = 0x02;
+  static const uint8_t IRQ_NRE = 0x01;
+  static const uint8_t IRQ_ERR = 0x08; // Mapping COL to ERR for general error handling
+  
   State state_{STATE_IDLE};
   uint32_t last_state_change_{0};
   uint8_t cascade_level_{0};

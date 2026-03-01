@@ -13,6 +13,21 @@ from esphome.const import (
     CONF_STATUS,
 )
 
+from esphome import automation, pins
+import esphome.codegen as cg
+import esphome.config_validation as cv
+from esphome.components import binary_sensor as binary_sensor_
+from esphome.components import sensor as sensor_
+from esphome.const import (
+    CONF_ID,
+    CONF_ON_TAG,
+    CONF_ON_TAG_REMOVED,
+    CONF_TRIGGER_ID,
+    CONF_IRQ_PIN,
+    CONF_RESET_PIN,
+    CONF_STATUS,
+)
+
 CODEOWNERS = ["@JohnMcLear"]
 AUTO_LOAD = ["binary_sensor", "sensor", "nfc"]
 MULTI_CONF = True
@@ -20,6 +35,7 @@ MULTI_CONF = True
 CONF_ST25R_ID = "st25r_id"
 CONF_RF_FIELD_ENABLED = "rf_field_enabled"
 CONF_RF_POWER = "rf_power"
+CONF_SUPPLY_3V3 = "supply_3v3"
 CONF_FIELD_STRENGTH = "field_strength"
 
 st25r_ns = cg.esphome_ns.namespace("st25r")
@@ -39,6 +55,7 @@ ST25R_SCHEMA = cv.Schema(
         cv.Optional(CONF_RESET_PIN): pins.gpio_output_pin_schema,
         cv.Optional(CONF_RF_FIELD_ENABLED, default=True): cv.boolean,
         cv.Optional(CONF_RF_POWER, default=15): cv.int_range(min=0, max=15),
+        cv.Optional(CONF_SUPPLY_3V3, default=True): cv.boolean,
         cv.Optional(CONF_STATUS): binary_sensor_.binary_sensor_schema(),
         cv.Optional(CONF_FIELD_STRENGTH): sensor_.sensor_schema(),
         cv.Optional(CONF_ON_TAG): automation.validate_automation(
@@ -68,6 +85,7 @@ async def setup_st25r(var, config):
     
     cg.add(var.set_rf_field_enabled(config[CONF_RF_FIELD_ENABLED]))
     cg.add(var.set_rf_power(config[CONF_RF_POWER]))
+    cg.add(var.set_supply_3v3(config[CONF_SUPPLY_3V3]))
 
     if CONF_STATUS in config:
         sens = await binary_sensor_.new_binary_sensor(config[CONF_STATUS])

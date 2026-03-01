@@ -7,7 +7,7 @@ namespace st25r_spi {
 static const char *const TAG = "st25r_spi";
 
 void ST25RSpi::setup() {
-  ESP_LOGCONFIG(TAG, "Setting up ST25R SPI...");
+  ESP_LOGI(TAG, "Setting up ST25R SPI device...");
   this->spi_setup();
   st25r::ST25R::setup();
 }

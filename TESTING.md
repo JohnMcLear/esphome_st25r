@@ -56,25 +56,38 @@ binary_sensor:
 
 ## 3. Test Cases
 
-### Phase 1: Communication & Stability (10 mins)
-| Test Case | Procedure | Expected Result |
+### Phase 1: Communication & Stability
+| Test Case | Operator Action | Expected Result |
 |---|---|---|
-| **Mixed Boot** | Power on with both I2C and SPI modules. | Logs show successful initialization for both `ST25R_i2c` and `ST25R_spi`. |
-| **I2C Recovery** | Disconnect I2C SDA/SCL briefly. | `hub_i2c` enters backoff/re-init state machine. `hub_spi` remains unaffected. |
-| **SPI Recovery** | Disconnect SPI CS pin briefly. | `hub_spi` enters backoff/re-init state machine. `hub_i2c` remains unaffected. |
-| **Health Check** | Leave idle for 60s. | Both interfaces log successful periodic health checks. |
+| **Mixed Boot** | **Readers:** Empty. **Action:** Power cycle ESP32. | Logs show initialization for both `ST25R_i2c` and `ST25R_spi`. |
+| **I2C Recovery** | **Readers:** Empty. **Action:** Briefly disconnect I2C SDA wire. | `hub_i2c` enters backoff. `hub_spi` unaffected. Reconnect to see recovery. |
+| **SPI Recovery** | **Readers:** Empty. **Action:** Briefly disconnect SPI CS wire. | `hub_spi` enters backoff. `hub_i2c` unaffected. Reconnect to see recovery. |
+| **Health Check** | **Readers:** Empty. **Action:** Leave idle for 60s. | Both log periodic version/health checks. |
 
-### Phase 2: Card Detection & Logic (10 mins)
-| Test Case | Procedure | Expected Result |
+### Phase 2: Card Detection & Logic
+| Test Case | Operator Action | Expected Result |
 |---|---|---|
-| **Cross-Bus Read** | Present the same physical tag to I2C then SPI. | Both readers correctly identify the UID and trigger their respective binary sensors. |
-| **Anti-Collision** | Present two different tags to the same reader simultaneously. | One tag is consistently selected and read (standard ST25R behavior). Main thread does not block. |
-| **Flapping Fix** | Place a tag on the SPI reader and leave it. | `on_tag` fires once. No removals/re-adds occur in the logs during the next 60s. |
+| **Cross-Bus Read** | **Action 1:** Place Mifare Classic on I2C. **Action 2:** Move same card to SPI. | Both readers correctly identify UID and trigger sensors. |
+| **Anti-Collision** | **Action:** Place two different tags (e.g., NTAG and Ultralight) on I2C simultaneously. | One tag consistently read. No main thread blocking. |
+| **Flapping Fix** | **Action:** Place a tag on SPI and leave it for 60s. | `on_tag` fires once. No removal/re-add logs during dwell. |
+| **Dual Detection** | **Action:** Place one card on I2C and another on SPI simultaneously. | Both cards detected and held in ON state concurrently. |
 
-### Phase 3: NDEF Operations (10 mins)
-| Test Case | Procedure | Expected Result |
+### Phase 3: NDEF Operations
+| Test Case | Operator Action | Expected Result |
 |---|---|---|
-| **I2C NDEF Write** | Perform an NDEF write on the I2C bus. | Successful write logged. Main thread remains responsive during the non-blocking cycle. |
-| **SPI NDEF Write** | Perform an NDEF write on the SPI bus. | Successful write logged. |
-| **Mifare Formatting** | Present a "virgin" Mifare Classic card to either bus. | Component successfully authenticates with default key, formats to NDEF, and writes URI. |
+| **NDEF Read/Write** | **Action:** Place NTAG on I2C. Observe write verification logs. | Successful NDEF interaction logged. Main thread responsive. |
+| **Mifare Format** | **Action:** Place "virgin" Mifare Classic on SPI. | Component authenticates, formats, and writes URI successfully. |
+
+
+## 4. Success Criteria
+- [x] **SPI Hardware:** ST25R initializes and reads tags reliably over the SPI bus without timeouts or data corruption.
+- [x] **Dual Bus Operation:** Simultaneous I2C and SPI readers function correctly on the same ESP32-C6.
+- [x] **Multi-Tag Detection:** Correctly identifies and parses 2 tags in a single poll.
+- [x] Non-blocking: No `delay()` or `took a long time` warnings during normal polling.
+- [x] Portability: NDEF and Mifare logic performs identically on I2C and SPI.
+- [x] Isolation: Physical failure/noise on one bus does not crash the other.
+- [x] Format compatibility: Both `AA-BB` and `AA:BB` formats accepted in YAML.
+- [ ] **Mifare Authentication:** Resolve intermittent failures with non-standard keys.
+- [ ] **Robust Counterfeit Detection:** Module correctly identifies emulated clones using hardware-level diagnostic checks.
+- [ ] **NTAG216 Stability:** NDEF writing completes without timing out on high-capacity NTAG216 modules.
 

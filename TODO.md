@@ -27,4 +27,4 @@
 
 ## Integration
 - [x] **NFC Base Class Integration**: Inherit from `esphome::nfc::Nfcc` for standard ESPHome NFC automation compatibility.
-- [ ] **Hardware IRQ Mapping**: Move from polling the IRQ pin to true hardware interrupts.
+- [x] **Hardware IRQ Mapping**: Move from polling the IRQ pin to true hardware interrupts.

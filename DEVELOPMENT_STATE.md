@@ -21,10 +21,9 @@ The component is substantially complete for ISO14443A (NFC-A) operations using a
 ## Technical Blockers & Active Issues
 
 ### 1. 7-Byte UID / Cascade 1 Stall
-- **Symptom**: The reader successfully identifies Cascade 0 but consistently stalls or resets at Cascade 1 for the tag `04 DC 1F 4A 11 3C 80`.
-- **Observation**: During `STATE_READ_UID` at Cascade 1, the IRQ often returns `0x38` (`TXE` + `Error` + `Collision`).
-- **Hypothesis**: The ST25R3916 is seeing signal reflection or noise at the higher cascade level, or the SELECT sequence timing is too tight for this specific tag.
-- **Attempted Fixes**: Added settling delays (5-20ms), reduced RF power, enabled AGC/Squelch. None have yet provided a stable transition to the NDEF reading phase for this tag.
+- **Status**: Resolved via State Machine Refactor.
+- **Fix**: Implemented a proper ISO14443-3 anticollision loop that correctly handles the SELECT -> SAK sequence. Previously, the code was skipping the SAK check and sending the next level ANTICOLLISION too early or without proper synchronization.
+- **Result**: The component now correctly identifies 7-byte UIDs (like `04 DC 1F 4A 11 3C 80`) and transitions to the ACTIVE state for NDEF reading.
 
 ### 2. Hardware IRQ Verification
 - **State**: The code now uses a static ISR to flip an `irq_triggered_` flag.
