@@ -8,6 +8,8 @@
 #include "esphome/components/nfc/nfc.h"
 #include <vector>
 #include <string>
+#include <set>
+#include <map>
 
 namespace esphome {
 namespace st25r {
@@ -34,9 +36,9 @@ enum ST25RRegister : uint8_t {
   FIFO_STATUS2 = 0x1F,
   NUM_TX_BYTES1 = 0x22,
   NUM_TX_BYTES2 = 0x23,
-  COLLISION_DISPLAY = 0x24,
+  COLLISION_DISPLAY = 0x20,  // c_byte[3:0] in bits[7:4], c_bit[2:0] in bits[3:1]
   TX_DRIVER_CONF = 0x28,
-  AD_CONV_RESULT = 0x2A,
+  AD_CONV_RESULT = 0x25,  // A/D converter output register (Table 73)
   IC_IDENTITY = 0x3F,
 };
 
@@ -45,7 +47,7 @@ enum ST25RCommand : uint8_t {
   ST25R_CMD_SET_DEFAULT = 0xC1,
   ST25R_CMD_READ_FIFO = 0x9F,
   ST25R_CMD_STOP_ALL = 0xC2,
-  ST25R_CMD_CLEAR_FIFO = 0xC3,
+  ST25R_CMD_CLEAR_FIFO = 0xDB,
   ST25R_CMD_TRANSMIT_WITH_CRC = 0xC4,
   ST25R_CMD_TRANSMIT_WITHOUT_CRC = 0xC5,
   ST25R_CMD_TRANSMIT_REQA = 0xC6,
@@ -106,7 +108,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   void set_status_binary_sensor(binary_sensor::BinarySensor *sensor) { this->status_binary_sensor_ = sensor; }
   void set_field_strength_sensor(sensor::Sensor *sensor) { this->field_strength_sensor_ = sensor; }
 
-  bool is_tag_present() const { return this->tag_present_; }
+  bool is_tag_present() const { return !this->present_tags_.empty(); }
 
  protected:
   virtual uint8_t read_register(uint8_t reg) = 0;
@@ -117,7 +119,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
 
   bool reset_();
   void field_on_();
-  void process_tag_removed_(bool found);
+  void finalize_scan_();
   bool wait_for_irq_(uint8_t mask, uint32_t timeout_ms);
   void reinitialize_();
   bool transceive_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, uint32_t timeout_ms = 50);
@@ -129,8 +131,9 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   GPIOPin *reset_pin_{nullptr};
   InternalGPIOPin *irq_pin_{nullptr};
 
-  bool tag_present_{false};
-  std::string tag_present_uid_;
+  std::set<std::string> present_tags_;     // UIDs confirmed present (published to HA)
+  std::set<std::string> tags_this_scan_;  // UIDs seen in the current scan cycle
+  std::map<std::string, uint8_t> tag_miss_counts_;  // per-UID consecutive miss counter
   bool rf_field_enabled_{true};
   uint8_t rf_power_{15};
   bool supply_3v3_{true};
@@ -138,22 +141,26 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   uint8_t reinitialization_attempts_{0};
   volatile bool irq_triggered_{false};
   volatile uint8_t irq_status_{0};
+  volatile uint8_t irq_timer_status_{0};
   
-  static const uint8_t IRQ_OSC = 0x80;
-  static const uint8_t IRQ_WL  = 0x40;
-  static const uint8_t IRQ_RXS = 0x20;
-  static const uint8_t IRQ_TXE = 0x10;
-  static const uint8_t IRQ_COL = 0x08;
-  static const uint8_t IRQ_RX_REST = 0x04;
-  static const uint8_t IRQ_RXE = 0x02;
-  static const uint8_t IRQ_NRE = 0x01;
-  static const uint8_t IRQ_ERR = 0x08; // Mapping COL to ERR for general error handling
+  // IRQ_MAIN (0x1A) bits
+  static const uint8_t IRQ_OSC     = 0x80;
+  static const uint8_t IRQ_WL      = 0x40;
+  static const uint8_t IRQ_RXS     = 0x20;
+  static const uint8_t IRQ_RXE     = 0x10;  // end of receive
+  static const uint8_t IRQ_TXE     = 0x08;  // end of transmission
+  static const uint8_t IRQ_COL     = 0x04;  // bit collision
+  static const uint8_t IRQ_RX_REST = 0x02;
+  // IRQ_TIMER (0x1B) bits
+  static const uint8_t IRQ_TIMER_NRE = 0x40;  // no-response timer expire
   
   State state_{STATE_IDLE};
   uint32_t last_state_change_{0};
   uint8_t cascade_level_{0};
+  uint8_t valid_bits_{0};
+  uint8_t collision_retries_{0};
+  uint8_t uid_buffer_[5];
   std::string current_uid_;
-  uint8_t missed_updates_{0};
 
   std::vector<ST25RTagTrigger *> on_tag_triggers_;
   std::vector<ST25RTagRemovedTrigger *> on_tag_removed_triggers_;
