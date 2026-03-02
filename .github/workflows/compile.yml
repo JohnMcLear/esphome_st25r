@@ -44,7 +44,7 @@ jobs:
         run: |
           docker run --rm \
             -v "${{ github.workspace }}":/config \
-            ghcr.io/esphome/esphome:latest \
+            ghcr.io/esphome/esphome:dev \
             compile "${{ matrix.config }}"
           EXIT_CODE=$?
           if [ $EXIT_CODE -ne 0 ]; then
