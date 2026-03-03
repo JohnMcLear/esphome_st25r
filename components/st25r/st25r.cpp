@@ -93,11 +93,32 @@ void ST25R::update() {
   this->irq_triggered_ = false;
   this->irq_status_ = 0;
   this->irq_timer_status_ = 0;
+  
+  // Phase Sweep attempt 1: Phase B (MAX GAIN, AGC ON)
+  this->write_register(RX_CONF2, 0x88);
   this->write_command(ST25R_CMD_TRANSMIT_WUPA);
-  // Read back key registers immediately after WUPA to confirm chip state
+  delay(20);
+  
+  // Phase Sweep attempt 2: Phase B (REQA retry)
+  if (!(this->read_register(IRQ_MAIN) & 0x40)) {
+    this->write_command(ST25R_CMD_CLEAR_FIFO);
+    this->write_command(ST25R_CMD_TRANSMIT_REQA);
+    delay(20);
+  }
+  
+  // Phase Sweep attempt 3: Phase A fallback
+  if (!(this->read_register(IRQ_MAIN) & 0x40)) {
+    ESP_LOGV(TAG, "  No tag on Phase B, trying Phase A...");
+    this->write_register(RX_CONF2, 0x08); // Phase A, MAX GAIN, Mixer, AGC ON
+    this->write_command(ST25R_CMD_CLEAR_FIFO);
+    this->write_command(ST25R_CMD_TRANSMIT_WUPA);
+    delay(20);
+  }
+
+  // Read back key registers immediately after WUPA sweep to confirm chip state
   uint8_t op_ctrl = this->read_register(OP_CONTROL);
   uint8_t mode_reg = this->read_register(MODE);
-  ESP_LOGD(TAG, "Sent WUPA, OP_CONTROL=0x%02X MODE=0x%02X", op_ctrl, mode_reg);
+  ESP_LOGD(TAG, "Sent WUPA sweep, OP_CONTROL=0x%02X MODE=0x%02X", op_ctrl, mode_reg);
   this->state_ = STATE_WUPA;
   this->last_state_change_ = millis();
 }
@@ -142,12 +163,18 @@ bool ST25R::transceive_ex_(const uint8_t *data, size_t len, uint8_t *resp, uint8
       this->irq_triggered_ = false;
       this->irq_status_ = this->read_register(IRQ_MAIN);
       uint8_t timer_irq = this->read_register(IRQ_TIMER);
+      uint8_t error_irq = this->read_register(IRQ_ERROR);
 
       if (this->irq_status_ & IRQ_TXE) {
         tx_done = true;
       }
+      if (this->irq_status_ & 0x08) { // ERROR bit
+        ESP_LOGV(TAG, "  transceive_ex_: IRQ_ERROR=0x%02X", error_irq);
+      }
       if (timer_irq & IRQ_TIMER_NRE) {
         // No-response timer expired — tag did not reply (expected for HALT)
+        break;
+      }
         return false;
       }
     }
@@ -683,9 +710,9 @@ bool ST25R::reset_() {
   this->write_register(BIT_RATE, 0x00); 
   this->write_register(0x09, 0x00);     // AUX: Enable Correlator (dis_corr=0)
   this->write_register(RX_CONF1, 0x08); // ISO14443A 106kbps optimized Rx
-  this->write_register(RX_CONF2, 0x0D); // Mixer demodulator, MAX GAIN, Phase A
+  this->write_register(RX_CONF2, 0x1D); // Mixer demodulator, 3dB reduction, Phase A baseline
   this->write_register(RX_CONF3, 0x02); // Receiver Amp Boost
-  this->write_register(RX_CONF4, 0x00); 
+  this->write_register(RX_CONF4, 0x01); // Squelch enabled to mitigate noise at max gain
   this->write_register(0x68, 0x01);     // AUX_MOD: Enable Active Wave Shaping
   this->write_register(CORR_CONF1, 0x51); // High sensitivity correlator
   this->write_register(CORR_CONF2, 0x00); 
