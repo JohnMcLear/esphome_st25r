@@ -660,12 +660,18 @@ bool ST25R::reset_() {
   delay(10); // Wait for oscillator to stabilize
 
   this->write_register(IO_CONF1, 0x00);  // single=0: differential antenna driving (full power)
-  this->write_register(IO_CONF2, this->supply_3v3_ ? 0x80 : 0x00); 
+  // Enable AAT (bit 4) and set supply voltage bit
+  uint8_t io_conf2 = (this->supply_3v3_ ? 0x80 : 0x00) | 0x10; 
+  this->write_register(IO_CONF2, io_conf2); 
   this->write_register(MODE, 0x08); 
   this->write_register(BIT_RATE, 0x00); 
-  this->write_register(RX_CONF1, 0x00); 
-  this->write_register(RX_CONF2, 0x6C); // Enable AGC during complete receive period
+  this->write_register(0x09, 0x00);     // AUX: Enable Correlator (dis_corr=0)
+  this->write_register(RX_CONF1, 0x08); // ISO14443A 106kbps optimized Rx
+  this->write_register(RX_CONF2, 0x2D); // Mixer demodulator
   this->write_register(RX_CONF3, 0x00); // 0 dB (Full gain), no boost
+  this->write_register(RX_CONF4, 0x00); 
+  this->write_register(0x2C, 0x80);     // ANT_TUNE_A: Default tuning from sample
+  this->write_register(0x2D, 0x40);     // ANT_TUNE_B: Default tuning from sample
   this->write_register(MASK_MAIN, 0x00); // Unmask all main IRQs
   this->write_register(0x17, 0x00);     // Unmask all timer/NFC IRQs (IRQ_TIMER_NRE etc.)
   this->write_register(ISO14443A_CONF, 0x01); // antcl=1: Enable anticollision framing
