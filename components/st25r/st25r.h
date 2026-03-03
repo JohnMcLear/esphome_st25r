@@ -49,9 +49,9 @@ enum ST25RRegister : uint8_t {
 
 // ST25R Commands
 enum ST25RCommand : uint8_t {
-  ST25R_CMD_STOP_ALL = 0xC0,
   ST25R_CMD_SET_DEFAULT = 0xC1,
-  ST25R_CMD_CLEAR_FIFO = 0xC2,
+  ST25R_CMD_STOP_ALL = 0xC2,    // C2/C3: stops TX/RX/timers, clears FIFO+IRQ
+  ST25R_CMD_CLEAR_FIFO = 0xDB,  // DB: clears FIFO only (not IRQ)
   ST25R_CMD_TRANSMIT_WITH_CRC = 0xC4,
   ST25R_CMD_TRANSMIT_WITHOUT_CRC = 0xC5,
   ST25R_CMD_TRANSMIT_REQA = 0xC6,
@@ -148,7 +148,6 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   uint8_t reinitialization_attempts_{0};
   uint8_t current_profile_idx_{0};
   uint8_t winner_profile_idx_{0xFF};
-  bool tag_spotted_this_cycle_{false};
   volatile bool irq_triggered_{false};
   volatile uint8_t irq_status_{0};
   volatile uint8_t irq_timer_status_{0};
