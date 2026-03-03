@@ -146,6 +146,9 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   bool supply_3v3_{true};
   uint8_t health_check_failures_{0};
   uint8_t reinitialization_attempts_{0};
+  uint8_t current_profile_idx_{0};
+  uint8_t winner_profile_idx_{0xFF};
+  bool tag_spotted_this_cycle_{false};
   volatile bool irq_triggered_{false};
   volatile uint8_t irq_status_{0};
   volatile uint8_t irq_timer_status_{0};

@@ -76,52 +76,44 @@ void ST25R::update() {
     uint8_t rx_conf3;
     const char *desc;
   } profiles[] = {
-    {0x5D, 0x02, "Auto-A-3dB-Mix-Bst"}, // sel_ph_auto=1, gain=011
-    {0xDD, 0x02, "Auto-B-3dB-Mix-Bst"}, // sel_ph_auto=1, gain=011
     {0x48, 0x02, "Auto-A-0dB-Mix-Bst"}, // sel_ph_auto=1, gain=000 (MAX)
     {0xC8, 0x02, "Auto-B-0dB-Mix-Bst"}, // sel_ph_auto=1, gain=000 (MAX)
-    {0x6D, 0x02, "A-3dB-AM-Bst"},       // AM Demodulator
-    {0xED, 0x02, "B-3dB-AM-Bst"}        // AM Demodulator
+    {0x68, 0x02, "Auto-AM-0dB-Bst"}     // sel_ph_auto=1, gain=000 (MAX), AM Demod
   };
 
-  bool tag_spotted = false;
-  const char *winner = "None";
+  // If we had a winner, stay on it. Otherwise cycle.
+  uint8_t idx = (this->winner_profile_idx_ != 0xFF) ? this->winner_profile_idx_ : this->current_profile_idx_;
+  const auto &p = profiles[idx % 3];
 
-  for (const auto &p : profiles) {
-    this->write_register(RX_CONF2, p.rx_conf2);
-    this->write_register(RX_CONF3, p.rx_conf3);
-    this->write_command(ST25R_CMD_CLEAR_FIFO);
-    this->read_register(IRQ_MAIN);
-    this->write_command(ST25R_CMD_TRANSMIT_WUPA);
-    delay(50); // MAX settle for extreme weak coupling
-    
-    uint8_t main_irq = this->read_register(IRQ_MAIN);
-    if (main_irq & 0x40) { // RXS
-      tag_spotted = true;
-      winner = p.desc;
-      this->irq_status_ = main_irq; // Preserve for loop()
-      break;
-    }
-    // Also try REQA on same profile
+  this->write_register(RX_CONF2, p.rx_conf2);
+  this->write_register(RX_CONF3, p.rx_conf3);
+  this->write_command(ST25R_CMD_CLEAR_FIFO);
+  this->read_register(IRQ_MAIN);
+  this->write_command(ST25R_CMD_TRANSMIT_WUPA);
+  delay(50); // Settle for coupling
+  
+  uint8_t main_irq = this->read_register(IRQ_MAIN);
+  if (!(main_irq & 0x40)) { // No RXS? Try REQA on same profile
     this->write_command(ST25R_CMD_CLEAR_FIFO);
     this->write_command(ST25R_CMD_TRANSMIT_REQA);
     delay(50);
     main_irq = this->read_register(IRQ_MAIN);
-    if (main_irq & 0x40) {
-      tag_spotted = true;
-      winner = p.desc;
-      this->irq_status_ = main_irq; // Preserve for loop()
-      break;
-    }
   }
 
-  // Read back key registers to confirm final sweep state
+  if (main_irq & 0x40) { // RXS spotted!
+    this->irq_status_ = main_irq;
+    this->winner_profile_idx_ = idx % 3;
+    ESP_LOGD(TAG, "Tag spotted using profile: %s", p.desc);
+  } else {
+    // No tag on this profile, move to next for next cycle
+    this->winner_profile_idx_ = 0xFF;
+    this->current_profile_idx_ = (this->current_profile_idx_ + 1) % 3;
+  }
+
+  // Read back key registers to confirm final state
   uint8_t final_op_ctrl = this->read_register(OP_CONTROL);
   uint8_t final_mode_reg = this->read_register(MODE);
-  if (tag_spotted) {
-    ESP_LOGI(TAG, "Tag spotted! Profile: %s", winner);
-  }
-  ESP_LOGD(TAG, "Sent WUPA sweep, OP_CONTROL=0x%02X MODE=0x%02X winner=%s", final_op_ctrl, final_mode_reg, winner);
+  ESP_LOGD(TAG, "Sent WUPA, Profile=%s Winner=%s", p.desc, (this->winner_profile_idx_ != 0xFF) ? "YES" : "NO");
   this->state_ = STATE_WUPA;
   this->last_state_change_ = millis();
 }
@@ -236,8 +228,10 @@ void ST25R::loop() {
 
   if (this->irq_triggered_) {
     this->irq_triggered_ = false;
-    this->irq_status_ |= this->read_register(IRQ_MAIN);
-    this->irq_timer_status_ |= this->read_register(IRQ_TIMER);
+    uint8_t main_irq = this->read_register(IRQ_MAIN);
+    uint8_t timer_irq = this->read_register(IRQ_TIMER);
+    this->irq_status_ |= main_irq;
+    this->irq_timer_status_ |= timer_irq;
   }
 
   uint32_t now = millis();
@@ -416,7 +410,7 @@ bool ST25R::reset_() {
   this->write_register(RX_CONF1, 0x08);
   this->write_register(RX_CONF2, 0x1D);
   this->write_register(RX_CONF3, 0x02);
-  this->write_register(RX_CONF4, 0x01);
+  this->write_register(RX_CONF4, 0x00); // Squelch DISABLED
   this->write_register(0x68, 0x01);
   this->write_register(CORR_CONF1, 0x51);
   this->write_register(CORR_CONF2, 0x00); 
