@@ -39,8 +39,8 @@ enum ST25RRegister : uint8_t {
   COLLISION_DISPLAY = 0x20,  // c_byte[3:0] in bits[7:4], c_bit[2:0] in bits[3:1]
   TX_DRIVER_CONF = 0x28,
   AD_CONV_RESULT = 0x25,  // A/D converter output register (Table 73)
-  FIELD_THRESHOLD_ACTV = 0x26,
-  FIELD_THRESHOLD_DEACTV = 0x27,
+  AAT_A = 0x26,  // Antenna tuning control A: D/A converter, formula: (0.044 + 0.868*val/255)*VDD_A
+  AAT_B = 0x27,  // Antenna tuning control B: same formula, default=0x80
   IC_IDENTITY = 0x3F,
   // Space B Registers (marked with 0x40 bit)
   CORR_CONF1 = 0x4C,

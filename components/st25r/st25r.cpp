@@ -55,13 +55,14 @@ void ST25R::update() {
   this->read_register(IRQ_ERROR);
 
   if (this->rf_field_enabled_) {
-    this->field_on_();
-    delay(100);
-    // Measure field amplitude for tuning diagnostics
+    // Field stays on from reset_(); re-assert OP_CONTROL in case STOP_ALL disturbed it.
+    // Do NOT call field_on_() here — its 150 ms of delays waste precious scan time.
+    this->write_register(OP_CONTROL, 0xC8);  // en + rx_en + tx_en
+    // Measure field amplitude for diagnostics
     this->write_command(ST25R_CMD_MEASURE_AMPLITUDE);
-    delay(5);
+    delay(3);
     uint8_t amp = this->read_register(AD_CONV_RESULT);
-    ESP_LOGI(TAG, "Field amplitude: %u", amp);
+    ESP_LOGD(TAG, "Field amplitude: %u", amp);
     if (this->field_strength_sensor_ != nullptr)
       this->field_strength_sensor_->publish_state(amp);
   }
@@ -85,8 +86,8 @@ void ST25R::update() {
   
   // RX_CONF2 0x1F: AGC enabled, full-period, reset algorithm (recommended for ISO14443A)
   this->write_register(RX_CONF2, 0x1F);
-  // RX_CONF3 0xE2: rg1_am=7 (+5.5 dB AM gain boost for weak perpendicular-ring backscatter)
-  this->write_register(RX_CONF3, 0xE2);
+  // RX_CONF3 0xE0: rg1_am=7 (+5.5 dB boost), lf_en=0 (HF path for 13.56 MHz)
+  this->write_register(RX_CONF3, 0xE0);
   
   this->write_command(ST25R_CMD_STOP_ALL);   // Stop + clear FIFO + clear IRQ before WUPA
   this->write_command(ST25R_CMD_TRANSMIT_WUPA);
@@ -204,7 +205,10 @@ void ST25R::loop() {
     case STATE_IDLE: break;
 
     case STATE_WUPA: {
-      if (now - this->last_state_change_ > 300) {
+      if (now - this->last_state_change_ > 30) {
+        // ISO14443A tFDT max ≈ 9.4 ms; 30 ms is ample. Shrinking from 300 ms keeps scan
+        // rate high so we catch momentary coupling windows with perpendicular tags.
+        ESP_LOGD(TAG, "WUPA timeout: irq_main=0x%02X irq_timer=0x%02X", this->irq_status_, this->irq_timer_status_);
         this->finalize_scan_();
         this->state_ = STATE_IDLE;
         return;
@@ -334,38 +338,55 @@ bool ST25R::reset_() {
   uint8_t ic_identity = this->read_register(IC_IDENTITY);
   if ((ic_identity & 0xF8) != 0x28) return false;
   ESP_LOGI(TAG, "IC identity match: 0x%02X", ic_identity);
-  this->write_register(OP_CONTROL, 0x80); 
+  this->write_register(OP_CONTROL, 0x80);  // Enable oscillator
   delay(10);
-  this->write_register(IO_CONF1, 0x00);
-  uint8_t io_conf2 = (this->supply_3v3_ ? 0x80 : 0x00) | 0x10 | 0x04; 
-  this->write_register(IO_CONF2, io_conf2); 
-  this->write_register(MODE, 0x08); 
-  this->write_register(BIT_RATE, 0x00); 
-  this->write_register(0x09, 0x00);
+  this->write_register(IO_CONF1, 0x00);    // Differential antenna (full TX power)
+  uint8_t io_conf2 = (this->supply_3v3_ ? 0x80 : 0x00) | 0x10 | 0x04;
+  this->write_register(IO_CONF2, io_conf2);
+  this->write_register(MODE, 0x08);         // ISO14443A initiator mode
+  this->write_register(BIT_RATE, 0x00);     // fc/128 = 106 kbps
+  this->write_register(ISO14443A_CONF, 0x01);  // antcl=1: anticollision enabled
   this->write_register(RX_CONF1, 0x08);
-  this->write_register(RX_CONF2, 0x1F);  // agc_alg=1: reset algorithm, recommended for ISO14443A
-  this->write_register(RX_CONF3, 0xE2);  // rg1_am=7: +5.5 dB AM gain boost
-  this->write_register(RX_CONF4, 0x00); 
-  this->write_register(0x68, 0x01);
-  this->write_register(CORR_CONF1, 0x51);
-  this->write_register(CORR_CONF2, 0x00); 
-  this->write_register(0x2C, 0x80);
-  this->write_register(0x2D, 0x40);
-  this->write_register(FIELD_THRESHOLD_ACTV, 0x00);
-  this->write_register(FIELD_THRESHOLD_DEACTV, 0x00);
-  this->write_register(0x18, 0x00);
-  this->write_register(0x19, 0xFF);
-  this->write_register(MASK_MAIN, 0x00);
-  this->write_register(0x17, 0x00);
-  this->write_register(0x05, 0x01);
+  this->write_register(RX_CONF4, 0x00);
+  this->write_register(0x18, 0x00);         // MASK_ERROR: unmask all
+  this->write_register(0x19, 0xFF);         // MASK_PT: mask passive target IRQs (initiator)
+  this->write_register(MASK_MAIN, 0x00);    // Unmask all main IRQs
+  this->write_register(0x17, 0x00);         // MASK_TIMER: unmask all timer IRQs
   uint8_t d_res = (15 - this->rf_power_) & 0x0F;
   // am_mod=5 → 10% modulation (ISO14443 minimum), maximises carrier field strength
   this->write_register(TX_DRIVER_CONF, 0x50 | d_res);
+  // Write RX_CONF2/3 LAST so nothing overwrites them.
+  // NOTE: CORR_CONF1 (0x4C) and CORR_CONF2 (0x4D) are Space B registers — the SPI
+  // driver masks addr & 0x3F, so writing them would corrupt RX_CONF2/RX_CONF3. Do NOT
+  // write Space B registers here; let Set_Default keep their factory defaults.
+  // RX_CONF2 0x1F: AGC enabled (agc_en=1), full-period (agc_m=1), reset algorithm
+  //                (agc_alg=1, recommended for ISO14443A with short SOF)
+  this->write_register(RX_CONF2, 0x1F);
+  // RX_CONF3 0xE0: rg1_am=7 (+5.5dB AM gain boost), rg1_pm=0 (full PM), lf_en=0 (HF)
+  this->write_register(RX_CONF3, 0xE0);
   if (this->rf_field_enabled_) {
     this->field_on_();
     // Calibrate internal regulators for max TX output once field is on
     this->write_command(ST25R_CMD_ADJUST_REGULATORS);
     delay(10);
+    // Sweep AAT-A/B (antenna tuning DAC, Table 74/75) to find resonance peak.
+    // Default is 0x80; writing 0x00 detunes the antenna. Find the value that
+    // maximises the carrier amplitude (D/A drives external tuning capacitors).
+    uint8_t best_aat = 0x80;
+    uint8_t best_amp = 0;
+    for (int v = 0; v <= 255; v += 8) {
+      this->write_register(AAT_A, (uint8_t) v);
+      this->write_register(AAT_B, (uint8_t) v);
+      delay(5);
+      this->write_command(ST25R_CMD_MEASURE_AMPLITUDE);
+      delay(3);
+      uint8_t amp = this->read_register(AD_CONV_RESULT);
+      ESP_LOGV(TAG, "  AAT=0x%02X amp=%u", v, amp);
+      if (amp > best_amp) { best_amp = amp; best_aat = (uint8_t) v; }
+    }
+    this->write_register(AAT_A, best_aat);
+    this->write_register(AAT_B, best_aat);
+    ESP_LOGI(TAG, "AAT calibration: best=0x%02X amplitude=%u/255", best_aat, best_amp);
   }
   delay(50);
   return true;
