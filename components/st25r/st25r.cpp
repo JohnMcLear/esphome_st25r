@@ -57,6 +57,13 @@ void ST25R::update() {
   if (this->rf_field_enabled_) {
     this->field_on_();
     delay(100);
+    // Measure field amplitude for tuning diagnostics
+    this->write_command(ST25R_CMD_MEASURE_AMPLITUDE);
+    delay(5);
+    uint8_t amp = this->read_register(AD_CONV_RESULT);
+    ESP_LOGI(TAG, "Field amplitude: %u", amp);
+    if (this->field_strength_sensor_ != nullptr)
+      this->field_strength_sensor_->publish_state(amp);
   }
 
   this->health_check_failures_ = 0;
@@ -76,9 +83,10 @@ void ST25R::update() {
   this->irq_status_ = 0;
   this->irq_timer_status_ = 0;
   
-  // Use proven baseline: Phase A, 18dB SNR reduction
-  this->write_register(RX_CONF2, 0x1D);
-  this->write_register(RX_CONF3, 0x02);
+  // RX_CONF2 0x1F: AGC enabled, full-period, reset algorithm (recommended for ISO14443A)
+  this->write_register(RX_CONF2, 0x1F);
+  // RX_CONF3 0xE2: rg1_am=7 (+5.5 dB AM gain boost for weak perpendicular-ring backscatter)
+  this->write_register(RX_CONF3, 0xE2);
   
   this->write_command(ST25R_CMD_STOP_ALL);   // Stop + clear FIFO + clear IRQ before WUPA
   this->write_command(ST25R_CMD_TRANSMIT_WUPA);
@@ -335,8 +343,8 @@ bool ST25R::reset_() {
   this->write_register(BIT_RATE, 0x00); 
   this->write_register(0x09, 0x00);
   this->write_register(RX_CONF1, 0x08);
-  this->write_register(RX_CONF2, 0x1D);
-  this->write_register(RX_CONF3, 0x02);
+  this->write_register(RX_CONF2, 0x1F);  // agc_alg=1: reset algorithm, recommended for ISO14443A
+  this->write_register(RX_CONF3, 0xE2);  // rg1_am=7: +5.5 dB AM gain boost
   this->write_register(RX_CONF4, 0x00); 
   this->write_register(0x68, 0x01);
   this->write_register(CORR_CONF1, 0x51);
@@ -351,8 +359,14 @@ bool ST25R::reset_() {
   this->write_register(0x17, 0x00);
   this->write_register(0x05, 0x01);
   uint8_t d_res = (15 - this->rf_power_) & 0x0F;
-  this->write_register(TX_DRIVER_CONF, 0x70 | d_res);
-  if (this->rf_field_enabled_) this->field_on_();
+  // am_mod=5 → 10% modulation (ISO14443 minimum), maximises carrier field strength
+  this->write_register(TX_DRIVER_CONF, 0x50 | d_res);
+  if (this->rf_field_enabled_) {
+    this->field_on_();
+    // Calibrate internal regulators for max TX output once field is on
+    this->write_command(ST25R_CMD_ADJUST_REGULATORS);
+    delay(10);
+  }
   delay(50);
   return true;
 }
