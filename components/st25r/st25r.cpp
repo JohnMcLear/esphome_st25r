@@ -59,13 +59,13 @@ void ST25R::setup() {
 void ST25R::update() {
   if (this->is_failed() || this->state_ != STATE_IDLE) return;
 
-  // Stop any ongoing chip operation, clear IRQ registers and FIFO before a new scan
+  // Stop any ongoing chip operation and clear FIFO before a new scan
   this->write_command(ST25R_CMD_STOP_ALL);
   delay(5);
+  this->write_command(ST25R_CMD_CLEAR_FIFO);
   this->read_register(IRQ_MAIN);
   this->read_register(IRQ_TIMER);
   this->read_register(IRQ_ERROR);
-  this->write_command(ST25R_CMD_CLEAR_FIFO);
 
   if (this->rf_field_enabled_) {
     this->field_on_();
@@ -80,17 +80,6 @@ void ST25R::update() {
     this->write_command(ST25R_CMD_MEASURE_AMPLITUDE);
     uint8_t amplitude = this->read_register(AD_CONV_RESULT);
     this->field_strength_sensor_->publish_state(amplitude);
-  }
-
-  // Stop any ongoing chip operation, clear IRQ registers and FIFO before a new scan
-  this->write_command(ST25R_CMD_STOP_ALL);
-  this->read_register(IRQ_MAIN);
-  this->read_register(IRQ_TIMER);
-  this->read_register(IRQ_ERROR);
-  this->write_command(ST25R_CMD_CLEAR_FIFO);
-
-  if (this->rf_field_enabled_) {
-    this->write_register(OP_CONTROL, 0xC8); // en=1, rx_en=1, tx_en=1
   }
 
   // Reset per-scan state
@@ -122,7 +111,6 @@ bool ST25R::transceive_no_crc_(const uint8_t *data, size_t len, uint8_t *resp, u
 }
 
 bool ST25R::transceive_ex_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, bool with_crc, uint32_t timeout_ms) {
-  this->write_command(ST25R_CMD_STOP_ALL);
   this->write_command(ST25R_CMD_CLEAR_FIFO);
   this->read_register(IRQ_MAIN);
 
@@ -136,6 +124,7 @@ bool ST25R::transceive_ex_(const uint8_t *data, size_t len, uint8_t *resp, uint8
   this->write_fifo(data, len);
   
   this->irq_triggered_ = false;
+  this->write_register(RX_CONF1, 0x08); // Always expect_crc=0, ch_en=1
   if (with_crc) {
     this->write_command(ST25R_CMD_TRANSMIT_WITH_CRC);
     ESP_LOGV(TAG, "  transceive_: Transmitting %d bytes with CRC: %02X %02X", len, data[0], data[1]);
@@ -470,6 +459,9 @@ void ST25R::loop() {
         ESP_LOGD(TAG, "  BCC=0x%02X selecting CL%u: %02X%02X%02X%02X",
                  bcc, this->cascade_level_ + 1, sel_pk[2], sel_pk[3], sel_pk[4], sel_pk[5]);
 
+        // Disable anticollision framing for SELECT (requires standard frame with CRC)
+        this->write_register(ISO14443A_CONF, 0x00);
+        
         // Accumulate UID bytes — skip cascade tag byte 0x88
         if (sel_pk[2] == 0x88) {
           for (int i = 3; i < 6; i++) {
@@ -481,14 +473,38 @@ void ST25R::loop() {
           }
         }
 
+        delay(5); // Settle before long SELECT command
         uint8_t sak_resp[3] = {};
         uint8_t sak_len = 0;
-        if (!this->transceive_(sel_pk, 7, sak_resp, sak_len, 50) || sak_len == 0) {
-          ESP_LOGD(TAG, "SELECT failed (CL%u)", this->cascade_level_ + 1);
+        
+        // Try SELECT on current phase channel (A)
+        bool select_ok = this->transceive_(sel_pk, 7, sak_resp, sak_len, 200);
+        
+        // If it fails, retry with Phase Channel B
+        if (!select_ok || sak_len == 0) {
+          ESP_LOGD(TAG, "  SELECT failed on Phase A, retrying on Phase B...");
+          this->write_register(RX_CONF2, 0x9D); // Switch to Phase B, 3dB reduction
+          delay(10);
+          select_ok = this->transceive_(sel_pk, 7, sak_resp, sak_len, 250);
+        }
+        
+        // If it still fails, one last try on Phase B with longer timeout
+        if (!select_ok || sak_len == 0) {
+          delay(20);
+          select_ok = this->transceive_(sel_pk, 7, sak_resp, sak_len, 300);
+        }
+
+        if (!select_ok || sak_len == 0) {
+          ESP_LOGD(TAG, "SELECT failed (CL%u), len=%u resp0=%02X", this->cascade_level_ + 1, sak_len, sak_resp[0]);
+          this->write_register(RX_CONF2, 0x1D); // Restore Phase A for next scan
+          this->write_register(ISO14443A_CONF, 0x01); // Restore for next scan
           this->finalize_scan_();
           this->state_ = STATE_IDLE;
           return;
         }
+        this->write_register(RX_CONF2, 0x1D); // Restore Phase A for next scan
+        this->write_register(ISO14443A_CONF, 0x01); // Restore for next scan
+        
         uint8_t sak = sak_resp[0];
         ESP_LOGD(TAG, "SAK: 0x%02X (cascade=%s)", sak, (sak & 0x04) ? "yes" : "no");
 
@@ -667,13 +683,16 @@ bool ST25R::reset_() {
   this->write_register(BIT_RATE, 0x00); 
   this->write_register(0x09, 0x00);     // AUX: Enable Correlator (dis_corr=0)
   this->write_register(RX_CONF1, 0x08); // ISO14443A 106kbps optimized Rx
-  this->write_register(RX_CONF2, 0x2D); // Mixer demodulator
-  this->write_register(RX_CONF3, 0x00); // 0 dB (Full gain), no boost
+  this->write_register(RX_CONF2, 0x0D); // Mixer demodulator, MAX GAIN, Phase A
+  this->write_register(RX_CONF3, 0x02); // Receiver Amp Boost
   this->write_register(RX_CONF4, 0x00); 
+  this->write_register(0x68, 0x01);     // AUX_MOD: Enable Active Wave Shaping
+  this->write_register(CORR_CONF1, 0x51); // High sensitivity correlator
+  this->write_register(CORR_CONF2, 0x00); 
   this->write_register(0x2C, 0x80);     // ANT_TUNE_A: Default tuning
   this->write_register(0x2D, 0x40);     // ANT_TUNE_B: Default tuning
-  this->write_register(0x26, 0x22);     // FIELD_THRESHOLD_ACTV: 105mV
-  this->write_register(0x27, 0x11);     // FIELD_THRESHOLD_DEACTV: 75mV
+  this->write_register(FIELD_THRESHOLD_ACTV, 0x00);     // Automatic
+  this->write_register(FIELD_THRESHOLD_DEACTV, 0x00);     // Automatic
   this->write_register(0x18, 0x00);     // NO_RESPONSE_TIMER1: MSB
   this->write_register(0x19, 0xFF);     // NO_RESPONSE_TIMER2: LSB (max timeout for discovery)
   this->write_register(MASK_MAIN, 0x00); // Unmask all main IRQs
@@ -681,12 +700,11 @@ bool ST25R::reset_() {
   this->write_register(0x05, 0x01);     // ISO14443A_CONF: Enable anticollision framing
 
   // TX_DRIVER_CONF (0x28): bits[7:4]=am_mod (12% = 7), bits[3:0]=d_res (driver resistance)
-  // ISO 14443-3 requires minimum 10% AM modulation; default am_mod=7 = 12%.
   uint8_t d_res = (15 - this->rf_power_) & 0x0F;
   this->write_register(TX_DRIVER_CONF, 0x70 | d_res);
 
   if (this->rf_field_enabled_) this->field_on_();
-  delay(10);
+  delay(50);
 
   return true;
 }
@@ -709,11 +727,11 @@ void ST25R::reinitialize_() {
 
 void ST25R::field_on_() {
   this->write_register(OP_CONTROL, 0x88); // en=1, tx_en=1
-  delay(10);
+  delay(20);
   this->write_command(ST25R_CMD_FIELD_ON);
-  delay(10);
+  delay(20);
   this->write_register(OP_CONTROL, 0xC8); // en=1, rx_en=1, tx_en=1
-  this->write_command(ST25R_CMD_ADJUST_REGULATORS);
+  delay(10);
 }
 
 bool ST25R::ndef_write(nfc::NdefMessage *message) {
