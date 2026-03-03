@@ -59,17 +59,16 @@ void ST25R::setup() {
 void ST25R::update() {
   if (this->is_failed() || this->state_ != STATE_IDLE) return;
 
-  uint8_t ic_identity = this->read_register(IC_IDENTITY);
-  if ((ic_identity & 0xF8) != 0x28) {
-    ESP_LOGW(TAG, "IC identity check failed: 0x%02X", ic_identity);
-    this->health_check_failures_++;
-    if (this->status_binary_sensor_ != nullptr) {
-      this->status_binary_sensor_->publish_state(false);
-    }
-    if (this->health_check_failures_ >= 3) {
-      this->state_ = STATE_REINITIALIZING;
-    }
-    return;
+  // Stop any ongoing chip operation, clear IRQ registers and FIFO before a new scan
+  this->write_command(ST25R_CMD_STOP_ALL);
+  delay(5);
+  this->read_register(IRQ_MAIN);
+  this->read_register(IRQ_TIMER);
+  this->read_register(IRQ_ERROR);
+  this->write_command(ST25R_CMD_CLEAR_FIFO);
+
+  if (this->rf_field_enabled_) {
+    this->field_on_();
   }
 
   this->health_check_failures_ = 0;
@@ -660,8 +659,9 @@ bool ST25R::reset_() {
   delay(10); // Wait for oscillator to stabilize
 
   this->write_register(IO_CONF1, 0x00);  // single=0: differential antenna driving (full power)
-  // Enable AAT (bit 4) and set supply voltage bit
-  uint8_t io_conf2 = (this->supply_3v3_ ? 0x80 : 0x00) | 0x10; 
+  // PERFORMANCE_BOOST: Critical RF and SPI stability optimizations
+  // Set supply voltage bit, increase MISO driving (bit 2), and enable AAT (bit 4).
+  uint8_t io_conf2 = (this->supply_3v3_ ? 0x80 : 0x00) | 0x10 | 0x04; 
   this->write_register(IO_CONF2, io_conf2); 
   this->write_register(MODE, 0x08); 
   this->write_register(BIT_RATE, 0x00); 
@@ -670,11 +670,15 @@ bool ST25R::reset_() {
   this->write_register(RX_CONF2, 0x2D); // Mixer demodulator
   this->write_register(RX_CONF3, 0x00); // 0 dB (Full gain), no boost
   this->write_register(RX_CONF4, 0x00); 
-  this->write_register(0x2C, 0x80);     // ANT_TUNE_A: Default tuning from sample
-  this->write_register(0x2D, 0x40);     // ANT_TUNE_B: Default tuning from sample
+  this->write_register(0x2C, 0x80);     // ANT_TUNE_A: Default tuning
+  this->write_register(0x2D, 0x40);     // ANT_TUNE_B: Default tuning
+  this->write_register(0x26, 0x22);     // FIELD_THRESHOLD_ACTV: 105mV
+  this->write_register(0x27, 0x11);     // FIELD_THRESHOLD_DEACTV: 75mV
+  this->write_register(0x18, 0x00);     // NO_RESPONSE_TIMER1: MSB
+  this->write_register(0x19, 0xFF);     // NO_RESPONSE_TIMER2: LSB (max timeout for discovery)
   this->write_register(MASK_MAIN, 0x00); // Unmask all main IRQs
   this->write_register(0x17, 0x00);     // Unmask all timer/NFC IRQs (IRQ_TIMER_NRE etc.)
-  this->write_register(ISO14443A_CONF, 0x01); // antcl=1: Enable anticollision framing
+  this->write_register(0x05, 0x01);     // ISO14443A_CONF: Enable anticollision framing
 
   // TX_DRIVER_CONF (0x28): bits[7:4]=am_mod (12% = 7), bits[3:0]=d_res (driver resistance)
   // ISO 14443-3 requires minimum 10% AM modulation; default am_mod=7 = 12%.

@@ -31,7 +31,8 @@ st25r_spi:
   cs_pin: GPIO6
   irq_pin: GPIO7
   rf_power: 15
-  update_interval: 500ms
+  supply_3v3: false
+  update_interval: 1s
   on_tag:
     then:
       - output.turn_on: out_2
