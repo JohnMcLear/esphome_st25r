@@ -70,6 +70,54 @@ st25r_i2c:
           args: ['x.c_str()']
 ```
 
+### Full Configuration Example
+
+```yaml
+st25r_spi:
+  id: my_nfc_reader
+  cs_pin: GPIO5
+  irq_pin: GPIO21
+  reset_pin: GPIO22      # Optional: Hardware reset
+  update_interval: 1s    # Frequency of NFC scans
+  rf_field_enabled: true # Optional: Enable/Disable RF field
+  rf_power: 15           # Optional: 0 (min) to 15 (max) power level
+  supply_3v3: true       # Optional: true for 3.3V supply, false for 5V
+  
+  # Status binary sensor (turns off if chip health check fails)
+  status:
+    name: "NFC Reader Status"
+    
+  # RF Field strength sensor (reads A/D conversion result)
+  field_strength:
+    name: "NFC Field Strength"
+    
+  # Triggers for any tag
+  on_tag:
+    then:
+      - logger.log:
+          format: "Tag detected: %s"
+          args: ['x.c_str()']
+          
+  on_tag_removed:
+    then:
+      - logger.log: "Tag removed"
+```
+
+### Configuration Variables
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `irq_pin` | [Pin](https://esphome.io/guides/configs.html#config-pin-schema) | **Required** | The interrupt pin from the ST25R. |
+| `reset_pin` | [Pin](https://esphome.io/guides/configs.html#config-pin-schema) | Optional | Hardware reset pin. |
+| `rf_field_enabled` | boolean | `true` | Whether to keep the RF field permanently enabled. |
+| `rf_power` | integer | `15` | Transmitter driver resistance (0-15). 15 is maximum power. |
+| `supply_3v3` | boolean | `true` | Set to `true` if the IC is supplied with 3.3V, `false` for 5V. |
+| `status` | [Binary Sensor](https://esphome.io/components/binary_sensor/index.html) | Optional | Tracks chip health. Turns `off` if the IC identity check fails 3 times. |
+| `field_strength` | [Sensor](https://esphome.io/components/sensor/index.html) | Optional | Reports the measured RF field amplitude (0-255). |
+| `update_interval` | [Time](https://esphome.io/guides/configs.html#config-time) | `1s` | Interval between polling for tags. |
+| `on_tag` | Trigger | Optional | Action to perform when a tag is detected. |
+| `on_tag_removed` | Trigger | Optional | Action to perform when a tag is removed. |
+
 ### Binary Sensor
 
 Track specific tags:
@@ -77,7 +125,7 @@ Track specific tags:
 ```yaml
 binary_sensor:
   - platform: st25r
-    st25r_id: my_st25r_reader
+    st25r_id: my_nfc_reader
     name: "Master Key"
     uid: "04-1A-A7-67-5F-61-80"
 ```
