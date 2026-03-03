@@ -2,10 +2,18 @@
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/helpers.h"
+#include "esphome/core/version.h"
 #include "esphome/components/nfc/nfc_tag.h"
 #include "esphome/components/nfc/nfc_helpers.h"
-#include <cinttypes>
-#include <algorithm>
+
+// Compatibility for ESPHome < 2025.x where nfc::NfcTagUid was not defined
+#if ESPHOME_VERSION_CODE < VERSION_CODE(2025, 1, 0)
+namespace esphome {
+namespace nfc {
+using NfcTagUid = std::vector<uint8_t>;
+}  // namespace nfc
+}  // namespace esphome
+#endif
 
 namespace esphome {
 namespace st25r {
@@ -257,7 +265,8 @@ std::unique_ptr<nfc::NfcTag> ST25R::read_tag_(std::vector<uint8_t> &uid) {
           if (data.size() >= (size_t)(msg_start_idx + msg_len)) {
             std::vector<uint8_t> ndef_data(data.begin() + msg_start_idx, data.begin() + msg_start_idx + msg_len);
             ESP_LOGI(TAG, "  Successfully read NDEF message of %d bytes", msg_len);
-            return make_unique<nfc::NfcTag>(uid, nfc::NFC_FORUM_TYPE_2, ndef_data);
+            nfc::NfcTagUid nfc_uid(uid.begin(), uid.end());
+            return make_unique<nfc::NfcTag>(nfc_uid, nfc::NFC_FORUM_TYPE_2, ndef_data);
           }
         }
       } else {
@@ -268,7 +277,8 @@ std::unique_ptr<nfc::NfcTag> ST25R::read_tag_(std::vector<uint8_t> &uid) {
     }
   }
 
-  return make_unique<nfc::NfcTag>(uid);
+  nfc::NfcTagUid nfc_uid(uid.begin(), uid.end());
+  return make_unique<nfc::NfcTag>(nfc_uid);
 }
 
 void ST25R::loop() {
@@ -613,7 +623,8 @@ void ST25R::finalize_scan_() {
     for (size_t i = 0; i < uid.length(); i += 2) {
       uid_bytes.push_back((uint8_t) strtol(uid.substr(i, 2).c_str(), nullptr, 16));
     }
-    nfc::NfcTag nfc_tag(uid_bytes);
+    nfc::NfcTagUid nfc_uid(uid_bytes.begin(), uid_bytes.end());
+    nfc::NfcTag nfc_tag(nfc_uid);
     for (auto *listener : this->tag_listeners_) listener->tag_off(nfc_tag);
     for (auto *trigger : this->on_tag_removed_triggers_) trigger->trigger(uid);
     this->present_tags_.erase(uid);
