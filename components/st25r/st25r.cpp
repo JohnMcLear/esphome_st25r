@@ -96,11 +96,10 @@ void ST25R::update() {
     delay(50); // MAX settle for extreme weak coupling
     
     uint8_t main_irq = this->read_register(IRQ_MAIN);
-    uint8_t f1 = this->read_register(FIFO_STATUS1);
-    if ((main_irq & 0x40) || f1 > 0) { // RXS or bits in FIFO
+    if (main_irq & 0x40) { // RXS
       tag_spotted = true;
       winner = p.desc;
-      if (f1 > 0) ESP_LOGV(TAG, "  Raw signal detected in FIFO (%u bits) on %s", f1, p.desc);
+      this->irq_status_ = main_irq; // Preserve for loop()
       break;
     }
     // Also try REQA on same profile
@@ -108,10 +107,10 @@ void ST25R::update() {
     this->write_command(ST25R_CMD_TRANSMIT_REQA);
     delay(50);
     main_irq = this->read_register(IRQ_MAIN);
-    f1 = this->read_register(FIFO_STATUS1);
-    if ((main_irq & 0x40) || f1 > 0) {
+    if (main_irq & 0x40) {
       tag_spotted = true;
       winner = p.desc;
+      this->irq_status_ = main_irq; // Preserve for loop()
       break;
     }
   }
@@ -119,6 +118,9 @@ void ST25R::update() {
   // Read back key registers to confirm final sweep state
   uint8_t final_op_ctrl = this->read_register(OP_CONTROL);
   uint8_t final_mode_reg = this->read_register(MODE);
+  if (tag_spotted) {
+    ESP_LOGI(TAG, "Tag spotted! Profile: %s", winner);
+  }
   ESP_LOGD(TAG, "Sent WUPA sweep, OP_CONTROL=0x%02X MODE=0x%02X winner=%s", final_op_ctrl, final_mode_reg, winner);
   this->state_ = STATE_WUPA;
   this->last_state_change_ = millis();
@@ -234,8 +236,8 @@ void ST25R::loop() {
 
   if (this->irq_triggered_) {
     this->irq_triggered_ = false;
-    this->irq_status_ = this->read_register(IRQ_MAIN);
-    this->irq_timer_status_ = this->read_register(IRQ_TIMER);
+    this->irq_status_ |= this->read_register(IRQ_MAIN);
+    this->irq_timer_status_ |= this->read_register(IRQ_TIMER);
   }
 
   uint32_t now = millis();
