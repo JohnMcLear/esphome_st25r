@@ -255,6 +255,7 @@ void ST25R::loop() {
 
       if (this->irq_status_ & 0x40) { // RXS
         if (this->irq_status_ & 0x20) { // RXE
+          this->irq_status_ &= ~0x60; // Clear RXS and RXE
           this->cascade_level_ = 0;
           this->current_uid_ = "";
           this->state_ = STATE_ANTICOL;
@@ -276,6 +277,7 @@ void ST25R::loop() {
       }
 
       if (this->irq_status_ & 0x20) { // RXE
+        this->irq_status_ &= ~0x20; // Clear RXE
         uint8_t f1 = this->read_register(FIFO_STATUS1);
         if (f1 >= 5) {
           this->read_fifo(this->uid_buffer_, 5);
@@ -363,12 +365,11 @@ void ST25R::loop() {
       this->state_ = STATE_IDLE;
       break;
   }
-
-  this->irq_status_ = 0;
-  this->irq_timer_status_ = 0;
 }
 
 void ST25R::finalize_scan_() {
+  this->irq_status_ = 0;
+  this->irq_timer_status_ = 0;
   for (auto it = this->present_tags_.begin(); it != this->present_tags_.end(); ) {
     const std::string &uid = *it;
     if (this->tags_this_scan_.find(uid) == this->tags_this_scan_.end()) {
