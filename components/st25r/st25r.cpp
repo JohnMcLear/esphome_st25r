@@ -137,11 +137,23 @@ bool ST25R::transceive_no_crc_(const uint8_t *data, size_t len, uint8_t *resp, u
   return this->transceive_ex_(data, len, resp, resp_len, false, timeout_ms);
 }
 
-bool ST25R::transceive_ex_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, bool with_crc, uint32_t timeout_ms) {
-  // STOP_ALL resets modem state (clears FIFO + IRQ). Re-assert OP_CONTROL so
-  // the RF field stays on (STOP_ALL does not change OP_CONTROL register value,
-  // but write it explicitly for safety).
-  this->write_command(ST25R_CMD_STOP_ALL);
+bool ST25R::transceive_no_stop_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, uint32_t timeout_ms) {
+  return this->transceive_ex_(data, len, resp, resp_len, true, timeout_ms, false);
+}
+
+bool ST25R::transceive_ex_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, bool with_crc, uint32_t timeout_ms, bool reset_all) {
+  if (reset_all) {
+    // STOP_ALL resets modem state (clears FIFO + IRQ). Re-assert OP_CONTROL so
+    // the RF field stays on.
+    this->write_command(ST25R_CMD_STOP_ALL);
+  } else {
+    // CLEAR_FIFO only: preserves the tag's ISO14443A READY state.
+    this->write_command(ST25R_CMD_CLEAR_FIFO);
+    this->read_register(IRQ_MAIN);  // clear IRQ pin manually
+    // After receiving ATQA the modem is in RX-complete state. Give it 10ms to
+    // internally transition back to TX-ready (same delay the anticol path uses).
+    delay(10);
+  }
   this->irq_status_ = 0;
   this->write_register(OP_CONTROL, 0xC8);
 
@@ -170,6 +182,16 @@ bool ST25R::transceive_ex_(const uint8_t *data, size_t len, uint8_t *resp, uint8
       if (this->irq_status_ & IRQ_TXE) tx_done = true;
       if ((timer_irq & IRQ_TIMER_NRE) && resp_len == 0) break;  // NRE: abort only if no data received yet
     }
+    // Direct fallback: poll IRQ_MAIN every iteration in case ISR was missed.
+    // This is essential when called from loop() on ESP32-C6 (ISR may not fire
+    // reliably if FreeRTOS task switch or SPI lock briefly delays the ISR).
+    {
+      uint8_t polled = this->read_register(IRQ_MAIN);
+      if (polled) {
+        this->irq_status_ |= polled;
+        if (polled & IRQ_TXE) tx_done = true;
+      }
+    }
 
     if (tx_done) {
       uint8_t f1 = this->read_register(FIFO_STATUS1);
@@ -179,10 +201,12 @@ bool ST25R::transceive_ex_(const uint8_t *data, size_t len, uint8_t *resp, uint8
         resp_len += to_read;
         start = millis();  // reset timeout after receiving data
       }
-      // Direct re-read catches RXE that arrives between ISR cycles.
+      // Direct re-read catches RXE/COL that arrives between ISR cycles.
+      // Accept COL too: weak perpendicular signals cause a "collision" before
+      // completing RXE, but data bytes (e.g. SAK) may already be in the FIFO.
       uint8_t fresh = this->read_register(IRQ_MAIN);
       if (fresh) this->irq_status_ |= fresh;
-      if (this->irq_status_ & IRQ_RXE) break;
+      if (this->irq_status_ & (IRQ_RXE | IRQ_COL)) break;
     }
     delay(1);
   }
@@ -265,70 +289,32 @@ void ST25R::loop() {
         this->winner_profile_idx_ = this->current_profile_idx_;
 
         ESP_LOGD(TAG, "ATQA detected, known=%u present=%u", this->known_uids_.size(), this->present_tags_.size());
-        // Direct SELECT fallback: try all pre-configured known UIDs plus currently
-        // present tags. known_uids_ entries that aren't yet in present_tags_ will be
-        // confirmed and added via finalize_scan_() (which fires on_tag triggers).
-        // The SELECT command (9 bytes reader TX ≈ 762µs) gives the ring much more
-        // charging time than WUPA (1 byte ≈ 85µs), and SAK (255µs) < anticol (425µs).
-        bool confirmed_any_known = false;
-        // Build union of known_uids_ and present_tags_ to try SELECT for.
-        std::set<std::string> to_try(this->present_tags_.begin(), this->present_tags_.end());
-        for (const auto &uid : this->known_uids_) to_try.insert(uid);
-        if (!to_try.empty()) {
-          // Use +5.5 dB gain boost, lf_en=0 (HF path, NOT LF path).
-          // Use the same RX phase that received the ATQA for the SAK response.
-          this->write_register(RX_CONF3, 0xE0);
-          uint8_t sel_phase = (this->winner_profile_idx_ == 0) ? 0x88 : 0x08;
-          this->write_register(RX_CONF2, sel_phase);
-          this->write_register(ISO14443A_CONF, 0x00); // full SELECT frame, no anticol
-          for (const auto &uid_str : to_try) {
-            std::vector<uint8_t> uid;
-            for (size_t i = 0; i + 1 < uid_str.size(); i += 2)
-              uid.push_back((uint8_t) strtol(uid_str.substr(i, 2).c_str(), nullptr, 16));
-            bool sel_ok = false;
-            if (uid.size() == 7) {
-              uint8_t bcc1 = 0x88 ^ uid[0] ^ uid[1] ^ uid[2];
-              uint8_t s1[] = {0x93, 0x70, 0x88, uid[0], uid[1], uid[2], bcc1};
-              uint8_t sak1[3] = {}; uint8_t sak1_len = 0;
-              bool cl1_ok = this->transceive_(s1, 7, sak1, sak1_len, 50);
-              ESP_LOGD(TAG, "CL1 SELECT: ok=%d len=%u sak=0x%02X", cl1_ok, sak1_len, sak1_len > 0 ? sak1[0] : 0);
-              if (cl1_ok && sak1_len > 0 && (sak1[0] & 0x04)) {
-                uint8_t bcc2 = uid[3] ^ uid[4] ^ uid[5] ^ uid[6];
-                uint8_t s2[] = {0x95, 0x70, uid[3], uid[4], uid[5], uid[6], bcc2};
-                uint8_t sak2[3] = {}; uint8_t sak2_len = 0;
-                bool cl2_ok = this->transceive_(s2, 7, sak2, sak2_len, 50);
-                ESP_LOGD(TAG, "CL2 SELECT: ok=%d len=%u sak=0x%02X", cl2_ok, sak2_len, sak2_len > 0 ? sak2[0] : 0);
-                if (cl2_ok && sak2_len > 0 && !(sak2[0] & 0x04))
-                  sel_ok = true;
-              }
-            } else if (uid.size() == 4) {
-              uint8_t bcc = uid[0] ^ uid[1] ^ uid[2] ^ uid[3];
-              uint8_t s1[] = {0x93, 0x70, uid[0], uid[1], uid[2], uid[3], bcc};
-              uint8_t sak1[3] = {}; uint8_t sak1_len = 0;
-              bool cl1_ok = this->transceive_(s1, 7, sak1, sak1_len, 50);
-              ESP_LOGD(TAG, "CL1 SELECT(4B): ok=%d len=%u sak=0x%02X", cl1_ok, sak1_len, sak1_len > 0 ? sak1[0] : 0);
-              if (cl1_ok && sak1_len > 0 && !(sak1[0] & 0x04))
-                sel_ok = true;
+        // For known UIDs: ATQA reception alone is sufficient proof of presence.
+        // At perpendicular orientation the anticol response collapses to 1 bit of noise —
+        // not enough to match a UID. ATQA proves a tag is there; with known_uids_
+        // configured we declare it present immediately without completing anticol.
+        if (!this->known_uids_.empty()) {
+          for (const auto &uid_str : this->known_uids_) {
+            bool already_announced = (this->present_tags_.count(uid_str) ||
+                                      this->tags_this_scan_.count(uid_str));
+            if (!already_announced) {
+              ESP_LOGI(TAG, "New tag (ATQA): %s", uid_str.c_str());
+              std::vector<uint8_t> uid_bytes;
+              for (size_t i = 0; i < uid_str.length(); i += 2)
+                uid_bytes.push_back((uint8_t) strtol(uid_str.substr(i, 2).c_str(), nullptr, 16));
+              auto nfc_tag = this->read_tag_(uid_bytes);
+              for (auto *listener : this->tag_listeners_) listener->tag_on(*nfc_tag);
+              for (auto *trigger : this->on_tag_triggers_) trigger->trigger(uid_str);
             }
-            if (sel_ok) {
-              ESP_LOGD(TAG, "Known tag confirmed via direct SELECT: %s", uid_str.c_str());
-              this->tags_this_scan_.insert(uid_str);
-              this->tag_miss_counts_[uid_str] = 0;
-              confirmed_any_known = true;
-            }
+            for (auto *obj : this->binary_sensors_) obj->process(uid_str);
+            this->tags_this_scan_.insert(uid_str);
+            this->tag_miss_counts_[uid_str] = 0;
           }
-          this->write_register(RX_CONF3, 0x02);
-          this->write_register(RX_CONF2, 0x48);
-          this->write_register(ISO14443A_CONF, 0x01);
-        }
-
-        if (confirmed_any_known) {
           this->finalize_scan_();
           this->state_ = STATE_IDLE;
-          break;
+          return;
         }
-
-        // No known tag confirmed — standard anticol for new tag discovery.
+        // No known UIDs configured — run full anticol to discover the tag's UID.
         this->cascade_level_ = 0;
         this->current_uid_ = "";
         this->state_ = STATE_ANTICOL;
@@ -453,6 +439,49 @@ void ST25R::loop() {
             this->state_ = STATE_WUPA;
             this->last_state_change_ = now;
           }
+        } else if (f1 > 0 && !this->known_uids_.empty()) {
+          // Partial anticol response (f1 < 4 bytes): ring is perpendicular, signal too
+          // weak for a full anticol frame. Match partial bytes against known UID prefixes.
+          uint8_t partial[4] = {};
+          this->read_fifo(partial, f1);
+          ESP_LOGD(TAG, "ANTICOL partial (%u bytes): %02X %02X %02X", f1,
+                   f1 > 0 ? partial[0] : 0, f1 > 1 ? partial[1] : 0, f1 > 2 ? partial[2] : 0);
+          for (const auto &uid_str : this->known_uids_) {
+            std::vector<uint8_t> uid;
+            for (size_t i = 0; i + 1 < uid_str.size(); i += 2)
+              uid.push_back((uint8_t) strtol(uid_str.substr(i, 2).c_str(), nullptr, 16));
+            bool ok = false;
+            if (uid.size() == 7) {
+              // CL1 anticol sends {CT=0x88, uid[0], uid[1], uid[2], BCC}
+              if (partial[0] != 0x88) continue;
+              if (f1 >= 2 && partial[1] != uid[0]) continue;
+              if (f1 >= 3 && partial[2] != uid[1]) continue;
+              ok = true;
+            } else if (uid.size() == 4) {
+              // CL1 anticol sends {uid[0], uid[1], uid[2], uid[3], BCC}
+              if (partial[0] != uid[0]) continue;
+              if (f1 >= 2 && partial[1] != uid[1]) continue;
+              if (f1 >= 3 && partial[2] != uid[2]) continue;
+              ok = true;
+            }
+            if (!ok) continue;
+            ESP_LOGD(TAG, "Partial anticol match: %s", uid_str.c_str());
+            if (this->present_tags_.find(uid_str) == this->present_tags_.end()) {
+              ESP_LOGI(TAG, "New tag (partial anticol): %s", uid_str.c_str());
+              std::vector<uint8_t> uid_bytes;
+              for (size_t i = 0; i < uid_str.length(); i += 2)
+                uid_bytes.push_back((uint8_t) strtol(uid_str.substr(i, 2).c_str(), nullptr, 16));
+              auto nfc_tag = this->read_tag_(uid_bytes);
+              for (auto *listener : this->tag_listeners_) listener->tag_on(*nfc_tag);
+              for (auto *trigger : this->on_tag_triggers_) trigger->trigger(uid_str);
+            }
+            for (auto *obj : this->binary_sensors_) obj->process(uid_str);
+            this->tags_this_scan_.insert(uid_str);
+            this->tag_miss_counts_[uid_str] = 0;
+            this->finalize_scan_();
+            this->state_ = STATE_IDLE;
+            return;
+          }
         }
       }
       break;
@@ -469,7 +498,7 @@ void ST25R::finalize_scan_() {
     const std::string &uid = *it;
     if (this->tags_this_scan_.find(uid) == this->tags_this_scan_.end()) {
       this->tag_miss_counts_[uid]++;
-      if (this->tag_miss_counts_[uid] >= 8) {
+      if (this->tag_miss_counts_[uid] >= 100) {
         ESP_LOGI(TAG, "Tag removed: %s", uid.c_str());
         std::vector<uint8_t> uid_bytes;
         for (size_t i = 0; i < uid.length(); i += 2) { uid_bytes.push_back((uint8_t) strtol(uid.substr(i, 2).c_str(), nullptr, 16)); }
