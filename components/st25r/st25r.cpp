@@ -286,9 +286,17 @@ void ST25R::loop() {
       static const uint8_t ATQA_MASK = IRQ_RXE | IRQ_RXS | IRQ_COL;
       if (this->irq_status_ & ATQA_MASK) {
         this->irq_status_ &= ~ATQA_MASK;
+
+        // Validate: a real ATQA deposits at least 1 byte in FIFO.
+        // Pure noise triggers leave FIFO=0 (the AGC fired but no actual subcarrier decoded).
+        uint8_t atqa_fifo = this->read_register(FIFO_STATUS1);
+        if (atqa_fifo == 0) {
+          ESP_LOGD(TAG, "ATQA IRQ but FIFO=0 — noise/false positive, ignoring (irq=0x%02X)", this->irq_status_);
+          break;
+        }
         this->winner_profile_idx_ = this->current_profile_idx_;
 
-        ESP_LOGD(TAG, "ATQA detected, known=%u present=%u", this->known_uids_.size(), this->present_tags_.size());
+        ESP_LOGD(TAG, "ATQA detected (fifo=%u), known=%u present=%u", atqa_fifo, this->known_uids_.size(), this->present_tags_.size());
         // For known UIDs: ATQA reception alone is sufficient proof of presence.
         // At perpendicular orientation the anticol response collapses to 1 bit of noise —
         // not enough to match a UID. ATQA proves a tag is there; with known_uids_
