@@ -34,7 +34,7 @@ st25r_spi:
   supply_3v3: false
   update_interval: 100ms
   known_uids:
-    - "05876446D71200"
+    - "00000000000000"
   on_tag:
     then:
       - output.turn_on: out_2

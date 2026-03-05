@@ -23,7 +23,7 @@ The component is substantially complete for ISO14443A (NFC-A) operations using a
 ### 1. 7-Byte UID / Cascade 1 Stall
 - **Status**: Resolved via State Machine Refactor.
 - **Fix**: Implemented a proper ISO14443-3 anticollision loop that correctly handles the SELECT -> SAK sequence. Previously, the code was skipping the SAK check and sending the next level ANTICOLLISION too early or without proper synchronization.
-- **Result**: The component now correctly identifies 7-byte UIDs (like `04 DC 1F 4A 11 3C 80`) and transitions to the ACTIVE state for NDEF reading.
+- **Result**: The component now correctly identifies 7-byte UIDs (like `00 00 00 00 00 00 00`) and transitions to the ACTIVE state for NDEF reading.
 
 ### 2. Hardware IRQ Verification
 - **State**: The code now uses a static ISR to flip an `irq_triggered_` flag.
@@ -41,6 +41,6 @@ The component is substantially complete for ISO14443A (NFC-A) operations using a
     - Implement the Type B state machine.
 
 ## Reference Hardware Data
-- **Test Tag UID**: `04 DC 1F 4A 11 3C 80` (7-byte, Type 2).
+- **Test Tag UID**: `00 00 00 00 00 00 00` (7-byte, Type 2).
 - **Chip**: ST25R3916(B).
 - **Platform**: ESP32-C6 (SPI mode currently).

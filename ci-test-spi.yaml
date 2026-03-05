@@ -50,4 +50,4 @@ binary_sensor:
   - platform: st25r
     st25r_id: st25r_board
     name: "Test Badge SPI"
-    uid: "01-02-03-04"
+    uid: "00-00-00-00"

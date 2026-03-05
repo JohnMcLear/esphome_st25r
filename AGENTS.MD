@@ -82,6 +82,7 @@ The primary development board uses the following pinout:
 - **Style**: Follow ESPHome conventions (PascalCase for types, camelCase for variables/methods).
 - **Non-Blocking**: Never use `delay()` in the C++ code; use `millis()` or state machine transitions.
 - **Formatting**: Use `.clang-format` (2-space indentation) and `black` for Python.
+- **Security**: **NEVER** store real UIDs in any logic, configuration examples, or documentation. Always use placeholders like `00-00-00-00` or `00000000` to prevent exploitation.
 
 ## References
 - `docs/st25r3916.pdf`: Official datasheet (DS12484).

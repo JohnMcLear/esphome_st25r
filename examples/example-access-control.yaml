@@ -37,8 +37,8 @@ st25r_spi:
     - lambda: |-
         // List of authorized UIDs (Hex format without separators)
         std::vector<std::string> authorized = {
-          "041AA7675F6180",
-          "01020304"
+          "00000000000000",
+          "00000000"
         };
         
         if (std::find(authorized.begin(), authorized.end(), x) != authorized.end()) {

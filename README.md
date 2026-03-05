@@ -127,7 +127,7 @@ binary_sensor:
   - platform: st25r
     st25r_id: my_nfc_reader
     name: "Master Key"
-    uid: "04-1A-A7-67-5F-61-80"
+    uid: "00-00-00-00-00-00-00"
 ```
 
 ## Troubleshooting

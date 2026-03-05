@@ -46,11 +46,11 @@ ST25R_spi:
 binary_sensor:
   - platform: ST25R
     ST25R_id: hub_i2c
-    uid: "AA-BB-CC-DD"
+    uid: "00-00-00-00"
     name: "I2C Tag"
   - platform: ST25R
     ST25R_id: hub_spi
-    uid: "AA-BB-CC-DD"
+    uid: "00-00-00-00"
     name: "SPI Tag"
 ```
 

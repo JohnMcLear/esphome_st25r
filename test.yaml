@@ -24,7 +24,7 @@ st25r_i2c:
 
 binary_sensor:
   - platform: st25r
-    uid: 01-02-03-04
+    uid: 00-00-00-00
     name: "My Tag"
 
 logger:

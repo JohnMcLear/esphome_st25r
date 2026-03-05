@@ -38,7 +38,7 @@ std::string get_current_uid() const
 ```
 Returns the UID of the currently detected tag.
 
-**Returns:** Hexadecimal string of UID (e.g., "04A1B2C3D4E5F0")
+**Returns:** Hexadecimal string of UID (e.g., "00000000000000")
 
 **Example:**
 ```cpp
