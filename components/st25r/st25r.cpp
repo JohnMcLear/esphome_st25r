@@ -83,14 +83,39 @@ void ST25R::update() {
   this->irq_triggered_ = false;
   this->irq_status_ = 0;
   this->irq_timer_status_ = 0;
-  
-  // RX_CONF2 0x1F: AGC enabled, full-period, reset algorithm (recommended for ISO14443A)
-  this->write_register(RX_CONF2, 0x1F);
-  // RX_CONF3 0xE0: rg1_am=7 (+5.5 dB boost), lf_en=0 (HF path for 13.56 MHz)
-  this->write_register(RX_CONF3, 0xE0);
-  
-  this->write_command(ST25R_CMD_STOP_ALL);   // Stop + clear FIFO + clear IRQ before WUPA
+  this->current_profile_idx_ = 0;
+
+  // Blocking phase sweep matching RANGE_MILESTONE (df09fb8):
+  // Try Phase B first (bit7=1, MAX GAIN), then Phase A (bit7=0).
+  // 20 ms per attempt lets the tag charge its capacitor and respond.
+  this->write_register(RX_CONF3, 0x02);
+
+  // Attempt 1: Phase B
+  this->write_register(RX_CONF2, 0x88);
+  this->write_command(ST25R_CMD_CLEAR_FIFO);
+  this->read_register(IRQ_MAIN);
+  this->write_register(OP_CONTROL, 0xC8);
   this->write_command(ST25R_CMD_TRANSMIT_WUPA);
+  delay(20);
+  uint8_t irq_b = this->read_register(IRQ_MAIN);
+  ESP_LOGD(TAG, "Phase B WUPA irq=0x%02X", irq_b);
+
+  if (!(irq_b & 0x10)) {  // no RXE → try Phase A
+    // Attempt 2: Phase A
+    this->write_register(RX_CONF2, 0x08);
+    this->write_command(ST25R_CMD_CLEAR_FIFO);
+    this->read_register(IRQ_MAIN);
+    this->write_register(OP_CONTROL, 0xC8);
+    this->write_command(ST25R_CMD_TRANSMIT_WUPA);
+    delay(20);
+    uint8_t irq_a = this->read_register(IRQ_MAIN);
+    ESP_LOGD(TAG, "Phase A WUPA irq=0x%02X", irq_a);
+    this->irq_status_ |= irq_a;
+    this->current_profile_idx_ = 1;
+  } else {
+    this->irq_status_ |= irq_b;
+    this->winner_profile_idx_ = 0;  // Phase B worked
+  }
 
   uint8_t final_op_ctrl = this->read_register(OP_CONTROL);
   uint8_t final_mode_reg = this->read_register(MODE);
@@ -109,14 +134,18 @@ bool ST25R::transceive_no_crc_(const uint8_t *data, size_t len, uint8_t *resp, u
 }
 
 bool ST25R::transceive_ex_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, bool with_crc, uint32_t timeout_ms) {
-  this->write_command(ST25R_CMD_CLEAR_FIFO);
-  this->read_register(IRQ_MAIN);
+  // STOP_ALL resets modem state (clears FIFO + IRQ). Re-assert OP_CONTROL so
+  // the RF field stays on (STOP_ALL does not change OP_CONTROL register value,
+  // but write it explicitly for safety).
+  this->write_command(ST25R_CMD_STOP_ALL);
+  this->irq_status_ = 0;
+  this->write_register(OP_CONTROL, 0xC8);
 
   this->write_register(NUM_TX_BYTES1, (len >> 8) & 0xFF);
   this->write_register(NUM_TX_BYTES2, (len & 0x1F) << 3);
-  
+
   this->write_fifo(data, len);
-  
+
   this->irq_triggered_ = false;
   this->write_register(RX_CONF1, 0x08);
   if (with_crc) {
@@ -124,7 +153,7 @@ bool ST25R::transceive_ex_(const uint8_t *data, size_t len, uint8_t *resp, uint8
   } else {
     this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
   }
-  
+
   uint32_t start = millis();
   resp_len = 0;
   bool tx_done = false;
@@ -135,7 +164,7 @@ bool ST25R::transceive_ex_(const uint8_t *data, size_t len, uint8_t *resp, uint8
       this->irq_status_ |= this->read_register(IRQ_MAIN);
       uint8_t timer_irq = this->read_register(IRQ_TIMER);
       if (this->irq_status_ & IRQ_TXE) tx_done = true;
-      if (timer_irq & IRQ_TIMER_NRE) break;
+      if ((timer_irq & IRQ_TIMER_NRE) && resp_len == 0) break;  // NRE: abort only if no data received yet
     }
 
     if (tx_done) {
@@ -144,10 +173,12 @@ bool ST25R::transceive_ex_(const uint8_t *data, size_t len, uint8_t *resp, uint8
         uint8_t to_read = std::min((uint8_t)(64 - resp_len), f1);
         this->read_fifo(resp + resp_len, to_read);
         resp_len += to_read;
-        start = millis();
+        start = millis();  // reset timeout after receiving data
       }
-      uint8_t main_irq = this->read_register(IRQ_MAIN);
-      if (main_irq & 0x10) break; // RXE
+      // Direct re-read catches RXE that arrives between ISR cycles.
+      uint8_t fresh = this->read_register(IRQ_MAIN);
+      if (fresh) this->irq_status_ |= fresh;
+      if (this->irq_status_ & IRQ_RXE) break;
     }
     delay(1);
   }
@@ -205,45 +236,147 @@ void ST25R::loop() {
     case STATE_IDLE: break;
 
     case STATE_WUPA: {
+      // update() already did a blocking Phase B → Phase A sweep and accumulated
+      // irq_status_. We just wait for any late-arriving IRQ bits, then act.
       if (now - this->last_state_change_ > 30) {
-        // ISO14443A tFDT max ≈ 9.4 ms; 30 ms is ample. Shrinking from 300 ms keeps scan
-        // rate high so we catch momentary coupling windows with perpendicular tags.
         ESP_LOGD(TAG, "WUPA timeout: irq_main=0x%02X irq_timer=0x%02X", this->irq_status_, this->irq_timer_status_);
+        this->winner_profile_idx_ = 0xFF;
         this->finalize_scan_();
         this->state_ = STATE_IDLE;
         return;
       }
-      if (this->irq_status_ & 0x20) { // RXS
-        if (this->irq_status_ & 0x10) { // RXE
-          this->irq_status_ &= ~0x30;
-          this->cascade_level_ = 0;
-          this->current_uid_ = "";
-          this->state_ = STATE_ANTICOL;
-          this->last_state_change_ = now;
-          // Datasheet 4.4.4: Clear FIFO → set NUM_TX_BYTES → write FIFO → transmit command
-          this->write_command(ST25R_CMD_STOP_ALL);  // Stop rx, clear FIFO+IRQ
-          uint8_t anticol_pk[] = {0x93, 0x20};
-          this->write_register(NUM_TX_BYTES1, 0x00);
-          this->write_register(NUM_TX_BYTES2, 0x10);  // 2 bytes, 0 partial bits
-          this->irq_triggered_ = false;
-          this->write_fifo(anticol_pk, 2);            // Load FIFO before transmit
-          this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
+      // Polling fallback: directly read IRQ_MAIN if ISR hasn't fired yet.
+      // update()'s blocking reads cleared the hardware register, so also check ISR bits.
+      if (!(this->irq_status_ & (IRQ_RXE | IRQ_RXS | IRQ_COL))) {
+        uint8_t polled = this->read_register(IRQ_MAIN);
+        if (polled) {
+          this->irq_status_ |= polled;
+          this->irq_timer_status_ |= this->read_register(IRQ_TIMER);
         }
+      }
+      // Trigger anticollision on RXE (full ATQA received), RXS (partial), or COL
+      static const uint8_t ATQA_MASK = IRQ_RXE | IRQ_RXS | IRQ_COL;
+      if (this->irq_status_ & ATQA_MASK) {
+        this->irq_status_ &= ~ATQA_MASK;
+        this->winner_profile_idx_ = this->current_profile_idx_;
+
+        // Direct SELECT fallback for known tags.
+        // The SELECT command (9 bytes reader TX ≈ 762µs) gives the ring much more
+        // charging time than WUPA (1 byte ≈ 85µs), and the ring only needs to respond
+        // with SAK (3 bytes ≈ 255µs) vs full anticol (5 bytes ≈ 425µs).
+        // This enables perpendicular detection for previously-seen tags even when
+        // the ring cannot sustain a full anticol response.
+        bool confirmed_any_known = false;
+        if (!this->present_tags_.empty()) {
+          this->write_register(RX_CONF3, 0xE2);       // +5.5 dB AM gain boost
+          this->write_register(RX_CONF2, 0x48);       // auto-phase selection
+          this->write_register(ISO14443A_CONF, 0x00); // full SELECT frame, no anticol
+          for (const auto &uid_str : this->present_tags_) {
+            std::vector<uint8_t> uid;
+            for (size_t i = 0; i + 1 < uid_str.size(); i += 2)
+              uid.push_back((uint8_t) strtol(uid_str.substr(i, 2).c_str(), nullptr, 16));
+            bool sel_ok = false;
+            if (uid.size() == 7) {
+              uint8_t bcc1 = 0x88 ^ uid[0] ^ uid[1] ^ uid[2];
+              uint8_t s1[] = {0x93, 0x70, 0x88, uid[0], uid[1], uid[2], bcc1};
+              uint8_t sak1[3] = {}; uint8_t sak1_len = 0;
+              if (this->transceive_(s1, 7, sak1, sak1_len, 25) && sak1_len > 0 && (sak1[0] & 0x04)) {
+                uint8_t bcc2 = uid[3] ^ uid[4] ^ uid[5] ^ uid[6];
+                uint8_t s2[] = {0x95, 0x70, uid[3], uid[4], uid[5], uid[6], bcc2};
+                uint8_t sak2[3] = {}; uint8_t sak2_len = 0;
+                if (this->transceive_(s2, 7, sak2, sak2_len, 25) && sak2_len > 0 && !(sak2[0] & 0x04))
+                  sel_ok = true;
+              }
+            } else if (uid.size() == 4) {
+              uint8_t bcc = uid[0] ^ uid[1] ^ uid[2] ^ uid[3];
+              uint8_t s1[] = {0x93, 0x70, uid[0], uid[1], uid[2], uid[3], bcc};
+              uint8_t sak1[3] = {}; uint8_t sak1_len = 0;
+              if (this->transceive_(s1, 7, sak1, sak1_len, 25) && sak1_len > 0 && !(sak1[0] & 0x04))
+                sel_ok = true;
+            }
+            if (sel_ok) {
+              ESP_LOGD(TAG, "Known tag confirmed via direct SELECT: %s", uid_str.c_str());
+              this->tags_this_scan_.insert(uid_str);
+              this->tag_miss_counts_[uid_str] = 0;
+              confirmed_any_known = true;
+            }
+          }
+          this->write_register(RX_CONF2, 0x1D);
+          this->write_register(ISO14443A_CONF, 0x01);
+        }
+
+        if (confirmed_any_known) {
+          this->finalize_scan_();
+          this->state_ = STATE_IDLE;
+          break;
+        }
+
+        // No known tag confirmed — standard anticol for new tag discovery.
+        this->cascade_level_ = 0;
+        this->current_uid_ = "";
+        this->state_ = STATE_ANTICOL;
+        this->last_state_change_ = now;
+        this->write_command(ST25R_CMD_CLEAR_FIFO);
+        this->read_register(IRQ_MAIN);
+        this->write_register(OP_CONTROL, 0xC8);
+        delay(10);
+        this->write_register(RX_CONF3, 0xE2);
+        this->write_register(RX_CONF2, 0x48);
+        uint8_t anticol_pk[] = {0x93, 0x20};
+        this->write_register(NUM_TX_BYTES1, 0x00);
+        this->write_register(NUM_TX_BYTES2, 0x10);  // 2 bytes, 0 partial bits
+        this->irq_triggered_ = false;
+        this->irq_status_ = 0;
+        this->write_fifo(anticol_pk, 2);
+        this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
       }
       break;
     }
 
     case STATE_ANTICOL: {
       if (now - this->last_state_change_ > 500) {
+        ESP_LOGD(TAG, "ANTICOL timeout: irq_main=0x%02X", this->irq_status_);
         this->finalize_scan_();
         this->state_ = STATE_IDLE;
         return;
       }
-      if (this->irq_status_ & 0x10) {
-        this->irq_status_ &= ~0x10;
+      // Polling fallback: keep reading IRQ_MAIN until RXE or COL.
+      if (!(this->irq_status_ & (IRQ_RXE | IRQ_COL))) {
+        uint8_t polled = this->read_register(IRQ_MAIN);
+        if (polled) this->irq_status_ |= polled;
+      }
+      // Process on RXE (complete reception) or COL (partial — weak perpendicular signal).
+      // With low coupling, the ST25R demodulator sees the ring's backscatter as a
+      // "collision" before completing RXE. Read whatever landed in the FIFO.
+      bool anticol_received = (this->irq_status_ & (IRQ_RXE | IRQ_COL)) != 0;
+      if (anticol_received) {
+        this->irq_status_ &= ~(IRQ_RXE | IRQ_COL);
         uint8_t f1 = this->read_register(FIFO_STATUS1);
-        if (f1 >= 5) {
-          this->read_fifo(this->uid_buffer_, 5);
+        uint8_t col_disp = this->read_register(COLLISION_DISPLAY);
+        ESP_LOGD(TAG, "ANTICOL rx: fifo=%u col_disp=0x%02X irq=0x%02X", f1, col_disp, this->irq_status_);
+        // Standard NVB=0x20 anticol: ring sends {CT,B1,B2,B3,BCC} (5 bytes).
+        // Accept if at least 4 bytes received; compute BCC from available bytes if needed.
+        if (f1 >= 4) {
+          uint8_t read_len = (f1 >= 5) ? 5 : 4;
+          this->read_fifo(this->uid_buffer_, read_len);
+          bool bcc_ok = true;
+          if (read_len == 4) {
+            this->uid_buffer_[4] = this->uid_buffer_[0] ^ this->uid_buffer_[1] ^
+                                   this->uid_buffer_[2] ^ this->uid_buffer_[3];
+          } else {
+            uint8_t expected = this->uid_buffer_[0] ^ this->uid_buffer_[1] ^
+                               this->uid_buffer_[2] ^ this->uid_buffer_[3];
+            if (this->uid_buffer_[4] != expected) {
+              ESP_LOGD(TAG, "ANTICOL BCC error: got 0x%02X expected 0x%02X, discarding",
+                       this->uid_buffer_[4], expected);
+              bcc_ok = false;
+            }
+          }
+          if (!bcc_ok) {
+            this->finalize_scan_();
+            this->state_ = STATE_IDLE;
+            return;
+          }
           uint8_t sel_cmds[] = {0x93, 0x95, 0x97};
           uint8_t sel_pk[] = {sel_cmds[this->cascade_level_], 0x70, this->uid_buffer_[0], this->uid_buffer_[1], this->uid_buffer_[2], this->uid_buffer_[3], this->uid_buffer_[4]};
           this->write_register(ISO14443A_CONF, 0x00);
@@ -255,11 +388,15 @@ void ST25R::loop() {
           delay(5);
           uint8_t sak_resp[3] = {};
           uint8_t sak_len = 0;
+          ESP_LOGD(TAG, "SELECT CL%u: %02X %02X %02X %02X %02X %02X %02X", this->cascade_level_+1,
+                   sel_pk[0], sel_pk[1], sel_pk[2], sel_pk[3], sel_pk[4], sel_pk[5], sel_pk[6]);
           bool select_ok = this->transceive_(sel_pk, 7, sak_resp, sak_len, 200);
+          ESP_LOGD(TAG, "SELECT result: ok=%d sak_len=%u sak=0x%02X", select_ok, sak_len, sak_resp[0]);
           if (!select_ok || sak_len == 0) {
             this->write_register(RX_CONF2, 0x9D);
             delay(10);
             select_ok = this->transceive_(sel_pk, 7, sak_resp, sak_len, 250);
+            ESP_LOGD(TAG, "SELECT retry: ok=%d sak_len=%u sak=0x%02X", select_ok, sak_len, sak_resp[0]);
           }
           if (!select_ok || sak_len == 0) {
             this->write_register(RX_CONF2, 0x1D);
@@ -274,6 +411,7 @@ void ST25R::loop() {
           if (sak & 0x04) {
             this->cascade_level_++;
             this->write_command(ST25R_CMD_STOP_ALL);
+            this->write_register(RX_CONF3, 0xE2);  // keep gain boost for CL2 anticol
             uint8_t next_anticol[] = {sel_cmds[this->cascade_level_], 0x20};
             this->write_register(NUM_TX_BYTES1, 0x00);
             this->write_register(NUM_TX_BYTES2, 0x10);  // 2 bytes, 0 partial bits
@@ -314,7 +452,7 @@ void ST25R::finalize_scan_() {
     const std::string &uid = *it;
     if (this->tags_this_scan_.find(uid) == this->tags_this_scan_.end()) {
       this->tag_miss_counts_[uid]++;
-      if (this->tag_miss_counts_[uid] >= 3) {
+      if (this->tag_miss_counts_[uid] >= 8) {
         ESP_LOGI(TAG, "Tag removed: %s", uid.c_str());
         std::vector<uint8_t> uid_bytes;
         for (size_t i = 0; i < uid.length(); i += 2) { uid_bytes.push_back((uint8_t) strtol(uid.substr(i, 2).c_str(), nullptr, 16)); }
@@ -353,17 +491,14 @@ bool ST25R::reset_() {
   this->write_register(MASK_MAIN, 0x00);    // Unmask all main IRQs
   this->write_register(0x17, 0x00);         // MASK_TIMER: unmask all timer IRQs
   uint8_t d_res = (15 - this->rf_power_) & 0x0F;
-  // am_mod=5 → 10% modulation (ISO14443 minimum), maximises carrier field strength
-  this->write_register(TX_DRIVER_CONF, 0x50 | d_res);
-  // Write RX_CONF2/3 LAST so nothing overwrites them.
+  // am_mod=7 → 12% AM modulation (ISO14443 compliant, good carrier power)
+  this->write_register(TX_DRIVER_CONF, 0x70 | d_res);
+  // Write RX_CONF2/3 here as initial defaults; update() overrides per scan profile.
   // NOTE: CORR_CONF1 (0x4C) and CORR_CONF2 (0x4D) are Space B registers — the SPI
   // driver masks addr & 0x3F, so writing them would corrupt RX_CONF2/RX_CONF3. Do NOT
   // write Space B registers here; let Set_Default keep their factory defaults.
-  // RX_CONF2 0x1F: AGC enabled (agc_en=1), full-period (agc_m=1), reset algorithm
-  //                (agc_alg=1, recommended for ISO14443A with short SOF)
-  this->write_register(RX_CONF2, 0x1F);
-  // RX_CONF3 0xE0: rg1_am=7 (+5.5dB AM gain boost), rg1_pm=0 (full PM), lf_en=0 (HF)
-  this->write_register(RX_CONF3, 0xE0);
+  this->write_register(RX_CONF2, 0x48);  // Ph-A-Auto initial state
+  this->write_register(RX_CONF3, 0x02);  // Standard RX path
   if (this->rf_field_enabled_) {
     this->field_on_();
     // Calibrate internal regulators for max TX output once field is on
