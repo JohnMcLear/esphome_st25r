@@ -42,6 +42,10 @@ void ST25R::setup() {
     return;
   }
 
+  for (const auto &uid : this->known_uids_) {
+    ESP_LOGI(TAG, "Known UID configured: %s (will try direct SELECT on first ATQA)", uid.c_str());
+  }
+
   ESP_LOGI(TAG, "ST25R initialized successfully.");
 }
 
@@ -260,18 +264,24 @@ void ST25R::loop() {
         this->irq_status_ &= ~ATQA_MASK;
         this->winner_profile_idx_ = this->current_profile_idx_;
 
-        // Direct SELECT fallback for known tags.
+        ESP_LOGD(TAG, "ATQA detected, known=%u present=%u", this->known_uids_.size(), this->present_tags_.size());
+        // Direct SELECT fallback: try all pre-configured known UIDs plus currently
+        // present tags. known_uids_ entries that aren't yet in present_tags_ will be
+        // confirmed and added via finalize_scan_() (which fires on_tag triggers).
         // The SELECT command (9 bytes reader TX ≈ 762µs) gives the ring much more
-        // charging time than WUPA (1 byte ≈ 85µs), and the ring only needs to respond
-        // with SAK (3 bytes ≈ 255µs) vs full anticol (5 bytes ≈ 425µs).
-        // This enables perpendicular detection for previously-seen tags even when
-        // the ring cannot sustain a full anticol response.
+        // charging time than WUPA (1 byte ≈ 85µs), and SAK (255µs) < anticol (425µs).
         bool confirmed_any_known = false;
-        if (!this->present_tags_.empty()) {
-          this->write_register(RX_CONF3, 0xE2);       // +5.5 dB AM gain boost
-          this->write_register(RX_CONF2, 0x48);       // auto-phase selection
+        // Build union of known_uids_ and present_tags_ to try SELECT for.
+        std::set<std::string> to_try(this->present_tags_.begin(), this->present_tags_.end());
+        for (const auto &uid : this->known_uids_) to_try.insert(uid);
+        if (!to_try.empty()) {
+          // Use +5.5 dB gain boost, lf_en=0 (HF path, NOT LF path).
+          // Use the same RX phase that received the ATQA for the SAK response.
+          this->write_register(RX_CONF3, 0xE0);
+          uint8_t sel_phase = (this->winner_profile_idx_ == 0) ? 0x88 : 0x08;
+          this->write_register(RX_CONF2, sel_phase);
           this->write_register(ISO14443A_CONF, 0x00); // full SELECT frame, no anticol
-          for (const auto &uid_str : this->present_tags_) {
+          for (const auto &uid_str : to_try) {
             std::vector<uint8_t> uid;
             for (size_t i = 0; i + 1 < uid_str.size(); i += 2)
               uid.push_back((uint8_t) strtol(uid_str.substr(i, 2).c_str(), nullptr, 16));
@@ -280,18 +290,24 @@ void ST25R::loop() {
               uint8_t bcc1 = 0x88 ^ uid[0] ^ uid[1] ^ uid[2];
               uint8_t s1[] = {0x93, 0x70, 0x88, uid[0], uid[1], uid[2], bcc1};
               uint8_t sak1[3] = {}; uint8_t sak1_len = 0;
-              if (this->transceive_(s1, 7, sak1, sak1_len, 25) && sak1_len > 0 && (sak1[0] & 0x04)) {
+              bool cl1_ok = this->transceive_(s1, 7, sak1, sak1_len, 50);
+              ESP_LOGD(TAG, "CL1 SELECT: ok=%d len=%u sak=0x%02X", cl1_ok, sak1_len, sak1_len > 0 ? sak1[0] : 0);
+              if (cl1_ok && sak1_len > 0 && (sak1[0] & 0x04)) {
                 uint8_t bcc2 = uid[3] ^ uid[4] ^ uid[5] ^ uid[6];
                 uint8_t s2[] = {0x95, 0x70, uid[3], uid[4], uid[5], uid[6], bcc2};
                 uint8_t sak2[3] = {}; uint8_t sak2_len = 0;
-                if (this->transceive_(s2, 7, sak2, sak2_len, 25) && sak2_len > 0 && !(sak2[0] & 0x04))
+                bool cl2_ok = this->transceive_(s2, 7, sak2, sak2_len, 50);
+                ESP_LOGD(TAG, "CL2 SELECT: ok=%d len=%u sak=0x%02X", cl2_ok, sak2_len, sak2_len > 0 ? sak2[0] : 0);
+                if (cl2_ok && sak2_len > 0 && !(sak2[0] & 0x04))
                   sel_ok = true;
               }
             } else if (uid.size() == 4) {
               uint8_t bcc = uid[0] ^ uid[1] ^ uid[2] ^ uid[3];
               uint8_t s1[] = {0x93, 0x70, uid[0], uid[1], uid[2], uid[3], bcc};
               uint8_t sak1[3] = {}; uint8_t sak1_len = 0;
-              if (this->transceive_(s1, 7, sak1, sak1_len, 25) && sak1_len > 0 && !(sak1[0] & 0x04))
+              bool cl1_ok = this->transceive_(s1, 7, sak1, sak1_len, 50);
+              ESP_LOGD(TAG, "CL1 SELECT(4B): ok=%d len=%u sak=0x%02X", cl1_ok, sak1_len, sak1_len > 0 ? sak1[0] : 0);
+              if (cl1_ok && sak1_len > 0 && !(sak1[0] & 0x04))
                 sel_ok = true;
             }
             if (sel_ok) {
@@ -301,7 +317,8 @@ void ST25R::loop() {
               confirmed_any_known = true;
             }
           }
-          this->write_register(RX_CONF2, 0x1D);
+          this->write_register(RX_CONF3, 0x02);
+          this->write_register(RX_CONF2, 0x48);
           this->write_register(ISO14443A_CONF, 0x01);
         }
 

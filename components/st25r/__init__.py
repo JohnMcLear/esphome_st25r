@@ -37,6 +37,18 @@ CONF_RF_FIELD_ENABLED = "rf_field_enabled"
 CONF_RF_POWER = "rf_power"
 CONF_SUPPLY_3V3 = "supply_3v3"
 CONF_FIELD_STRENGTH = "field_strength"
+CONF_KNOWN_UIDS = "known_uids"
+
+
+def validate_uid(value):
+    value = cv.string_strict(value).upper()
+    if len(value) % 2 != 0:
+        raise cv.Invalid("UID must be an even number of hex characters")
+    try:
+        bytes.fromhex(value)
+    except ValueError as exc:
+        raise cv.Invalid(f"Invalid hex UID: {exc}") from exc
+    return value
 
 st25r_ns = cg.esphome_ns.namespace("st25r")
 ST25R = st25r_ns.class_("ST25R", cg.PollingComponent)
@@ -68,6 +80,7 @@ ST25R_SCHEMA = cv.Schema(
                 cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(ST25RTagRemovedTrigger),
             }
         ),
+        cv.Optional(CONF_KNOWN_UIDS): cv.ensure_list(validate_uid),
     }
 ).extend(cv.polling_component_schema("1s"))
 
@@ -108,3 +121,6 @@ async def setup_st25r(var, config):
         await automation.build_automation(
             trigger, [(cg.std_string, "x")], conf
         )
+
+    for uid in config.get(CONF_KNOWN_UIDS, []):
+        cg.add(var.add_known_uid(uid))
