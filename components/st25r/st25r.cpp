@@ -506,7 +506,7 @@ void ST25R::finalize_scan_() {
     const std::string &uid = *it;
     if (this->tags_this_scan_.find(uid) == this->tags_this_scan_.end()) {
       this->tag_miss_counts_[uid]++;
-      if (this->tag_miss_counts_[uid] >= 100) {
+      if (this->tag_miss_counts_[uid] >= 30) {
         ESP_LOGI(TAG, "Tag removed: %s", uid.c_str());
         std::vector<uint8_t> uid_bytes;
         for (size_t i = 0; i < uid.length(); i += 2) { uid_bytes.push_back((uint8_t) strtol(uid.substr(i, 2).c_str(), nullptr, 16)); }
