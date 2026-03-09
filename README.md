@@ -3,6 +3,12 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![ESPHome](https://img.shields.io/badge/ESPHome-compatible-green.svg)](https://esphome.io)
 
+> [!CAUTION]
+> ### 🚨 PSA: Elechouse ST25R3916(B) is actually ST25R3916A
+> It has been confirmed by Wilson Shen at Elechouse that the modules advertised as **ST25R3916B** actually contain the older **ST25R3916A** silicon.
+> 
+> If you require the features of the true "B" revision (such as Automatic Wave Shaping / AWS), we have provided a [custom 40x40mm ST25R3916B design](./pcb/) in this repository specifically for production via JLCPCB.
+
 An ESPHome component for the STMicroelectronics ST25R family of NFC reader ICs.
 
 ## Supported Units
