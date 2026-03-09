@@ -106,6 +106,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   void set_rf_field_enabled(bool enabled) { this->rf_field_enabled_ = enabled; }
   void set_rf_power(uint8_t power) { this->rf_power_ = power; }
   void set_supply_3v3(bool supply_3v3) { this->supply_3v3_ = supply_3v3; }
+  void add_known_uid(const std::string &uid) { this->known_uids_.push_back(uid); }
 
   void register_on_tag_trigger(ST25RTagTrigger *trig) { this->on_tag_triggers_.push_back(trig); }
   void register_on_tag_removed_trigger(ST25RTagRemovedTrigger *trig) {
@@ -143,6 +144,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   std::set<std::string> present_tags_;     // UIDs confirmed present (published to HA)
   std::set<std::string> tags_this_scan_;  // UIDs seen in the current scan cycle
   std::map<std::string, uint8_t> tag_miss_counts_;  // per-UID consecutive miss counter
+  std::vector<std::string> known_uids_;
   bool rf_field_enabled_{true};
   uint8_t rf_power_{15};
   bool supply_3v3_{true};

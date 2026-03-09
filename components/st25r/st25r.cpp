@@ -87,44 +87,38 @@ void ST25R::update() {
   this->irq_triggered_ = false;
   this->irq_status_ = 0;
   this->irq_timer_status_ = 0;
-  this->current_profile_idx_ = 0;
 
-  // Blocking phase sweep matching RANGE_MILESTONE (df09fb8):
-  // Try Phase B first (bit7=1, MAX GAIN), then Phase A (bit7=0).
-  // 20 ms per attempt lets the tag charge its capacitor and respond.
-  this->write_register(RX_CONF3, 0x02);
+  struct SearchProfile {
+    uint8_t rx_conf2;
+    uint8_t rx_conf3;
+    const char *desc;
+  } profiles[] = {
+    {0x48, 0x02, "Auto-A-Max"},  // Auto Phase A, Max Gain
+    {0xC8, 0x02, "Auto-B-Max"},  // Auto Phase B, Max Gain
+    {0x68, 0x02, "Auto-AM-Max"}  // Auto Phase, Max Gain, AM Demod
+  };
 
-  // Attempt 1: Phase B
-  this->write_register(RX_CONF2, 0x88);
+  uint8_t idx = (this->winner_profile_idx_ != 0xFF) ? this->winner_profile_idx_ : this->current_profile_idx_;
+  const auto &p = profiles[idx % 3];
+
+  this->write_register(RX_CONF2, p.rx_conf2);
+  this->write_register(RX_CONF3, p.rx_conf3);
   this->write_command(ST25R_CMD_CLEAR_FIFO);
   this->read_register(IRQ_MAIN);
-  this->write_register(OP_CONTROL, 0xC8);
   this->write_command(ST25R_CMD_TRANSMIT_WUPA);
   delay(20);
-  uint8_t irq_b = this->read_register(IRQ_MAIN);
-  ESP_LOGD(TAG, "Phase B WUPA irq=0x%02X", irq_b);
-
-  if (!(irq_b & 0x10)) {  // no RXE → try Phase A
-    // Attempt 2: Phase A
-    this->write_register(RX_CONF2, 0x08);
-    this->write_command(ST25R_CMD_CLEAR_FIFO);
-    this->read_register(IRQ_MAIN);
-    this->write_register(OP_CONTROL, 0xC8);
-    this->write_command(ST25R_CMD_TRANSMIT_WUPA);
-    delay(20);
-    uint8_t irq_a = this->read_register(IRQ_MAIN);
-    ESP_LOGD(TAG, "Phase A WUPA irq=0x%02X", irq_a);
-    this->irq_status_ |= irq_a;
-    this->current_profile_idx_ = 1;
+  
+  uint8_t irq_m = this->read_register(IRQ_MAIN);
+  if (irq_m & (IRQ_RXE | IRQ_COL | IRQ_RXS)) {
+    uint8_t current = this->irq_status_;
+    this->irq_status_ = current | irq_m | IRQ_RXS | IRQ_RXE;
+    this->winner_profile_idx_ = idx % 3;
+    ESP_LOGD(TAG, "Tag spotted using profile: %s", p.desc);
   } else {
-    this->irq_status_ |= irq_b;
-    this->winner_profile_idx_ = 0;  // Phase B worked
+    this->winner_profile_idx_ = 0xFF;
+    this->current_profile_idx_ = (this->current_profile_idx_ + 1) % 3;
   }
 
-  uint8_t final_op_ctrl = this->read_register(OP_CONTROL);
-  uint8_t final_mode_reg = this->read_register(MODE);
-  ESP_LOGD(TAG, "Sent WUPA, OP_CONTROL=0x%02X MODE=0x%02X", final_op_ctrl, final_mode_reg);
-  
   this->state_ = STATE_WUPA;
   this->last_state_change_ = millis();
 }
@@ -351,39 +345,118 @@ void ST25R::loop() {
         this->state_ = STATE_IDLE;
         return;
       }
-      // Polling fallback: keep reading IRQ_MAIN until RXE or COL.
-      if (!(this->irq_status_ & (IRQ_RXE | IRQ_COL))) {
-        uint8_t polled = this->read_register(IRQ_MAIN);
-        if (polled) this->irq_status_ |= polled;
-      }
-      // Process on RXE (complete reception) or COL (partial — weak perpendicular signal).
-      // With low coupling, the ST25R demodulator sees the ring's backscatter as a
-      // "collision" before completing RXE. Read whatever landed in the FIFO.
-      bool anticol_received = (this->irq_status_ & (IRQ_RXE | IRQ_COL)) != 0;
-      if (anticol_received) {
-        this->irq_status_ &= ~(IRQ_RXE | IRQ_COL);
-        uint8_t f1 = this->read_register(FIFO_STATUS1);
-        uint8_t col_disp = this->read_register(COLLISION_DISPLAY);
-        ESP_LOGD(TAG, "ANTICOL rx: fifo=%u col_disp=0x%02X irq=0x%02X", f1, col_disp, this->irq_status_);
-        // Standard NVB=0x20 anticol: ring sends {CT,B1,B2,B3,BCC} (5 bytes).
-        // Accept if at least 4 bytes received; compute BCC from available bytes if needed.
-        if (f1 >= 4) {
-          uint8_t read_len = (f1 >= 5) ? 5 : 4;
-          this->read_fifo(this->uid_buffer_, read_len);
-          bool bcc_ok = true;
-          if (read_len == 4) {
+
+      if (this->irq_status_ & (IRQ_RXS | IRQ_RXE | IRQ_COL)) {
+        uint32_t wait_start = millis();
+        uint8_t total_read = 0;
+        int repolls = 0;
+        
+        while (millis() - wait_start < 100 && total_read < 4 && repolls < 3) {
+          uint8_t f1 = this->read_register(FIFO_STATUS1);
+          if (f1 > 0) {
+            uint8_t to_read = std::min((uint8_t)(5 - total_read), f1);
+            this->read_fifo(this->uid_buffer_ + total_read, to_read);
+            total_read += to_read;
+            wait_start = millis(); // Reset wait on data
+          } else if (millis() - wait_start > 30) {
+            // Re-poll on weak RXS hit
+            this->write_command(ST25R_CMD_CLEAR_FIFO);
+            uint8_t cl[] = {0x93, 0x20}; // Hardcoded for CL1 for now
+            this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
+            this->write_fifo(cl, 2);
+            repolls++;
+            wait_start = millis();
+          }
+          delay(1);
+        }
+
+        if (total_read >= 4) {
+          uint8_t current = this->irq_status_;
+          bool was_col = (current & IRQ_COL) != 0;
+          this->irq_status_ = current & ~(IRQ_RXS | IRQ_RXE | IRQ_COL);
+          
+          if (total_read == 4) {
             this->uid_buffer_[4] = this->uid_buffer_[0] ^ this->uid_buffer_[1] ^
                                    this->uid_buffer_[2] ^ this->uid_buffer_[3];
-          } else {
-            uint8_t expected = this->uid_buffer_[0] ^ this->uid_buffer_[1] ^
-                               this->uid_buffer_[2] ^ this->uid_buffer_[3];
-            if (this->uid_buffer_[4] != expected) {
-              ESP_LOGD(TAG, "ANTICOL BCC error: got 0x%02X expected 0x%02X, discarding",
-                       this->uid_buffer_[4], expected);
-              bcc_ok = false;
-            }
           }
-          if (!bcc_ok) {
+          
+          uint8_t col_pos_abs = 0xFF;
+          if (was_col) {
+            uint8_t col_raw = this->read_register(COLLISION_DISPLAY);
+            uint8_t col_byte = (col_raw >> 4) & 0x0F;
+            uint8_t col_bit  = (col_raw >> 1) & 0x07;
+            col_pos_abs = col_byte * 8 + col_bit;
+          }
+
+          // Collision: narrow the prefix by forcing the collision bit to 0.
+
+          uint8_t nvb = ((this->valid_bits_ / 8 + 2) << 4) | (this->valid_bits_ % 8);
+          uint8_t sel_cmds[] = {0x93, 0x95, 0x97};
+          uint8_t tx_bytes = (this->valid_bits_ + 7) / 8;
+          uint8_t tx_buf[7] = {sel_cmds[this->cascade_level_], nvb};
+          memcpy(tx_buf + 2, this->uid_buffer_, tx_bytes);
+
+          uint16_t tx_bits = 16 + this->valid_bits_;
+          uint8_t ntx = (tx_bits >> 3) & 0x1F;
+          uint8_t nbtx = tx_bits & 0x07;
+          ESP_LOGD(TAG, "ANTICOL retry NVB=0x%02X valid_bits=%u tx_bits=%u ntx=%u nbtx=%u buf: %02X %02X %02X %02X %02X %02X",
+                   nvb, this->valid_bits_, tx_bits, ntx, nbtx,
+                   tx_buf[0], tx_buf[1], tx_buf[2],
+                   tx_bytes > 1 ? tx_buf[3] : 0,
+                   tx_bytes > 2 ? tx_buf[4] : 0,
+                   tx_bytes > 3 ? tx_buf[5] : 0);
+
+          this->write_command(ST25R_CMD_CLEAR_FIFO);
+          this->read_register(IRQ_MAIN);
+          this->read_register(IRQ_TIMER);
+          this->irq_triggered_ = false;
+          this->write_fifo(tx_buf, 2 + tx_bytes);
+
+          // NUM_TX_BYTES: ntx[4:0] in bits[7:3], nbtx[2:0] in bits[2:0]
+          this->write_register(NUM_TX_BYTES1, (tx_bits >> 8) & 0xFF);
+          this->write_register(NUM_TX_BYTES2, (ntx << 3) | nbtx);
+          this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
+          this->last_state_change_ = millis();
+          return;
+        }
+
+        // No collision — full UID received at this cascade level.
+        // Execute SELECT synchronously via transceive_() to avoid IRQ edge-miss.
+        uint8_t sel_cmds[] = {0x93, 0x95, 0x97};
+        uint8_t bcc = this->uid_buffer_[0] ^ this->uid_buffer_[1] ^ this->uid_buffer_[2] ^ this->uid_buffer_[3];
+        uint8_t sel_pk[7] = {sel_cmds[this->cascade_level_], 0x70,
+                             this->uid_buffer_[0], this->uid_buffer_[1],
+                             this->uid_buffer_[2], this->uid_buffer_[3], bcc};
+        ESP_LOGD(TAG, "  BCC=0x%02X selecting CL%u: %02X%02X%02X%02X",
+                 bcc, this->cascade_level_ + 1, sel_pk[2], sel_pk[3], sel_pk[4], sel_pk[5]);
+
+        // Accumulate UID bytes — skip cascade tag byte 0x88
+        if (sel_pk[2] == 0x88) {
+          for (int i = 3; i < 6; i++) {
+            char buf[3]; sprintf(buf, "%02X", sel_pk[i]); this->current_uid_ += buf;
+          }
+        } else {
+          for (int i = 2; i < 6; i++) {
+            char buf[3]; sprintf(buf, "%02X", sel_pk[i]); this->current_uid_ += buf;
+          }
+        }
+
+        uint8_t sak_resp[3] = {};
+        uint8_t sak_len = 0;
+        if (!this->transceive_(sel_pk, 7, sak_resp, sak_len, 50) || sak_len == 0) {
+          ESP_LOGD(TAG, "SELECT failed (CL%u)", this->cascade_level_ + 1);
+          this->finalize_scan_();
+          this->state_ = STATE_IDLE;
+          return;
+        }
+        uint8_t sak = sak_resp[0];
+        ESP_LOGD(TAG, "SAK: 0x%02X (cascade=%s)", sak, (sak & 0x04) ? "yes" : "no");
+
+        if (sak & 0x04) {
+          // Cascade bit — UID continues at next level; stay in STATE_ANTICOL
+          this->cascade_level_++;
+          if (this->cascade_level_ > 2) {
+            ESP_LOGE(TAG, "Too many cascade levels");
             this->finalize_scan_();
             this->state_ = STATE_IDLE;
             return;

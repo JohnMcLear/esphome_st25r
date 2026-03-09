@@ -2,30 +2,54 @@ esphome:
   name: test_st25r
 
 esp32:
-  board: esp32dev
+  board: esp32-c6-devkitc-1
+  variant: esp32c6
+  framework:
+    type: esp-idf
 
-i2c:
-  sda: GPIO23
-  scl: GPIO21
-  scan: true
+spi:
+  clk_pin: GPIO19
+  miso_pin: GPIO10
+  mosi_pin: GPIO18
+
+output:
+  - platform: gpio
+    pin: GPIO2
+    id: status_led_out
+
+light:
+  - platform: binary
+    name: "Status LED"
+    output: status_led_out
+    id: status_led
 
 external_components:
   - source:
       type: local
       path: components
 
-st25r_i2c:
+st25r_spi:
   id: my_st25r
-  address: 0x50
+  cs_pin: GPIO6
+  irq_pin: GPIO7
   update_interval: 1s
+  rf_power: 15
+  supply_3v3: false
   on_tag:
     then:
-      - logger.log: "Tag detected!"
+      - logger.log: "Ring detected!"
+      - light.turn_on: status_led
+  on_tag_removed:
+    then:
+      - logger.log: "Ring removed"
+      - light.turn_off: status_led
 
 binary_sensor:
   - platform: st25r
+    st25r_id: my_st25r
     uid: 00-00-00-00
-    name: "My Tag"
+    name: "My New Ring"
 
 logger:
   level: VERY_VERBOSE
+  hardware_uart: USB_SERIAL_JTAG
