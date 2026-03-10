@@ -132,6 +132,8 @@ STATE_ANTICOL: IRQ(RXE=UID received) → read 5 bytes from FIFO → transceive S
 - Default both = 0x80 (mid-scale)
 - Sweeping these changes antenna resonance — measure with Measure Amplitude (0xD3) to find optimum
 
+AAT is available in both the ST25R3916 and ST25R3916B
+
 ## RX Configuration (for maximum perpendicular-ring sensitivity)
 
 | Register | Address | Value | Meaning |
