@@ -62,6 +62,7 @@ enum ST25RCommand : uint8_t {
   ST25R_CMD_MEASURE_AMPLITUDE = 0xD3,
   ST25R_CMD_ADJUST_REGULATORS = 0xD6,
   ST25R_CMD_READ_FIFO = 0x9F,
+  ST25R_CMD_TEST_ACCESS = 0xFC,
 };
 
 class ST25R;
@@ -113,7 +114,6 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
     this->on_tag_removed_triggers_.push_back(trig);
   }
   void register_tag(ST25RBinarySensor *tag) { this->binary_sensors_.push_back(tag); }
-  void add_known_uid(const std::string &uid) { this->known_uids_.push_back(uid); }
   void set_status_binary_sensor(binary_sensor::BinarySensor *sensor) { this->status_binary_sensor_ = sensor; }
   void set_field_strength_sensor(sensor::Sensor *sensor) { this->field_strength_sensor_ = sensor; }
 
@@ -122,6 +122,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
  protected:
   virtual uint8_t read_register(uint8_t reg) = 0;
   virtual void write_register(uint8_t reg, uint8_t value) = 0;
+  virtual void write_test_register(uint8_t reg, uint8_t value) = 0;
   virtual void write_command(uint8_t command) = 0;
   virtual void write_fifo(const uint8_t *data, size_t len) = 0;
   virtual void read_fifo(uint8_t *data, size_t len) = 0;
@@ -175,7 +176,6 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   uint8_t uid_buffer_[5];
   std::string current_uid_;
 
-  std::vector<std::string> known_uids_;
   std::vector<ST25RTagTrigger *> on_tag_triggers_;
   std::vector<ST25RTagRemovedTrigger *> on_tag_removed_triggers_;
   std::vector<ST25RBinarySensor *> binary_sensors_;

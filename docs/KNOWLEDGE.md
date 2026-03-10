@@ -20,8 +20,9 @@ A robust initialization sequence involves the following steps:
 2.  **MISO Configuration (SPI)**: 
     - Increase MISO driving level: Set `IO_CONF2` (`0x01`) bit `io_drv_lvl` (`1<<2`).
     - Enable MISO pull-downs: Set `IO_CONF2` (`0x01`) bits `miso_pd1` (`1<<3`) and `miso_pd2` (`1<<4`).
-3.  **Overheat Protection Fix (non-B version)**:
-    - Write `0x10` to register `0x04` using the `TEST_ACCESS` command prefix (`0xFC`).
+3.  **Overheat Protection Fix (non-B version ONLY)**:
+    - **Mandatory for ST25R3916 (non-B)**. Write `0x10` to register `0x04` using the `TEST_ACCESS` command prefix (`0xFC`).
+    - **Do NOT apply to ST25R3916B.**
 4.  **Oscillator Startup**:
     - Enable oscillator: Set `OP_CONTROL` (`0x02`) bit `en` (`1<<7`).
     - Wait for `osc_ok` bit (`1<<4`) in `AUX_DISPLAY` (`0x31`) to become stable (approx 700µs).
@@ -68,7 +69,15 @@ Configurations are often defined as mode entries containing:
 
 ## Elechouse Wilson ESP32 + ST25R3916 Specifics
 
-### Confirmed Pinout (ESP32)
+### Confirmed Pinout (ESP32-C6 ST25R Relay Board)
+- **MOSI**: 18
+- **MISO**: 10
+- **SCK (CLK)**: 19
+- **CS**: 6
+- **IRQ**: 7
+- **LED**: 2 (Status LED)
+
+### Original Wilson Board Pinout (for reference)
 Based on the Elechouse sample code for the Wilson board:
 - **MOSI**: 23
 - **MISO**: 19
@@ -93,6 +102,15 @@ Compared to the standard RFAL tables, the Elechouse configuration often:
 - Uses `0x2D` or `0x3D` for `RX_CONF2` in many polling modes.
 - Configures `PT_MOD` (`0x29`) to `0x51` during initialization to reduce RFO resistance in the modulated state.
 - Enables `lm_dri` (`1<<4`) in `AUX_MOD` (`0x28` in Space B) to use internal load modulation.
+
+## Antenna Tuning (AAT)
+
+Based on the provided tuning test data, the following configurations are relevant for optimizing RF performance:
+
+- **Matching Capacitors**: Tuning scans reference `39pF` and `47pF` primary matching capacitor values.
+- **Damping Resistors**: Typically `1R5` or `2R4` resistors are used to adjust the Q factor.
+- **Enclosure Compensation**: The presence of an acrylic enclosure significantly affects antenna resonance compared to "free air" conditions.
+- **AAT Registers**: `ANT_TUNE_A` (`0x26`) and `ANT_TUNE_B` (`0x27`) allow for fine-tuning. The tuning voltage is approximately `(0.044 + 0.868 * val/255) * VDD_A`.
 
 ## Summary of Useful Commands
 - **Set Default**: `0xC1`

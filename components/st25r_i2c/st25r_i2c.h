@@ -18,6 +18,7 @@ class ST25RI2c : public st25r::ST25R, public i2c::I2CDevice {
  protected:
   uint8_t read_register(uint8_t reg) override;
   void write_register(uint8_t reg, uint8_t value) override;
+  void write_test_register(uint8_t reg, uint8_t value) override;
   void write_command(uint8_t command) override;
   void write_fifo(const uint8_t *data, size_t len) override;
   void read_fifo(uint8_t *data, size_t len) override;

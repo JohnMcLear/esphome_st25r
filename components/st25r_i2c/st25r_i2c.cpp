@@ -26,6 +26,14 @@ void ST25RI2c::write_register(uint8_t reg, uint8_t value) {
   this->i2c::I2CDevice::write_register(reg, &value, 1);
 }
 
+void ST25RI2c::write_test_register(uint8_t reg, uint8_t value) {
+  uint8_t data[3];
+  data[0] = 0xFC;            // TEST_ACCESS command
+  data[1] = 0x00 | (reg & 0x3F);  // Register write mode
+  data[2] = value;
+  this->i2c::I2CDevice::write(data, 3);
+}
+
 void ST25RI2c::write_command(uint8_t command) {
   this->i2c::I2CDevice::write(&command, 1);
 }

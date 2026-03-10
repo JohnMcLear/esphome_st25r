@@ -32,6 +32,14 @@ void ST25RSpi::write_register(uint8_t reg, uint8_t value) {
   this->disable();
 }
 
+void ST25RSpi::write_test_register(uint8_t reg, uint8_t value) {
+  this->enable();
+  this->write_byte(0xFC);            // TEST_ACCESS command
+  this->write_byte(0x00 | (reg & 0x3F));  // Register write mode
+  this->write_byte(value);
+  this->disable();
+}
+
 void ST25RSpi::write_command(uint8_t command) {
   this->enable();
   this->write_byte(command);
