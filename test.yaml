@@ -12,17 +12,6 @@ spi:
   miso_pin: GPIO10
   mosi_pin: GPIO18
 
-output:
-  - platform: gpio
-    pin: GPIO2
-    id: status_led_out
-
-light:
-  - platform: binary
-    name: "Status LED"
-    output: status_led_out
-    id: status_led
-
 external_components:
   - source:
       type: local
@@ -32,23 +21,18 @@ st25r_spi:
   id: my_st25r
   cs_pin: GPIO6
   irq_pin: GPIO7
-  update_interval: 1s
-  rf_power: 15
   supply_3v3: false
+  update_interval: 1s
+  known_uids:
+    - "05876446D71200"
   on_tag:
     then:
-      - logger.log: "Ring detected!"
-      - light.turn_on: status_led
-  on_tag_removed:
-    then:
-      - logger.log: "Ring removed"
-      - light.turn_off: status_led
+      - logger.log: "Tag detected!"
 
 binary_sensor:
   - platform: st25r
-    st25r_id: my_st25r
-    uid: 00-00-00-00
-    name: "My New Ring"
+    uid: "05-87-64-46-D7-12-00"
+    name: "My Tag"
 
 logger:
   level: VERY_VERBOSE

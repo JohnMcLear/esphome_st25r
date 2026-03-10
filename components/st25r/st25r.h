@@ -42,7 +42,9 @@ enum ST25RRegister : uint8_t {
   AAT_A = 0x26,  // Antenna tuning control A: D/A converter, formula: (0.044 + 0.868*val/255)*VDD_A
   AAT_B = 0x27,  // Antenna tuning control B: same formula, default=0x80
   IC_IDENTITY = 0x3F,
-  // Space B Registers (marked with 0x40 bit)
+  // Space B Registers (marked with 0x40 bit for our internal helper)
+  PT_MOD = 0x69,
+  AUX_MOD = 0x68,
   CORR_CONF1 = 0x4C,
   CORR_CONF2 = 0x4D,
 };
@@ -127,6 +129,8 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   virtual void write_fifo(const uint8_t *data, size_t len) = 0;
   virtual void read_fifo(uint8_t *data, size_t len) = 0;
 
+  void write_register_b(uint8_t reg, uint8_t value);
+
   bool reset_();
   void field_on_();
   void finalize_scan_();
@@ -175,6 +179,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   uint8_t collision_retries_{0};
   uint8_t uid_buffer_[5];
   std::string current_uid_;
+  uint8_t last_amplitude_{0};
 
   std::vector<ST25RTagTrigger *> on_tag_triggers_;
   std::vector<ST25RTagRemovedTrigger *> on_tag_removed_triggers_;
