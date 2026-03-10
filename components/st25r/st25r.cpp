@@ -43,55 +43,33 @@ void ST25R::dump_config() {
 void ST25R::update() {
   if (this->state_ != STATE_IDLE) return;
 
-  // Measure field amplitude
-  this->write_command(ST25R_CMD_MEASURE_AMPLITUDE);
-  delay(3);
-  uint8_t amp = this->read_register(AD_CONV_RESULT);
-  
-  if (this->last_amplitude_ == 0) this->last_amplitude_ = amp;
-  else this->last_amplitude_ = (uint8_t)((this->last_amplitude_ * 3 + amp) / 4);
-  
-  ESP_LOGVV(TAG, "Update: amp=%u (smoothed=%u)", amp, this->last_amplitude_);
-
   this->tags_this_scan_.clear();
   
-  // Send WUPA blocking
+  // Single WUPA attempt
   this->write_command(ST25R_CMD_CLEAR_FIFO);
   this->read_register(IRQ_MAIN);
   this->irq_triggered_ = false;
   this->irq_status_ = 0;
   
   this->write_command(ST25R_CMD_TRANSMIT_WUPA);
-  delay(20);
+  delay(20); // Required blocking delay for WUPA timing
   uint8_t irq = this->read_register(IRQ_MAIN);
   if (irq & (IRQ_RXS | IRQ_RXE | IRQ_COL)) {
     ESP_LOGD(TAG, "Tag detected via WUPA (irq=0x%02X)", irq);
     
-    if (!this->known_uids_.empty()) {
-      for (const auto &uid_str : this->known_uids_) {
-        if (!this->present_tags_.count(uid_str)) {
-          ESP_LOGI(TAG, "New tag (ATQA): %s", uid_str.c_str());
-          for (auto *trigger : this->on_tag_triggers_) trigger->trigger(uid_str);
-        }
-        for (auto *obj : this->binary_sensors_) obj->process(uid_str);
-        this->tags_this_scan_.insert(uid_str);
-        this->tag_miss_counts_[uid_str] = 0;
-      }
-    } else {
-      this->cascade_level_ = 0;
-      this->current_uid_ = "";
-      uint8_t anticol_pk[] = {0x93, 0x20};
-      this->write_command(ST25R_CMD_CLEAR_FIFO);
-      this->write_register(NUM_TX_BYTES1, 0x00);
-      this->write_register(NUM_TX_BYTES2, 0x10);
-      this->irq_triggered_ = false;
-      this->irq_status_ = 0;
-      this->write_fifo(anticol_pk, 2);
-      this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
-      this->state_ = STATE_ANTICOL;
-      this->last_state_change_ = millis();
-      return;
-    }
+    this->cascade_level_ = 0;
+    this->current_uid_ = "";
+    uint8_t anticol_pk[] = {0x93, 0x20};
+    this->write_command(ST25R_CMD_CLEAR_FIFO);
+    this->write_register(NUM_TX_BYTES1, 0x00);
+    this->write_register(NUM_TX_BYTES2, 0x10);
+    this->irq_triggered_ = false;
+    this->irq_status_ = 0;
+    this->write_fifo(anticol_pk, 2);
+    this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
+    this->state_ = STATE_ANTICOL;
+    this->last_state_change_ = millis();
+    return;
   }
   
   this->finalize_scan_();
@@ -113,6 +91,7 @@ void ST25R::loop() {
 
     case STATE_ANTICOL: {
       if (now - this->last_state_change_ > 500) {
+        ESP_LOGD(TAG, "ANTICOL timeout");
         this->finalize_scan_();
         this->state_ = STATE_IDLE;
         return;
@@ -185,7 +164,7 @@ void ST25R::loop() {
             this->last_state_change_ = now;
           } else {
             if (!this->present_tags_.count(this->current_uid_)) {
-              ESP_LOGI(TAG, "New tag: %s", this->current_uid_.c_str());
+              ESP_LOGI(TAG, "New tag detected: %s", this->current_uid_.c_str());
               for (auto *trigger : this->on_tag_triggers_) trigger->trigger(this->current_uid_);
             }
             for (auto *obj : this->binary_sensors_) obj->process(this->current_uid_);
@@ -240,58 +219,35 @@ bool ST25R::reset_() {
   this->write_register(OP_CONTROL, 0x80);
   delay(10);
   
-  uint8_t aux_display = this->read_register(0x31);
-  ESP_LOGD(TAG, "Oscillator check (AUX_DISPLAY): 0x%02X (osc_ok=%s)", 
-           aux_display, (aux_display & 0x10) ? "YES" : "NO");
-
   this->write_register(IO_CONF1, 0x00);
   
-  // Standard power configuration
-  // Disable internal load modulation
-  this->write_register_b(AUX_MOD, 0x00); 
-
-  // Set Driver: am_mod=1 (ISO compliant), d_res=0
-  this->write_register(TX_DRIVER_CONF, 0x10);
+  this->write_register_b(PT_MOD, 0x51); 
+  this->write_register_b(AUX_MOD, 0x10); 
+  this->write_register(TX_DRIVER_CONF, 0x70);
   
-  // Attenuate receiver: bits[3:0] = 0x0F (max attenuation)
-  this->write_register(RX_CONF1, 0x0F);
+  this->write_register(IO_CONF2, 0x14);
+  this->write_register(MODE, 0x08);
+  this->write_register(BIT_RATE, 0x00);
+  this->write_register(ISO14443A_CONF, 0x01);
+  this->write_register(RX_CONF4, 0x00);
+  this->write_register(0x18, 0x00);
+  this->write_register(0x19, 0xFF);
+  this->write_register(MASK_MAIN, 0x00);
+  this->write_register(0x17, 0x00);
+  
+  // High Sensitivity Settings
+  this->write_register(RX_CONF1, 0x08);
   this->write_register(RX_CONF2, 0x48);
-  this->write_register(RX_CONF3, 0x00);
+  this->write_register(RX_CONF3, 0xE2);
+
+  this->write_register_b(0x4C, 0x40);
+  this->write_register_b(0x4D, 0x40);
   
   if (this->rf_field_enabled_) {
     this->field_on_();
-    // Enable regulators: vreg_en=1
     this->write_register(IO_CONF2, 0x54);
     this->write_command(ST25R_CMD_ADJUST_REGULATORS);
     delay(10);
-
-    // Diagnostics: compare AAT extremes
-    this->write_register(AAT_A, 0x00); this->write_register(AAT_B, 0x00);
-    delay(10);
-    this->write_command(ST25R_CMD_MEASURE_AMPLITUDE); delay(5);
-    uint8_t amp_low = this->read_register(AD_CONV_RESULT);
-
-    this->write_register(AAT_A, 0xFF); this->write_register(AAT_B, 0xFF);
-    delay(10);
-    this->write_command(ST25R_CMD_MEASURE_AMPLITUDE); delay(5);
-    uint8_t amp_high = this->read_register(AD_CONV_RESULT);
-
-    ESP_LOGI(TAG, "AAT Test (tag present?): 0x00=%u, 0xFF=%u", amp_low, amp_high);
-
-    uint8_t best_aat = 0x80;
-    uint8_t best_amp = 0;
-    for (int v = 0; v <= 255; v += 16) {
-      this->write_register(AAT_A, (uint8_t) v);
-      this->write_register(AAT_B, (uint8_t) v);
-      delay(5);
-      this->write_command(ST25R_CMD_MEASURE_AMPLITUDE);
-      delay(3);
-      uint8_t amp = this->read_register(AD_CONV_RESULT);
-      if (amp > best_amp) { best_amp = amp; best_aat = (uint8_t) v; }
-    }
-    this->write_register(AAT_A, best_aat);
-    this->write_register(AAT_B, best_aat);
-    ESP_LOGI(TAG, "AAT peak: 0x%02X, amp: %u", best_aat, best_amp);
   }
   return true;
 }
