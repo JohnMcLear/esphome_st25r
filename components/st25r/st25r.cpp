@@ -45,124 +45,58 @@ void ST25R::update() {
 
   this->tags_this_scan_.clear();
   
-  // Single WUPA attempt
+  // ULTRA-STABLE WUPA
   this->write_command(ST25R_CMD_CLEAR_FIFO);
   this->read_register(IRQ_MAIN);
   this->irq_triggered_ = false;
   this->irq_status_ = 0;
   
   this->write_command(ST25R_CMD_TRANSMIT_WUPA);
-  delay(20); // Required blocking delay for WUPA timing
+  delay(30); 
   uint8_t irq = this->read_register(IRQ_MAIN);
   if (irq & (IRQ_RXS | IRQ_RXE | IRQ_COL)) {
-    ESP_LOGD(TAG, "Tag detected via WUPA (irq=0x%02X)", irq);
-    
-    this->cascade_level_ = 0;
+    // BRUTE FORCE ANTICOL (Required for small rings that trigger collision flags)
     this->current_uid_ = "";
-    uint8_t anticol_pk[] = {0x93, 0x20};
-    this->write_command(ST25R_CMD_CLEAR_FIFO);
-    this->write_register(NUM_TX_BYTES1, 0x00);
-    this->write_register(NUM_TX_BYTES2, 0x10);
-    this->irq_triggered_ = false;
-    this->irq_status_ = 0;
-    this->write_fifo(anticol_pk, 2);
-    this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
-    this->state_ = STATE_ANTICOL;
-    this->last_state_change_ = millis();
-    return;
-  }
-  
-  this->finalize_scan_();
-}
+    uint8_t sel_cmds[] = {0x93, 0x95, 0x97};
 
-void ST25R::loop() {
-  uint32_t now = millis();
+    for (uint8_t cl = 0; cl < 3; cl++) {
+      this->write_command(ST25R_CMD_STOP_ALL);
+      this->write_command(ST25R_CMD_CLEAR_FIFO);
+      this->read_register(IRQ_MAIN);
+      this->irq_status_ = 0;
+      this->irq_triggered_ = false;
+      
+      uint8_t anticol_pk[] = {sel_cmds[cl], 0x20};
+      this->write_register(NUM_TX_BYTES1, 0x00);
+      this->write_register(NUM_TX_BYTES2, 0x10); 
+      this->write_fifo(anticol_pk, 2);
+      this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
+      
+      delay(30); 
+      
+      uint8_t f1 = this->read_register(FIFO_STATUS1);
+      if (f1 >= 4) {
+        uint8_t resp[10] = {0};
+        this->read_fifo(resp, std::min((uint8_t)10, f1));
 
-  if (this->irq_triggered_) {
-    uint8_t main = this->read_register(IRQ_MAIN);
-    if (main) {
-      this->irq_status_ |= main;
-    }
-    this->irq_triggered_ = false;
-  }
-
-  switch (this->state_) {
-    case STATE_IDLE: break;
-
-    case STATE_ANTICOL: {
-      if (now - this->last_state_change_ > 500) {
-        ESP_LOGD(TAG, "ANTICOL timeout");
-        this->finalize_scan_();
-        this->state_ = STATE_IDLE;
-        return;
-      }
-
-      if (!(this->irq_status_ & (IRQ_RXE | IRQ_COL))) {
-        uint8_t polled = this->read_register(IRQ_MAIN);
-        if (polled) this->irq_status_ |= polled;
-      }
-
-      if (this->irq_status_ & (IRQ_RXE | IRQ_COL)) {
-        uint32_t wait_start = millis();
-        uint8_t total_read = 0;
-        while (millis() - wait_start < 50 && total_read < 4) {
-          uint8_t f1 = this->read_register(FIFO_STATUS1);
-          if (f1 > 0) {
-            uint8_t to_read = std::min((uint8_t)(5 - total_read), f1);
-            this->read_fifo(this->uid_buffer_ + total_read, to_read);
-            total_read += to_read;
+        if (resp[0] == 0x88) {
+          for (int i = 1; i < 4; i++) {
+            char buf[3]; sprintf(buf, "%02X", resp[i]); this->current_uid_ += buf;
           }
-          delay(1);
+        } else {
+          for (int i = 0; i < 4; i++) {
+            char buf[3]; sprintf(buf, "%02X", resp[i]); this->current_uid_ += buf;
+          }
         }
 
-        if (total_read >= 4) {
-          this->irq_status_ &= ~(IRQ_RXE | IRQ_COL);
-          if (total_read == 4) {
-            this->uid_buffer_[4] = this->uid_buffer_[0] ^ this->uid_buffer_[1] ^
-                                   this->uid_buffer_[2] ^ this->uid_buffer_[3];
-          }
-          
-          uint8_t sel_cmds[] = {0x93, 0x95, 0x97};
-          uint8_t bcc = this->uid_buffer_[0] ^ this->uid_buffer_[1] ^ this->uid_buffer_[2] ^ this->uid_buffer_[3];
-          uint8_t sel_pk[7] = {sel_cmds[this->cascade_level_], 0x70,
-                               this->uid_buffer_[0], this->uid_buffer_[1],
-                               this->uid_buffer_[2], this->uid_buffer_[3], bcc};
-          
-          if (this->uid_buffer_[0] == 0x88) {
-            for (int i = 1; i < 4; i++) {
-              char buf[3]; sprintf(buf, "%02X", this->uid_buffer_[i]); this->current_uid_ += buf;
-            }
-          } else {
-            for (int i = 0; i < 4; i++) {
-              char buf[3]; sprintf(buf, "%02X", this->uid_buffer_[i]); this->current_uid_ += buf;
-            }
-          }
-
-          uint8_t sak_resp[3] = {};
-          uint8_t sak_len = 0;
-          if (!this->transceive_(sel_pk, 7, sak_resp, sak_len, 100) || sak_len == 0) {
-            this->finalize_scan_();
-            this->state_ = STATE_IDLE;
-            return;
-          }
+        // Send SELECT
+        uint8_t bcc = resp[0] ^ resp[1] ^ resp[2] ^ resp[3];
+        uint8_t sel_pk[7] = {sel_cmds[cl], 0x70, resp[0], resp[1], resp[2], resp[3], bcc};
+        uint8_t sak_resp[10] = {0};
+        uint8_t sak_len = 0;
+        if (this->transceive_ex_(sel_pk, 7, sak_resp, sak_len, true, 50, true) && sak_len > 0) {
           uint8_t sak = sak_resp[0];
-          if (sak & 0x04) {
-            this->cascade_level_++;
-            if (this->cascade_level_ > 2) {
-              this->finalize_scan_();
-              this->state_ = STATE_IDLE;
-              return;
-            }
-            uint8_t next_anticol[] = {sel_cmds[this->cascade_level_], 0x20};
-            this->write_command(ST25R_CMD_CLEAR_FIFO);
-            this->write_register(NUM_TX_BYTES1, 0x00);
-            this->write_register(NUM_TX_BYTES2, 0x10);
-            this->irq_triggered_ = false;
-            this->irq_status_ = 0;
-            this->write_fifo(next_anticol, 2);
-            this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
-            this->last_state_change_ = now;
-          } else {
+          if (!(sak & 0x04)) {
             if (!this->present_tags_.count(this->current_uid_)) {
               ESP_LOGI(TAG, "New tag detected: %s", this->current_uid_.c_str());
               for (auto *trigger : this->on_tag_triggers_) trigger->trigger(this->current_uid_);
@@ -170,26 +104,31 @@ void ST25R::loop() {
             for (auto *obj : this->binary_sensors_) obj->process(this->current_uid_);
             this->tags_this_scan_.insert(this->current_uid_);
             this->tag_miss_counts_[this->current_uid_] = 0;
-            this->finalize_scan_();
-            this->state_ = STATE_IDLE;
+            break; 
           }
-        }
-      }
-      break;
+        } else break;
+      } else break;
     }
-    case STATE_REINITIALIZING: this->reinitialize_(); this->state_ = STATE_IDLE; break;
-    case STATE_WUPA: break; 
+  }
+  
+  this->finalize_scan_();
+}
+
+void ST25R::loop() {
+  if (this->irq_triggered_) {
+    uint8_t dummy = this->read_register(IRQ_MAIN);
+    (void)dummy;
+    this->irq_triggered_ = false;
   }
 }
 
 void ST25R::finalize_scan_() {
   this->irq_status_ = 0;
-  this->irq_timer_status_ = 0;
   for (auto it = this->present_tags_.begin(); it != this->present_tags_.end(); ) {
     const std::string &uid = *it;
     if (this->tags_this_scan_.find(uid) == this->tags_this_scan_.end()) {
       this->tag_miss_counts_[uid]++;
-      if (this->tag_miss_counts_[uid] >= 10) {
+      if (this->tag_miss_counts_[uid] >= 5) {
         ESP_LOGI(TAG, "Tag removed: %s", uid.c_str());
         for (auto *trigger : this->on_tag_removed_triggers_) trigger->trigger(uid);
         it = this->present_tags_.erase(it);
@@ -220,7 +159,6 @@ bool ST25R::reset_() {
   delay(10);
   
   this->write_register(IO_CONF1, 0x00);
-  
   this->write_register_b(PT_MOD, 0x51); 
   this->write_register_b(AUX_MOD, 0x10); 
   this->write_register(TX_DRIVER_CONF, 0x70);
@@ -235,13 +173,13 @@ bool ST25R::reset_() {
   this->write_register(MASK_MAIN, 0x00);
   this->write_register(0x17, 0x00);
   
-  // High Sensitivity Settings
+  // Production Optimized High Sensitivity
   this->write_register(RX_CONF1, 0x08);
   this->write_register(RX_CONF2, 0x48);
   this->write_register(RX_CONF3, 0xE2);
 
-  this->write_register_b(0x4C, 0x40);
-  this->write_register_b(0x4D, 0x40);
+  this->write_register_b(0x4C, 0x40); // Squelch Level 4
+  this->write_register_b(0x4D, 0x40); 
   
   if (this->rf_field_enabled_) {
     this->field_on_();
@@ -253,7 +191,6 @@ bool ST25R::reset_() {
 }
 
 void ST25R::reinitialize_() {
-  ESP_LOGW(TAG, "Reinitializing chip...");
   this->reset_();
 }
 
@@ -269,13 +206,13 @@ void ST25R::field_on_() {
 bool ST25R::wait_for_irq_(uint8_t mask, uint32_t timeout_ms) {
   uint32_t start = millis();
   while (millis() - start < timeout_ms) {
-    if (this->irq_status_ & mask) return true;
     if (this->irq_triggered_) {
       uint8_t main = this->read_register(IRQ_MAIN);
       if (main) this->irq_status_ |= main;
       this->irq_triggered_ = false;
       if (main & mask) return true;
     }
+    if (this->irq_status_ & mask) return true;
     delay(1);
   }
   return false;
@@ -289,19 +226,18 @@ bool ST25R::transceive_ex_(const uint8_t *data, size_t len, uint8_t *resp, uint8
   this->write_command(ST25R_CMD_STOP_ALL);
   this->write_command(ST25R_CMD_CLEAR_FIFO);
   this->read_register(IRQ_MAIN);
-  this->read_register(IRQ_TIMER);
   this->irq_status_ = 0;
   this->irq_triggered_ = false;
   this->write_register(NUM_TX_BYTES1, (len >> 8) & 0xFF);
-  this->write_register(NUM_TX_BYTES2, (len & 0x1F) << 3);
+  this->write_register(NUM_TX_BYTES2, (len & 0xFF) << 3);
   this->write_fifo(data, len);
   this->write_command(with_crc ? ST25R_CMD_TRANSMIT_WITH_CRC : ST25R_CMD_TRANSMIT_WITHOUT_CRC);
   if (!this->wait_for_irq_(IRQ_TXE, 50)) return false;
   this->irq_status_ &= ~IRQ_TXE;
-  if (!this->wait_for_irq_(IRQ_RXS | IRQ_RXE, timeout_ms)) return false;
+  if (!this->wait_for_irq_(IRQ_RXS | IRQ_RXE | IRQ_COL, timeout_ms)) return false;
   uint8_t f1 = this->read_register(FIFO_STATUS1);
   if (f1 > 0) {
-    uint8_t to_read = std::min((uint8_t)(64 - resp_len), f1);
+    uint8_t to_read = std::min((uint8_t)(64), f1);
     this->read_fifo(resp, to_read);
     resp_len = to_read;
     return true;
