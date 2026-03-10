@@ -241,14 +241,14 @@ def generate():
 
     # Place footprints
     lines.append(fp_crystal_3225("X1",  "27.12MHz", X1_X,  X1_Y))
-    lines.append(fp_0603("C31", "12pF",  C31_X, C31_Y, 0))
-    lines.append(fp_0603("C32", "12pF",  C32_X, C32_Y, 0))
+    lines.append(fp_0603("C31", "10pF",  C31_X, C31_Y, 0))
+    lines.append(fp_0603("C32", "10pF",  C32_X, C32_Y, 0))
     lines.append(fp_0603("C15", "100nF", C15_X, C15_Y, 0))
     lines.append(fp_0603("C16", "100nF", C16_X, C16_Y, 0))
     lines.append(fp_0603("C17", "2.2uF", C17_X, C17_Y, 0))
     lines.append(fp_0603("C18", "2.2uF", C18_X, C18_Y, 0))
-    lines.append(fp_0603("L1",  "270nH", L1_X,  L1_Y,  90))
-    lines.append(fp_0603("L2",  "270nH", L2_X,  L2_Y,  90))
+    lines.append(fp_0603("L1",  "27nH",  L1_X,  L1_Y,  90))
+    lines.append(fp_0603("L2",  "27nH",  L2_X,  L2_Y,  90))
     lines.append(fp_0603("C1",  "220pF", C1_X,  C1_Y,  0))
     lines.append(fp_0603("C2",  "220pF", C2_X,  C2_Y,  0))
     lines.append(fp_0603("C3",  "120pF", C3_X,  C3_Y,  90))
@@ -529,13 +529,13 @@ def write_bom(path):
     rows = [
         ["Comment", "Designator", "Footprint", "LCSC Part #"],
         ["ST25R3916B",  "U1",          "QFN-32-1EP_5x5mm_P0.5mm_EP3.45", "C17315217"],
-        ["270nH",       "L1,L2",       "0603",                            "C1034"],
+        ["27nH",        "L1,L2",       "0603",                            "C148128"],
         ["220pF",       "C1,C2",       "0603",                            "C1600"],
         ["120pF",       "C3,C4",       "0603",                            "C1591"],
         ["180pF",       "C5,C6",       "0603",                            "C1598"],
-        ["2.2R",        "R1,R2",       "0603",                            "C22935"],
+        ["2.2R",        "R1,R2",       "0603",                            "C22939"],
         ["27.12MHz",    "X1",          "Crystal_SMD_3225-4Pin_3.2x2.5mm","C112441"],
-        ["12pF",        "C31,C32",     "0603",                            "C1547"],
+        ["10pF",        "C31,C32",     "0603",                            "C1634"],
         ["3V3 LDO",     "U3",          "SOT-23-5",                        "C7955"],
         ["100nF",       "C15,C16",     "0603",                            "C14663"],
         ["2.2uF",       "C17,C18",     "0603",                            "C1602"],
