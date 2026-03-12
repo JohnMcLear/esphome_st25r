@@ -45,7 +45,7 @@ void ST25R::update() {
 
   this->tags_this_scan_.clear();
   
-  // Send WUPA blocking
+  // ULTRA-STABLE WUPA
   this->write_command(ST25R_CMD_STOP_ALL);
   this->write_command(ST25R_CMD_CLEAR_FIFO);
   this->read_register(IRQ_MAIN);
@@ -58,6 +58,9 @@ void ST25R::update() {
   if (irq & (IRQ_RXS | IRQ_RXE | IRQ_COL)) {
     ESP_LOGD(TAG, "Tag detected via WUPA (irq=0x%02X)", irq);
     
+    // Fire on_tag_scan triggers for immediate LED feedback
+    for (auto *trigger : this->on_tag_scan_triggers_) trigger->trigger();
+
     // BRUTE FORCE ANTICOL
     this->current_uid_ = "";
     uint8_t sel_cmds[] = {0x93, 0x95, 0x97};
@@ -97,7 +100,7 @@ void ST25R::update() {
         uint8_t sel_pk[7] = {sel_cmds[cl], 0x70, resp[0], resp[1], resp[2], resp[3], bcc};
         uint8_t sak_resp[10] = {0};
         uint8_t sak_len = 0;
-        if (this->transceive_ex_(sel_pk, 7, sak_resp, sak_len, true, 100, true) && sak_len > 0) {
+        if (this->transceive_ex_(sel_pk, 7, sak_resp, sak_len, true, 50, true) && sak_len > 0) {
           uint8_t sak = sak_resp[0];
           if (!(sak & 0x04)) {
             if (!this->present_tags_.count(this->current_uid_)) {
@@ -178,10 +181,8 @@ bool ST25R::reset_() {
   
   this->write_register(RX_CONF1, 0x08);
   this->write_register(RX_CONF2, 0x48);
-  
-  // FINAL OPTIMIZED HIGH SENSITIVITY
-  this->write_register(RX_CONF3, 0xE2); 
-  this->write_register_b(0x4C, 0x40); // Squelch Level 4
+  this->write_register(RX_CONF3, 0x00); 
+  this->write_register_b(0x4C, 0x40); 
   this->write_register_b(0x4D, 0x40); 
   
   if (this->rf_field_enabled_) {

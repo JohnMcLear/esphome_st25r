@@ -13,21 +13,6 @@ from esphome.const import (
     CONF_STATUS,
 )
 
-from esphome import automation, pins
-import esphome.codegen as cg
-import esphome.config_validation as cv
-from esphome.components import binary_sensor as binary_sensor_
-from esphome.components import sensor as sensor_
-from esphome.const import (
-    CONF_ID,
-    CONF_ON_TAG,
-    CONF_ON_TAG_REMOVED,
-    CONF_TRIGGER_ID,
-    CONF_IRQ_PIN,
-    CONF_RESET_PIN,
-    CONF_STATUS,
-)
-
 CODEOWNERS = ["@JohnMcLear"]
 AUTO_LOAD = ["binary_sensor", "sensor", "nfc"]
 MULTI_CONF = True
@@ -38,6 +23,7 @@ CONF_RF_POWER = "rf_power"
 CONF_SUPPLY_3V3 = "supply_3v3"
 CONF_FIELD_STRENGTH = "field_strength"
 CONF_KNOWN_UIDS = "known_uids"
+CONF_ON_TAG_SCAN = "on_tag_scan"
 
 
 def validate_uid(value):
@@ -56,6 +42,9 @@ ST25R = st25r_ns.class_("ST25R", cg.PollingComponent)
 ST25RTagTrigger = st25r_ns.class_(
     "ST25RTagTrigger", automation.Trigger.template(cg.std_string)
 )
+ST25RTagScanTrigger = st25r_ns.class_(
+    "ST25RTagScanTrigger", automation.Trigger.template()
+)
 ST25RTagRemovedTrigger = st25r_ns.class_(
     "ST25RTagRemovedTrigger", automation.Trigger.template(cg.std_string)
 )
@@ -73,6 +62,11 @@ ST25R_SCHEMA = cv.Schema(
         cv.Optional(CONF_ON_TAG): automation.validate_automation(
             {
                 cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(ST25RTagTrigger),
+            }
+        ),
+        cv.Optional(CONF_ON_TAG_SCAN): automation.validate_automation(
+            {
+                cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(ST25RTagScanTrigger),
             }
         ),
         cv.Optional(CONF_ON_TAG_REMOVED): automation.validate_automation(
@@ -113,6 +107,13 @@ async def setup_st25r(var, config):
         cg.add(var.register_on_tag_trigger(trigger))
         await automation.build_automation(
             trigger, [(cg.std_string, "x")], conf
+        )
+
+    for conf in config.get(CONF_ON_TAG_SCAN, []):
+        trigger = cg.new_Pvariable(conf[CONF_TRIGGER_ID], var)
+        cg.add(var.register_on_tag_scan_trigger(trigger))
+        await automation.build_automation(
+            trigger, [], conf
         )
 
     for conf in config.get(CONF_ON_TAG_REMOVED, []):

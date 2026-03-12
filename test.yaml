@@ -35,10 +35,12 @@ st25r_spi:
   update_interval: 500ms
   known_uids:
     - "718E16A5"
-  on_tag:
+  on_tag_scan:
     then:
       - light.turn_on: status_led
-      - logger.log: "Tag detected!"
+  on_tag:
+    then:
+      - logger.log: "Tag UID retrieved!"
   on_tag_removed:
     then:
       - light.turn_off: status_led
