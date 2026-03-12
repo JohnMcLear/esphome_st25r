@@ -1,0 +1,275 @@
+---
+description: "Instructions for setting up ST25R NFC tag readers in ESPHome"
+title: "ST25R NFC/RFID"
+---
+
+import APIRef from '@components/APIRef.astro';
+
+<span id="st25r-component"></span>
+
+## Component/Hub
+
+The `st25r` component allows you to use ST25R39xx family NFC/RFID reader ICs
+([datasheet](https://www.st.com/resource/en/datasheet/st25r3916.pdf))
+with ESPHome. This component is a global hub that establishes the connection to the
+ST25R via [SPI](/components/spi) or [I²C](/components/i2c) and outputs its data.
+Using the [ST25R binary sensors](#st25r-tag) you can then create individual binary sensors
+that track if an NFC/RFID tag is currently detected by the ST25R.
+
+Supported chips: ST25R3916, ST25R3916B, ST25R3917, ST25R3917B, ST25R3919, ST25R3920.
+
+See [Setting Up Tags](#st25r-setting_up_tags) for information on how to set up individual binary sensors.
+
+The ST25R can be configured to use either the SPI **or** I²C protocol for data communication.
+The bus type is determined by the state of the `I2C_EN` pin: GND selects SPI mode, VDD_D selects I²C mode.
+
+<span id="st25r-spi"></span>
+
+## Over SPI
+
+The `st25r_spi` component allows you to use ST25R NFC/RFID readers with ESPHome over [SPI](/components/spi).
+
+```yaml
+spi:
+  clk_pin: GPIO18
+  miso_pin: GPIO19
+  mosi_pin: GPIO23
+
+st25r_spi:
+  cs_pin: GPIO5
+  irq_pin: GPIO4
+  update_interval: 1s
+
+binary_sensor:
+  - platform: st25r
+    uid: 74-10-37-94
+    name: "ST25R NFC Tag"
+```
+
+### Configuration variables
+
+- **cs_pin** (**Required**, [Pin Schema](/guides/configuration-types#pin-schema)): The pin connected to the ST25R chip
+  select line.
+
+- **irq_pin** (*Optional*, [Pin Schema](/guides/configuration-types#pin-schema)): The pin connected to the ST25R `IRQ` line.
+  Recommended for reliable tag detection.
+
+- **update_interval** (*Optional*, [Time](/guides/configuration-types#time)): The duration of each scan on the ST25R. This
+  affects the duration that the individual binary sensors stay active when they're found. If a device is not found
+  within this time window, it will be marked as not present. Defaults to `1s`.
+
+- **rf_field_enabled** (*Optional*, boolean): Enable the RF field on startup. Defaults to `true`.
+
+- **rf_power** (*Optional*, integer): TX driver power level from 0 to 15 (15 = maximum). Defaults to `15`.
+
+- **supply_3v3** (*Optional*, boolean): Set to `false` if the ST25R is powered by 5V instead of 3.3V.
+  Affects internal regulator settings. Defaults to `true`.
+
+- **aat_enabled** (*Optional*, boolean): Enable automatic antenna tuning (AAT) sweep on startup to find optimal
+  antenna settings. Defaults to `false`.
+
+- **reset_pin** (*Optional*, [Pin Schema](/guides/configuration-types#pin-schema)): The pin connected to the ST25R hardware
+  reset line. Optional, but recommended if hardware reset is wired.
+
+- **on_tag** (*Optional*, [Automation](/automations)): An automation to perform when a tag is read.
+  See [`on_tag`](#st25r-on_tag).
+
+- **on_tag_removed** (*Optional*, [Automation](/automations)): An automation to perform when a tag is removed.
+  See [`on_tag_removed`](#st25r-on_tag_removed).
+
+- **status** (*Optional*, Binary Sensor): A binary sensor that reports the health status of the ST25R chip.
+  See [Binary Sensor](/components/binary_sensor).
+
+- **field_strength** (*Optional*, Sensor): A sensor that reports the measured RF field amplitude (0–255) on each scan.
+  See [Sensor](/components/sensor).
+
+- **spi_id** (*Optional*, [ID](/guides/configuration-types#id)): Manually specify the ID of the [SPI Component](/components/spi)
+  if you want to use multiple SPI buses.
+
+- **id** (*Optional*, [ID](/guides/configuration-types#id)): Manually specify the ID for this component.
+
+<span id="st25r-i2c"></span>
+
+## Over I²C
+
+The `st25r_i2c` component allows you to use ST25R NFC/RFID readers with ESPHome over [I²C](/components/i2c).
+
+```yaml
+i2c:
+  sda: GPIO21
+  scl: GPIO22
+
+st25r_i2c:
+  address: 0x50
+  irq_pin: GPIO4
+  update_interval: 1s
+
+binary_sensor:
+  - platform: st25r
+    uid: 74-10-37-94
+    name: "ST25R NFC Tag"
+```
+
+### Configuration variables
+
+- **address** (*Optional*, integer): The I²C address of the ST25R. Defaults to `0x50`.
+
+- **irq_pin** (*Optional*, [Pin Schema](/guides/configuration-types#pin-schema)): The pin connected to the ST25R `IRQ` line.
+  Recommended for reliable tag detection.
+
+- **update_interval** (*Optional*, [Time](/guides/configuration-types#time)): The duration of each scan on the ST25R.
+  Defaults to `1s`.
+
+- **rf_field_enabled** (*Optional*, boolean): Enable the RF field on startup. Defaults to `true`.
+
+- **rf_power** (*Optional*, integer): TX driver power level from 0 to 15 (15 = maximum). Defaults to `15`.
+
+- **supply_3v3** (*Optional*, boolean): Set to `false` if the ST25R is powered by 5V instead of 3.3V.
+  Defaults to `true`.
+
+- **aat_enabled** (*Optional*, boolean): Enable automatic antenna tuning (AAT) sweep on startup. Defaults to `false`.
+
+- **reset_pin** (*Optional*, [Pin Schema](/guides/configuration-types#pin-schema)): The pin connected to the ST25R hardware
+  reset line.
+
+- **on_tag** (*Optional*, [Automation](/automations)): An automation to perform when a tag is read.
+  See [`on_tag`](#st25r-on_tag).
+
+- **on_tag_removed** (*Optional*, [Automation](/automations)): An automation to perform when a tag is removed.
+  See [`on_tag_removed`](#st25r-on_tag_removed).
+
+- **status** (*Optional*, Binary Sensor): A binary sensor that reports chip health status.
+
+- **field_strength** (*Optional*, Sensor): A sensor that reports measured RF field amplitude (0–255).
+
+- **i2c_id** (*Optional*, [ID](/guides/configuration-types#id)): Manually specify the ID of the [I²C Component](/components/i2c)
+  if you want to use multiple I²C buses.
+
+- **id** (*Optional*, [ID](/guides/configuration-types#id)): Manually specify the ID for this component.
+
+<span id="st25r-on_tag"></span>
+
+## `on_tag` Trigger
+
+This automation will be triggered when the ST25R module identifies a tag. This will only be triggered
+if the tag is new or goes away for one cycle of `update_interval`.
+
+The parameter `x` this trigger provides is of type `std::string` and is the tag UID in the format
+`74-10-37-94`. The configuration below will for example publish the tag ID on the MQTT topic `st25r/tag`.
+
+```yaml
+st25r_...:
+  # ...
+  on_tag:
+    then:
+      - mqtt.publish:
+          topic: st25r/tag
+          payload: !lambda 'return x;'
+```
+
+A tag scanned event can also be sent to the Home Assistant tag component
+using [`homeassistant.tag_scanned` Action](/components/api#api-homeassistant_tag_scanned_action).
+
+```yaml
+st25r_...:
+  # ...
+  on_tag:
+    then:
+      - homeassistant.tag_scanned: !lambda 'return x;'
+```
+
+Alternatively you could also send the value directly to Home Assistant via a
+[template sensor](/components/sensor/template/).
+
+```yaml
+st25r_...:
+  # ...
+  on_tag:
+    then:
+    - text_sensor.template.publish:
+        id: rfid_tag
+        state: !lambda 'return x;'
+
+text_sensor:
+  - platform: template
+    name: "RFID Tag"
+    id: rfid_tag
+```
+
+<span id="st25r-on_tag_removed"></span>
+
+## `on_tag_removed` Trigger
+
+This automation will be triggered when the ST25R module no longer sees a previously scanned tag.
+
+The parameter `x` this trigger provides is of type `std::string` and is the removed tag UID in the format
+`74-10-37-94`. The configuration below will for example publish the removed tag ID on the MQTT topic `st25r/tag_removed`.
+
+```yaml
+st25r_...:
+  # ...
+  on_tag_removed:
+    then:
+      - mqtt.publish:
+          topic: st25r/tag_removed
+          payload: !lambda 'return x;'
+```
+
+<span id="st25r-tag"></span>
+
+## `st25r` Binary Sensor
+
+The `st25r` binary sensor platform lets you track if an NFC/RFID tag with a given
+unique id (`uid`) is currently being detected by the ST25R or not.
+
+```yaml
+# Example configuration entry
+spi:
+  clk_pin: GPIO18
+  miso_pin: GPIO19
+  mosi_pin: GPIO23
+
+st25r_spi:
+  cs_pin: GPIO5
+  irq_pin: GPIO4
+  update_interval: 1s
+
+binary_sensor:
+  - platform: st25r
+    uid: 74-10-37-94
+    name: "ST25R NFC Tag"
+```
+
+### Configuration variables
+
+- **uid** (**Required**, string): The unique ID of the NFC/RFID tag. This is a hyphen-separated list
+  of hexadecimal values. For example `74-10-37-94`.
+
+- **st25r_id** (*Optional*, [ID](/guides/configuration-types#id)): The ID of the ST25R hub to use. Only needed if
+  you have multiple ST25R hubs configured.
+
+- All other options from [Binary Sensor](/components/binary_sensor#config-binary_sensor).
+
+<span id="st25r-setting_up_tags"></span>
+
+## Setting Up Tags
+
+To set up binary sensors for specific NFC tags you first have to know their unique IDs. To obtain this
+ID, first set up a simple ST25R configuration without any binary sensors like above.
+
+When your code is running and you approach the ST25R with an NFC tag, you should see a message like this:
+
+```log
+New tag detected: '74-10-37-94'
+```
+
+Then copy this ID and create a `binary_sensor` entry as in the configuration example. Repeat this process for
+each tag.
+
+## See Also
+
+- [Binary Sensor Component](/components/binary_sensor/)
+- [PN532 NFC/RFID](/components/binary_sensor/pn532/)
+- [RC522 NFC/RFID](/components/binary_sensor/rc522/)
+- [RDM6300 NFC/RFID](/components/binary_sensor/rdm6300/)
+- <APIRef text="st25r.h" path="st25r/st25r.h" />
