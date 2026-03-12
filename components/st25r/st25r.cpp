@@ -45,7 +45,8 @@ void ST25R::update() {
 
   this->tags_this_scan_.clear();
   
-  // ULTRA-STABLE WUPA
+  // Send WUPA blocking
+  this->write_command(ST25R_CMD_STOP_ALL);
   this->write_command(ST25R_CMD_CLEAR_FIFO);
   this->read_register(IRQ_MAIN);
   this->irq_triggered_ = false;
@@ -55,7 +56,9 @@ void ST25R::update() {
   delay(30); 
   uint8_t irq = this->read_register(IRQ_MAIN);
   if (irq & (IRQ_RXS | IRQ_RXE | IRQ_COL)) {
-    // BRUTE FORCE ANTICOL (Required for small rings that trigger collision flags)
+    ESP_LOGD(TAG, "Tag detected via WUPA (irq=0x%02X)", irq);
+    
+    // BRUTE FORCE ANTICOL
     this->current_uid_ = "";
     uint8_t sel_cmds[] = {0x93, 0x95, 0x97};
 
@@ -63,8 +66,7 @@ void ST25R::update() {
       this->write_command(ST25R_CMD_STOP_ALL);
       this->write_command(ST25R_CMD_CLEAR_FIFO);
       this->read_register(IRQ_MAIN);
-      this->irq_status_ = 0;
-      this->irq_triggered_ = false;
+      delay(10); 
       
       uint8_t anticol_pk[] = {sel_cmds[cl], 0x20};
       this->write_register(NUM_TX_BYTES1, 0x00);
@@ -72,12 +74,13 @@ void ST25R::update() {
       this->write_fifo(anticol_pk, 2);
       this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
       
-      delay(30); 
+      delay(50); 
       
       uint8_t f1 = this->read_register(FIFO_STATUS1);
-      if (f1 >= 4) {
+      if (f1 > 0) {
         uint8_t resp[10] = {0};
-        this->read_fifo(resp, std::min((uint8_t)10, f1));
+        uint8_t to_read = std::min((uint8_t)10, f1);
+        this->read_fifo(resp, to_read);
 
         if (resp[0] == 0x88) {
           for (int i = 1; i < 4; i++) {
@@ -89,12 +92,12 @@ void ST25R::update() {
           }
         }
 
-        // Send SELECT
+        // Try SELECT
         uint8_t bcc = resp[0] ^ resp[1] ^ resp[2] ^ resp[3];
         uint8_t sel_pk[7] = {sel_cmds[cl], 0x70, resp[0], resp[1], resp[2], resp[3], bcc};
         uint8_t sak_resp[10] = {0};
         uint8_t sak_len = 0;
-        if (this->transceive_ex_(sel_pk, 7, sak_resp, sak_len, true, 50, true) && sak_len > 0) {
+        if (this->transceive_ex_(sel_pk, 7, sak_resp, sak_len, true, 100, true) && sak_len > 0) {
           uint8_t sak = sak_resp[0];
           if (!(sak & 0x04)) {
             if (!this->present_tags_.count(this->current_uid_)) {
@@ -173,11 +176,11 @@ bool ST25R::reset_() {
   this->write_register(MASK_MAIN, 0x00);
   this->write_register(0x17, 0x00);
   
-  // Production Optimized High Sensitivity
   this->write_register(RX_CONF1, 0x08);
   this->write_register(RX_CONF2, 0x48);
-  this->write_register(RX_CONF3, 0xE2);
-
+  
+  // FINAL OPTIMIZED HIGH SENSITIVITY
+  this->write_register(RX_CONF3, 0xE2); 
   this->write_register_b(0x4C, 0x40); // Squelch Level 4
   this->write_register_b(0x4D, 0x40); 
   
