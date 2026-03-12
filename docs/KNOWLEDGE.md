@@ -128,6 +128,22 @@ When parity bits are kept, the ST25R3916 places a raw bit stream into the FIFO w
 - **Effect**: Because the 9th bit (parity) is included for every byte, all subsequent data in the FIFO is bit-shifted.
 - **Decoding**: Software must "unscramble" this bit stream to extract the actual data bytes and validate the parity bits.
 
+### Unscrambling Logic (Bit-Stream Realignment)
+To extract clean data bytes from the ST25R3916 raw FIFO stream, treat the input as a series of **9-bit windows**.
+
+1.  **Global Bit Position**: The start of any byte `i` in the raw stream is at bit index `9 * i`.
+2.  **Extracting Data Byte**: Iterate 8 times (`j` from 0 to 7) to extract data bits:
+    *   Target Bit Position: `pos = j + (9 * i)`
+    *   FIFO Byte Index: `byte_idx = pos / 8`
+    *   Bit Offset: `bit_offset = pos % 8`
+    *   Extraction: `output_byte[i] |= ((fifo[byte_idx] >> bit_offset) & 1) << j`
+3.  **Extracting Parity Bit**: The parity bit for byte `i` is at index `8 + (9 * i)`.
+    *   FIFO Byte Index: `byte_idx = (8 + 9 * i) / 8`
+    *   Bit Offset: `bit_offset = (8 + 9 * i) % 8`
+    *   Extraction: `parity[i] = (fifo[byte_idx] >> bit_offset) & 1`
+
+This logic effectively "peels" the 9th bit out of every sequence and collapses the remaining bits back into standard 8-bit bytes.
+
 ### RFAL Equivalents
 - `RFAL_TXRX_FLAGS_PAR_RX_KEEP`: Keeps parity bits in the FIFO.
 - `RFAL_TXRX_FLAGS_CRC_RX_KEEP`: Keeps CRC bytes in the FIFO.
