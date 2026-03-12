@@ -58,8 +58,10 @@ void ST25R::update() {
   if (irq & (IRQ_RXS | IRQ_RXE | IRQ_COL)) {
     ESP_LOGD(TAG, "Tag detected via WUPA (irq=0x%02X)", irq);
     
-    // Fire on_tag_scan triggers for immediate LED feedback
+    // Immediate feedback and presence tracking
     for (auto *trigger : this->on_tag_scan_triggers_) trigger->trigger();
+    this->tags_this_scan_.insert("GENERIC_TAG");
+    this->tag_miss_counts_["GENERIC_TAG"] = 0;
 
     // BRUTE FORCE ANTICOL
     this->current_uid_ = "";
