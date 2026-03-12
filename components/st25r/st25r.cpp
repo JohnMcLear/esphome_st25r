@@ -7,15 +7,6 @@
 #include "esphome/components/nfc/nfc_helpers.h"
 #include <algorithm>
 
-// Compatibility for ESPHome < 2025.x where nfc::NfcTagUid was not defined
-#if ESPHOME_VERSION_CODE < VERSION_CODE(2025, 1, 0)
-namespace esphome {
-namespace nfc {
-using NfcTagUid = std::vector<uint8_t>;
-}  // namespace nfc
-}  // namespace esphome
-#endif
-
 namespace esphome {
 namespace st25r {
 
@@ -260,9 +251,8 @@ bool ST25R::transceive_ex_(const uint8_t *data, size_t len, uint8_t *resp, uint8
   return false;
 }
 
-std::unique_ptr<nfc::NfcTag> ST25R::read_tag_(std::vector<uint8_t> &uid) {
-  nfc::NfcTagUid nfc_uid(uid.begin(), uid.end());
-  return std::make_unique<nfc::NfcTag>(nfc_uid);
+std::unique_ptr<nfc::NfcTag> ST25R::read_tag_(nfc::NfcTagUid &uid) {
+  return std::make_unique<nfc::NfcTag>(uid);
 }
 
 void ST25R::isr(ST25R *arg) {
