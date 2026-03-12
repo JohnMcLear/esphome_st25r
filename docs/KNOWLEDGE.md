@@ -112,6 +112,29 @@ Based on the provided tuning test data, the following configurations are relevan
 - **Enclosure Compensation**: The presence of an acrylic enclosure significantly affects antenna resonance compared to "free air" conditions.
 - **AAT Registers**: `ANT_TUNE_A` (`0x26`) and `ANT_TUNE_B` (`0x27`) allow for fine-tuning. The tuning voltage is approximately `(0.044 + 0.868 * val/255) * VDD_A`.
 
+## Mifare Classic Implementation Notes
+
+When implementing Mifare Classic support, it is necessary to disable automatic parity and CRC processing to handle the custom Mifare security layer and keep raw parity bits in the FIFO.
+
+### Disabling RX Parity and CRC
+- **Register**: `MODE` (ISO Control Register, `0x03`)
+- **Action**: Set the following bits to `1`:
+    - **Bit 7 (`no_par`)**: Disables automatic parity check and keeps the parity bits in the FIFO.
+    - **Bit 6 (`no_crc`)**: Disables automatic CRC check and keeps the CRC bytes in the FIFO.
+
+### FIFO Data format with `no_par` enabled
+When parity bits are kept, the ST25R3916 places a raw bit stream into the FIFO where each 8-bit data byte is immediately followed by its parity bit.
+- **Format**: `[Byte 0][P0][Byte 1][P1]...[Byte N][PN]`
+- **Effect**: Because the 9th bit (parity) is included for every byte, all subsequent data in the FIFO is bit-shifted.
+- **Decoding**: Software must "unscramble" this bit stream to extract the actual data bytes and validate the parity bits.
+
+### RFAL Equivalents
+- `RFAL_TXRX_FLAGS_PAR_RX_KEEP`: Keeps parity bits in the FIFO.
+- `RFAL_TXRX_FLAGS_CRC_RX_KEEP`: Keeps CRC bytes in the FIFO.
+- `RFAL_TXRX_FLAGS_CRC_RX_MANUAL`: Disables automatic CRC checking.
+
+**Source**: [ST Community Forum - Disabling RX parity processing with ST25R3916](https://community.st.com/t5/st25-nfc-rfid-tags-and-readers/disabling-rx-parity-processing-with-st25r3916/m-p/878679)
+
 ## Summary of Useful Commands
 - **Set Default**: `0xC1`
 - **Stop**: `0xC2`
