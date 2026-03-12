@@ -7,18 +7,6 @@
 #include "esphome/components/nfc/nfc_helpers.h"
 #include <algorithm>
 
-// Compatibility for ESPHome < 2025.x where nfc::NfcTagUid was not defined
-#if ESPHOME_VERSION_CODE < VERSION_CODE(2025, 1, 0)
-namespace esphome {
-namespace nfc {
-#ifndef ST25R_NFC_TAG_UID_DEFINED
-#define ST25R_NFC_TAG_UID_DEFINED
-using NfcTagUid = std::vector<uint8_t>;
-#endif
-}  // namespace nfc
-}  // namespace esphome
-#endif
-
 namespace esphome {
 namespace st25r {
 
@@ -50,6 +38,8 @@ void ST25R::dump_config() {
   LOG_PIN("  Reset Pin: ", this->reset_pin_);
   LOG_PIN("  IRQ Pin: ", this->irq_pin_);
   ESP_LOGCONFIG(TAG, "  Update Interval: %.1fs", this->update_interval_ / 1000.0f);
+  ESP_LOGCONFIG(TAG, "  AAT Enabled: %s", YESNO(this->aat_enabled_));
+  ESP_LOGCONFIG(TAG, "  Chip Version: ST25R3916%s", this->is_b_version_ ? "B" : "");
 }
 
 void ST25R::update() {
@@ -57,7 +47,7 @@ void ST25R::update() {
 
   this->tags_this_scan_.clear();
   
-  // ULTRA-STABLE WUPA
+  // Send WUPA blocking
   this->write_command(ST25R_CMD_STOP_ALL);
   this->write_command(ST25R_CMD_CLEAR_FIFO);
   this->read_register(IRQ_MAIN);
@@ -75,59 +65,86 @@ void ST25R::update() {
     this->tags_this_scan_.insert("GENERIC_TAG");
     this->tag_miss_counts_["GENERIC_TAG"] = 0;
 
-    // BRUTE FORCE ANTICOL
+    // Standard ISO14443A Collision Resolution
     this->current_uid_ = "";
     uint8_t sel_cmds[] = {0x93, 0x95, 0x97};
 
     for (uint8_t cl = 0; cl < 3; cl++) {
-      this->write_command(ST25R_CMD_STOP_ALL);
-      this->write_command(ST25R_CMD_CLEAR_FIFO);
-      this->read_register(IRQ_MAIN);
-      delay(10); 
-      
-      uint8_t anticol_pk[] = {sel_cmds[cl], 0x20};
-      this->write_register(NUM_TX_BYTES1, 0x00);
-      this->write_register(NUM_TX_BYTES2, 0x10); 
-      this->write_fifo(anticol_pk, 2);
-      this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
-      
-      delay(50); 
-      
-      uint8_t f1 = this->read_register(FIFO_STATUS1);
-      if (f1 > 0) {
-        uint8_t resp[10] = {0};
-        uint8_t to_read = std::min((uint8_t)10, f1);
-        this->read_fifo(resp, to_read);
+      uint8_t anticol_pk[7] = {sel_cmds[cl], 0x20};
+      uint8_t valid_bits = 0;
+      bool found_cl = false;
 
-        if (resp[0] == 0x88) {
-          for (int i = 1; i < 4; i++) {
-            char buf[3]; sprintf(buf, "%02X", resp[i]); this->current_uid_ += buf;
+      // Inner loop to resolve collisions at this cascade level
+      for (int retry = 0; retry < 10; retry++) {
+        this->write_command(ST25R_CMD_STOP_ALL);
+        this->write_command(ST25R_CMD_CLEAR_FIFO);
+        this->read_register(IRQ_MAIN);
+        
+        uint8_t nvb = ((valid_bits / 8 + 2) << 4) | (valid_bits % 8);
+        anticol_pk[1] = nvb;
+        
+        uint16_t tx_bits = 16 + valid_bits;
+        this->write_register(NUM_TX_BYTES1, (tx_bits >> 8) & 0xFF);
+        this->write_register(NUM_TX_BYTES2, (tx_bits & 0xFF) << 3);
+        
+        this->write_fifo(anticol_pk, (tx_bits + 7) / 8);
+        this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
+        
+        delay(40);
+        uint8_t current_irq = this->read_register(IRQ_MAIN);
+        uint8_t f1 = this->read_register(FIFO_STATUS1);
+        
+        if (current_irq & IRQ_COL) {
+          uint8_t col_raw = this->read_register(COLLISION_DISPLAY);
+          uint8_t col_pos = (col_raw >> 4) * 8 + ((col_raw >> 1) & 0x07);
+          ESP_LOGD(TAG, "Collision at bit %u", col_pos);
+          
+          if (col_pos <= valid_bits) col_pos = valid_bits + 1;
+          valid_bits = col_pos;
+          
+          // Read bits successfully received so far into anticol_pk
+          uint8_t read_len = std::min((uint8_t)5, f1);
+          if (read_len > 0) {
+            uint8_t temp[5];
+            this->read_fifo(temp, read_len);
+            memcpy(anticol_pk + 2, temp, read_len);
           }
-        } else {
-          for (int i = 0; i < 4; i++) {
-            char buf[3]; sprintf(buf, "%02X", resp[i]); this->current_uid_ += buf;
-          }
+          continue; 
         }
 
-        // Try SELECT
-        uint8_t bcc = resp[0] ^ resp[1] ^ resp[2] ^ resp[3];
-        uint8_t sel_pk[7] = {sel_cmds[cl], 0x70, resp[0], resp[1], resp[2], resp[3], bcc};
-        uint8_t sak_resp[10] = {0};
-        uint8_t sak_len = 0;
-        if (this->transceive_ex_(sel_pk, 7, sak_resp, sak_len, true, 50, true) && sak_len > 0) {
-          uint8_t sak = sak_resp[0];
-          if (!(sak & 0x04)) {
-            if (!this->present_tags_.count(this->current_uid_)) {
+        if (f1 >= 4) {
+          uint8_t resp[10] = {0};
+          this->read_fifo(resp, std::min((uint8_t)10, f1));
+          
+          if (resp[0] == 0x88) {
+            for (int i = 1; i < 4; i++) { char buf[3]; sprintf(buf, "%02X", resp[i]); this->current_uid_ += buf; }
+          } else {
+            for (int i = 0; i < 4; i++) { char buf[3]; sprintf(buf, "%02X", resp[i]); this->current_uid_ += buf; }
+          }
+
+          // SELECT
+          uint8_t bcc = resp[0] ^ resp[1] ^ resp[2] ^ resp[3];
+          uint8_t sel_pk[7] = {sel_cmds[cl], 0x70, resp[0], resp[1], resp[2], resp[3], bcc};
+          uint8_t sak_resp[3] = {0};
+          uint8_t sak_len = 0;
+          if (this->transceive_ex_(sel_pk, 7, sak_resp, sak_len, true, 50, true) && sak_len > 0) {
+            if (!(sak_resp[0] & 0x04)) {
               ESP_LOGI(TAG, "New tag detected: %s", this->current_uid_.c_str());
               for (auto *trigger : this->on_tag_triggers_) trigger->trigger(this->current_uid_);
+              for (auto *obj : this->binary_sensors_) obj->process(this->current_uid_);
+              this->tags_this_scan_.insert(this->current_uid_);
+              this->tag_miss_counts_[this->current_uid_] = 0;
+              found_cl = true;
+              break;
             }
-            for (auto *obj : this->binary_sensors_) obj->process(this->current_uid_);
-            this->tags_this_scan_.insert(this->current_uid_);
-            this->tag_miss_counts_[this->current_uid_] = 0;
-            break; 
+            found_cl = true; // Move to next CL
+            break;
           }
-        } else break;
-      } else break;
+        }
+        break; 
+      }
+      if (!found_cl) break;
+      if (this->tags_this_scan_.count(this->current_uid_)) break; // Fully retrieved
     }
   }
   
@@ -179,17 +196,17 @@ bool ST25R::reset_() {
     return false;
   }
   
-  bool is_b_version = (chip_type == 0x30);
-  ESP_LOGI(TAG, "IC identity match: 0x%02X (ST25R3916%s)", ic_identity, is_b_version ? "B" : "");
+  this->is_b_version_ = (chip_type == 0x30);
+  ESP_LOGI(TAG, "IC identity match: 0x%02X (ST25R3916%s)", ic_identity, this->is_b_version_ ? "B" : "");
 
-  if (!is_b_version) {
+  if (!this->is_b_version_) {
     this->write_test_register(0x04, 0x10);
   }
 
   this->write_register(OP_CONTROL, 0x80);
   delay(10);
   
-  if (is_b_version) {
+  if (this->is_b_version_) {
     this->write_command(ST25R_CMD_RC_CAL);
     delay(10);
   }
@@ -211,10 +228,8 @@ bool ST25R::reset_() {
   
   this->write_register(RX_CONF1, 0x08);
   this->write_register(RX_CONF2, 0x48);
-  
-  // High Sensitivity
-  this->write_register(RX_CONF3, 0xE2); 
-  this->write_register_b(0x4C, 0x40); // Squelch Level 4
+  this->write_register(RX_CONF3, 0x00); 
+  this->write_register_b(0x4C, 0x40); 
   this->write_register_b(0x4D, 0x40); 
   
   if (this->rf_field_enabled_) {
@@ -223,24 +238,26 @@ bool ST25R::reset_() {
     this->write_command(ST25R_CMD_ADJUST_REGULATORS);
     delay(10);
 
-    uint8_t best_aat = 0x80;
-    uint8_t best_amp = 0;
-    ESP_LOGD(TAG, "Starting AAT sweep...");
-    for (int v = 0; v <= 255; v += 16) {
-      this->write_register(AAT_A, (uint8_t) v);
-      this->write_register(AAT_B, (uint8_t) v);
-      delay(5);
-      this->write_command(ST25R_CMD_MEASURE_AMPLITUDE);
-      delay(3);
-      uint8_t amp = this->read_register(AD_CONV_RESULT);
-      if (amp > best_amp) {
-        best_amp = amp;
-        best_aat = (uint8_t) v;
+    if (this->aat_enabled_) {
+      uint8_t best_aat = 0x80;
+      uint8_t best_amp = 0;
+      ESP_LOGD(TAG, "Starting AAT sweep...");
+      for (int v = 0; v <= 255; v += 16) {
+        this->write_register(AAT_A, (uint8_t) v);
+        this->write_register(AAT_B, (uint8_t) v);
+        delay(5);
+        this->write_command(ST25R_CMD_MEASURE_AMPLITUDE);
+        delay(3);
+        uint8_t amp = this->read_register(AD_CONV_RESULT);
+        if (amp > best_amp) {
+          best_amp = amp;
+          best_aat = (uint8_t) v;
+        }
       }
+      this->write_register(AAT_A, best_aat);
+      this->write_register(AAT_B, best_aat);
+      ESP_LOGI(TAG, "AAT peak: 0x%02X, amp: %u", best_aat, best_amp);
     }
-    this->write_register(AAT_A, best_aat);
-    this->write_register(AAT_B, best_aat);
-    ESP_LOGI(TAG, "AAT peak: 0x%02X, amp: %u", best_aat, best_amp);
   }
   return true;
 }

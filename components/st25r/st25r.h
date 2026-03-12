@@ -16,7 +16,10 @@
 #if ESPHOME_VERSION_CODE < VERSION_CODE(2025, 1, 0)
 namespace esphome {
 namespace nfc {
+#ifndef ST25R_NFC_TAG_UID_DEFINED
+#define ST25R_NFC_TAG_UID_DEFINED
 using NfcTagUid = std::vector<uint8_t>;
+#endif
 }  // namespace nfc
 }  // namespace esphome
 #endif
@@ -128,6 +131,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   void set_rf_field_enabled(bool enabled) { this->rf_field_enabled_ = enabled; }
   void set_rf_power(uint8_t power) { this->rf_power_ = power; }
   void set_supply_3v3(bool supply_3v3) { this->supply_3v3_ = supply_3v3; }
+  void set_aat_enabled(bool aat_enabled) { this->aat_enabled_ = aat_enabled; }
   void add_known_uid(const std::string &uid) { this->known_uids_.push_back(uid); }
 
   void register_on_tag_trigger(ST25RTagTrigger *trig) { this->on_tag_triggers_.push_back(trig); }
@@ -171,6 +175,8 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   bool rf_field_enabled_{true};
   uint8_t rf_power_{15};
   bool supply_3v3_{true};
+  bool aat_enabled_{false};
+  bool is_b_version_{false};
   
   volatile bool irq_triggered_{false};
   volatile uint8_t irq_status_{0};

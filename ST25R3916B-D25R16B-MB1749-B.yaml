@@ -26,11 +26,13 @@ light:
   - platform: binary
     output: status_led_out
     id: status_led
+
 st25r_spi:
   id: my_st25r
   cs_pin: GPIO6
   irq_pin: GPIO7
   supply_3v3: false
+  aat_enabled: true
   update_interval: 500ms
   on_tag_scan:
     then:
