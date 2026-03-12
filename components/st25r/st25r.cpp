@@ -7,6 +7,18 @@
 #include "esphome/components/nfc/nfc_helpers.h"
 #include <algorithm>
 
+// Compatibility for ESPHome < 2025.x where nfc::NfcTagUid was not defined
+#if ESPHOME_VERSION_CODE < VERSION_CODE(2025, 1, 0)
+namespace esphome {
+namespace nfc {
+#ifndef ST25R_NFC_TAG_UID_DEFINED
+#define ST25R_NFC_TAG_UID_DEFINED
+using NfcTagUid = std::vector<uint8_t>;
+#endif
+}  // namespace nfc
+}  // namespace esphome
+#endif
+
 namespace esphome {
 namespace st25r {
 
@@ -160,12 +172,28 @@ bool ST25R::reset_() {
   this->write_command(ST25R_CMD_SET_DEFAULT);
   delay(10);
   uint8_t ic_identity = this->read_register(IC_IDENTITY);
-  if ((ic_identity & 0xF8) != 0x28) return false;
-  ESP_LOGI(TAG, "IC identity match: 0x%02X", ic_identity);
-  this->write_test_register(0x04, 0x10);
+  uint8_t chip_type = ic_identity & 0xF8;
+  
+  if (chip_type != 0x28 && chip_type != 0x30) {
+    ESP_LOGE(TAG, "Unknown IC identity: 0x%02X", ic_identity);
+    return false;
+  }
+  
+  bool is_b_version = (chip_type == 0x30);
+  ESP_LOGI(TAG, "IC identity match: 0x%02X (ST25R3916%s)", ic_identity, is_b_version ? "B" : "");
+
+  if (!is_b_version) {
+    this->write_test_register(0x04, 0x10);
+  }
+
   this->write_register(OP_CONTROL, 0x80);
   delay(10);
   
+  if (is_b_version) {
+    this->write_command(ST25R_CMD_RC_CAL);
+    delay(10);
+  }
+
   this->write_register(IO_CONF1, 0x00);
   this->write_register_b(PT_MOD, 0x51); 
   this->write_register_b(AUX_MOD, 0x10); 
@@ -183,8 +211,10 @@ bool ST25R::reset_() {
   
   this->write_register(RX_CONF1, 0x08);
   this->write_register(RX_CONF2, 0x48);
-  this->write_register(RX_CONF3, 0x00); 
-  this->write_register_b(0x4C, 0x40); 
+  
+  // High Sensitivity
+  this->write_register(RX_CONF3, 0xE2); 
+  this->write_register_b(0x4C, 0x40); // Squelch Level 4
   this->write_register_b(0x4D, 0x40); 
   
   if (this->rf_field_enabled_) {
@@ -192,6 +222,25 @@ bool ST25R::reset_() {
     this->write_register(IO_CONF2, 0x54);
     this->write_command(ST25R_CMD_ADJUST_REGULATORS);
     delay(10);
+
+    uint8_t best_aat = 0x80;
+    uint8_t best_amp = 0;
+    ESP_LOGD(TAG, "Starting AAT sweep...");
+    for (int v = 0; v <= 255; v += 16) {
+      this->write_register(AAT_A, (uint8_t) v);
+      this->write_register(AAT_B, (uint8_t) v);
+      delay(5);
+      this->write_command(ST25R_CMD_MEASURE_AMPLITUDE);
+      delay(3);
+      uint8_t amp = this->read_register(AD_CONV_RESULT);
+      if (amp > best_amp) {
+        best_amp = amp;
+        best_aat = (uint8_t) v;
+      }
+    }
+    this->write_register(AAT_A, best_aat);
+    this->write_register(AAT_B, best_aat);
+    ESP_LOGI(TAG, "AAT peak: 0x%02X, amp: %u", best_aat, best_amp);
   }
   return true;
 }

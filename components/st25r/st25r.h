@@ -11,6 +11,16 @@
 #include <set>
 #include <map>
 
+// Compatibility for ESPHome < 2025.x where nfc::NfcTagUid was not defined
+#include "esphome/core/version.h"
+#if ESPHOME_VERSION_CODE < VERSION_CODE(2025, 1, 0)
+namespace esphome {
+namespace nfc {
+using NfcTagUid = std::vector<uint8_t>;
+}  // namespace nfc
+}  // namespace esphome
+#endif
+
 namespace esphome {
 namespace st25r {
 
@@ -64,6 +74,7 @@ enum ST25RCommand : uint8_t {
   ST25R_CMD_MEASURE_AMPLITUDE = 0xD3,
   ST25R_CMD_ADJUST_REGULATORS = 0xD6,
   ST25R_CMD_READ_FIFO = 0x9F,
+  ST25R_CMD_RC_CAL = 0xEA,
   ST25R_CMD_TEST_ACCESS = 0xFC,
 };
 
