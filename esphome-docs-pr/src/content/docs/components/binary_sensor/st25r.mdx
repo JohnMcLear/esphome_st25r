@@ -257,10 +257,11 @@ binary_sensor:
 To set up binary sensors for specific NFC tags you first have to know their unique IDs. To obtain this
 ID, first set up a simple ST25R configuration without any binary sensors like above.
 
-When your code is running and you approach the ST25R with an NFC tag, you should see a message like this:
+When your code is running and you approach the ST25R with an NFC tag, you should see a message like this
+in the logs (requires `logger` level `INFO` or below):
 
 ```log
-New tag detected: '74-10-37-94'
+[I][st25r:xxx]: New tag detected: '74-10-37-94'
 ```
 
 Then copy this ID and create a `binary_sensor` entry as in the configuration example. Repeat this process for

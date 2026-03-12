@@ -20,6 +20,13 @@ REPO_ROOT="$SCRIPT_DIR"
 echo "=== ST25R Upstream PR Creator ==="
 echo ""
 
+# Verify we're running from the right repo
+if [[ ! -d "$REPO_ROOT/esphome-pr" ]] || [[ ! -d "$REPO_ROOT/esphome-docs-pr" ]]; then
+    echo "ERROR: Must be run from the root of JohnMcLear/esphome_st25r repo."
+    echo "       Expected to find 'esphome-pr/' and 'esphome-docs-pr/' directories."
+    exit 1
+fi
+
 # Check prerequisites
 if ! command -v gh &>/dev/null; then
     echo "ERROR: gh CLI not found. Install from https://cli.github.com/"
@@ -60,10 +67,34 @@ cp -r "$REPO_ROOT/esphome-pr/tests/components/st25r_spi" "tests/components/"
 cp -r "$REPO_ROOT/esphome-pr/tests/components/st25r_i2c" "tests/components/"
 
 echo "Updating CODEOWNERS..."
-# Insert st25r entries after pn7160_spi line (alphabetical order)
-ST25R_CODEOWNERS="esphome/components/st25r/* @JohnMcLear\nesphome/components/st25r_i2c/* @JohnMcLear\nesphome/components/st25r_spi/* @JohnMcLear"
-sed -i "/esphome\/components\/pn7160_spi/a \\$ST25R_CODEOWNERS" CODEOWNERS || \
-    echo "" >> CODEOWNERS && echo -e "$ST25R_CODEOWNERS" >> CODEOWNERS
+# Insert st25r entries after pn7160_spi line (alphabetical order: st comes after pn)
+python3 - <<'PYEOF'
+with open('CODEOWNERS', 'r') as f:
+    lines = f.readlines()
+
+# Find insertion point: after pn7160_spi line
+insert_after = -1
+for i, line in enumerate(lines):
+    if 'pn7160_spi' in line:
+        insert_after = i
+        break
+
+st25r_entries = [
+    'esphome/components/st25r/* @JohnMcLear\n',
+    'esphome/components/st25r_i2c/* @JohnMcLear\n',
+    'esphome/components/st25r_spi/* @JohnMcLear\n',
+]
+
+if insert_after >= 0:
+    lines[insert_after + 1:insert_after + 1] = st25r_entries
+    print(f"Inserted st25r CODEOWNERS entries after line {insert_after + 1}")
+else:
+    lines.extend(st25r_entries)
+    print("Appended st25r CODEOWNERS entries at end")
+
+with open('CODEOWNERS', 'w') as f:
+    f.writelines(lines)
+PYEOF
 
 echo "Committing changes..."
 git add esphome/components/st25r esphome/components/st25r_spi esphome/components/st25r_i2c
