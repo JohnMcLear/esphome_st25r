@@ -72,6 +72,8 @@ binary_sensor:
 | **Anti-Collision** | **Action:** Place two different tags (e.g., NTAG and Ultralight) on I2C simultaneously. | One tag consistently read. No main thread blocking. |
 | **Flapping Fix** | **Action:** Place a tag on SPI and leave it for 60s. | `on_tag` fires once. No removal/re-add logs during dwell. |
 | **Dual Detection** | **Action:** Place one card on I2C and another on SPI simultaneously. | Both cards detected and held in ON state concurrently. |
+| **Removal Logic** | **Action:** Place tag on I2C/SPI and wait for detection. **Action 2:** Remove tag. | `on_tag` triggers on placement. `on_tag_removed` triggers within 2s of removal. |
+| **Response Timing**| **Action:** Rapidly place tag into field 5 times. | Average detection time (log message to tag identifier) is <300ms. |
 
 ### Phase 3: NDEF Operations
 | Test Case | Operator Action | Expected Result |
@@ -83,7 +85,9 @@ binary_sensor:
 ## 4. Success Criteria
 - [x] **SPI Hardware:** ST25R initializes and reads tags reliably over the SPI bus without timeouts or data corruption.
 - [x] **Dual Bus Operation:** Simultaneous I2C and SPI readers function correctly on the same ESP32-C6.
-- [x] **Multi-Tag Detection:** Correctly identifies and parses 2 tags in a single poll.
+- [x] Multi-Tag Detection: Correctly identifies and parses 2 tags in a single poll.
+- [ ] **Tag Removal:** `on_tag_removed` triggers reliably across all tag types.
+- [ ] **Low-Latency Reads:** Average detection speed remains under the 300ms threshold for snappy UI feedback.
 - [x] Non-blocking: No `delay()` or `took a long time` warnings during normal polling.
 - [x] Portability: NDEF and Mifare logic performs identically on I2C and SPI.
 - [x] Isolation: Physical failure/noise on one bus does not crash the other.
