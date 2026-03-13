@@ -288,39 +288,24 @@ void ST25R::process_state_() {
       break;
 
     case STATE_WUPA: {
-      if (millis() - this->last_state_change_ > 200) { 
-        this->state_ = STATE_IDLE;
-        this->process_tag_removed_(false);
-        return;
-      }
-
-      if (this->irq_status_ != 0) {
-        if (this->irq_status_ & (IRQ_RXE | IRQ_COL)) {
-          uint8_t f1 = this->read_register(FIFO_STATUS1);
-          if (f1 > 0) {
-            ESP_LOGD(TAG, "Tag detected, starting ANTICOLLISION level 0");
-            this->cascade_level_ = 0;
-            this->current_uid_ = "";
-            
-            uint8_t cl[] = {0x93, 0x20};
-            this->write_command(ST25R_CMD_CLEAR_FIFO);
-            this->read_register(IRQ_MAIN); // Clear any pending IRQs
-            this->irq_triggered_ = false;
-            this->write_fifo(cl, 2);
-            this->write_register(NUM_TX_BYTES1, 0x00);
-            this->write_register(NUM_TX_BYTES2, 0x10); // 2 bytes
-            this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
-            
-            this->state_ = STATE_ANTICOL;
-            this->last_state_change_ = millis();
-          } else {
-            this->state_ = STATE_IDLE;
-            this->process_tag_removed_(false);
-          }
-        } else if (this->irq_status_ & IRQ_NRE) {
-            this->state_ = STATE_IDLE;
-            this->process_tag_removed_(false);
-        }
+      if (this->irq_status_ & (IRQ_RXE | IRQ_COL)) {
+          this->cascade_level_ = 0;
+          this->current_uid_ = "";
+          
+          uint8_t cl[] = {0x93, 0x20};
+          this->write_command(ST25R_CMD_CLEAR_FIFO);
+          this->read_register(IRQ_MAIN); // Clear any pending IRQs
+          this->irq_triggered_ = false;
+          this->write_fifo(cl, 2);
+          this->write_register(NUM_TX_BYTES1, 0x00);
+          this->write_register(NUM_TX_BYTES2, 0x10); 
+          this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
+          
+          this->state_ = STATE_ANTICOL;
+          this->last_state_change_ = millis();
+      } else if (millis() - this->last_state_change_ > 100) {
+          this->state_ = STATE_IDLE;
+          this->process_tag_removed_(false);
       }
       break;
     }
@@ -335,13 +320,15 @@ void ST25R::process_state_() {
 
       if (this->irq_status_ != 0) {
         if (this->irq_status_ & (IRQ_RXE | IRQ_COL)) {
+          delay(10); // Give chip time to populate FIFO
           uint8_t f1 = this->read_register(FIFO_STATUS1);
           if (f1 > 0) {
             uint8_t resp[16];
             uint8_t bytes_to_read = std::min((uint8_t)16, f1);
-            delay(5); // Small delay for I2C FIFO to be ready
             this->read_fifo(resp, bytes_to_read);
-            
+
+            ESP_LOGV(TAG, "  ANTICOL raw: %s", format_hex(resp, bytes_to_read).c_str());
+
             if (bytes_to_read < 5) {
                ESP_LOGD(TAG, "ANTICOL too short: %u", bytes_to_read);
                this->state_ = STATE_IDLE;
@@ -368,15 +355,9 @@ void ST25R::process_state_() {
                 }
             }
 
-            // Verify XOR checksum (BCC)
-            uint8_t check = resp[0] ^ resp[1] ^ resp[2] ^ resp[3];
-            if (check != resp[4]) {
-               ESP_LOGD(TAG, "ANTICOL BCC mismatch: calculated 0x%02X, got 0x%02X (bytes: %02X %02X %02X %02X)", 
-                        check, resp[4], resp[0], resp[1], resp[2], resp[3]);
-            }
-
             ESP_LOGD(TAG, "Sending SELECT level %u (UID so far: %s, BCC: 0x%02X)", 
                       this->cascade_level_, this->current_uid_.c_str(), resp[4]);
+
             this->write_command(ST25R_CMD_CLEAR_FIFO);
             this->read_register(IRQ_MAIN); // Clear any pending IRQs
             this->irq_triggered_ = false;

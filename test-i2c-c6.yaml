@@ -25,7 +25,7 @@ i2c:
   sda: 21
   scl: 22
   scan: true
-  frequency: 100khz
+  frequency: 50khz
 
 st25r_i2c:
   id: my_st25r

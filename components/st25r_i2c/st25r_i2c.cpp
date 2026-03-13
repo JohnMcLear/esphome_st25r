@@ -1,5 +1,6 @@
 #include "st25r_i2c.h"
 #include "esphome/core/log.h"
+#include <vector>
 
 namespace esphome {
 namespace st25r_i2c {
@@ -25,27 +26,33 @@ void ST25RI2c::dump_config() {
 uint8_t ST25RI2c::read_register(uint8_t reg) {
   uint8_t value = 0;
   uint8_t addr = 0x40 | (reg & 0x3F);
-  if (!this->i2c::I2CDevice::read_bytes(addr, &value, 1)) {
-    return 0;
-  }
+  this->i2c::I2CDevice::write_read(&addr, 1, &value, 1);
   return value;
 }
 
 void ST25RI2c::write_register(uint8_t reg, uint8_t value) {
-  uint8_t addr = 0x00 | (reg & 0x3F);
-  this->i2c::I2CDevice::write_bytes(addr, &value, 1);
+  uint8_t data[2] = { (uint8_t)(0x00 | (reg & 0x3F)), value };
+  this->i2c::I2CDevice::write(data, 2);
+  delay(1);
 }
 
 void ST25RI2c::write_command(uint8_t command) {
   this->i2c::I2CDevice::write(&command, 1);
+  delay(1);
 }
 
 void ST25RI2c::write_fifo(const uint8_t *data, size_t len) {
-  this->i2c::I2CDevice::write_bytes(0x80, data, len);
+  std::vector<uint8_t> buf;
+  buf.reserve(len + 1);
+  buf.push_back(0x80);
+  buf.insert(buf.end(), data, data + len);
+  this->i2c::I2CDevice::write(buf.data(), buf.size());
+  delay(1);
 }
 
 void ST25RI2c::read_fifo(uint8_t *data, size_t len) {
-  this->i2c::I2CDevice::read_bytes(0xBF, data, len);
+  uint8_t addr = 0x9F;
+  this->i2c::I2CDevice::write_read(&addr, 1, data, len);
 }
 
 }  // namespace st25r_i2c
