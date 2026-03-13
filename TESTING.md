@@ -63,6 +63,7 @@ binary_sensor:
 | **I2C Recovery** | **Readers:** Empty. **Action:** Briefly disconnect I2C SDA wire. | `hub_i2c` enters backoff. `hub_spi` unaffected. Reconnect to see recovery. |
 | **SPI Recovery** | **Readers:** Empty. **Action:** Briefly disconnect SPI CS wire. | `hub_spi` enters backoff. `hub_i2c` unaffected. Reconnect to see recovery. |
 | **Health Check** | **Readers:** Empty. **Action:** Leave idle for 60s. | Both log periodic version/health checks. |
+| **Silent ACK Fail**| **Action:** Simulate a partial response failure. | Component tracks failure in loop(), increments consecutive_failures_, and eventually triggers re-init. |
 
 ### Phase 2: Card Detection & Logic
 | Test Case | Operator Action | Expected Result |
@@ -87,6 +88,7 @@ binary_sensor:
 - [x] Portability: NDEF and Mifare logic performs identically on I2C and SPI.
 - [x] Isolation: Physical failure/noise on one bus does not crash the other.
 - [x] Format compatibility: Both `AA-BB` and `AA:BB` formats accepted in YAML.
+- [x] **Silent Failure Tracking:** Loop timeouts (ACK but no response) correctly trigger warnings and auto-reset logic.
 - [ ] **Mifare Authentication:** Resolve intermittent failures with non-standard keys.
 - [ ] **Robust Counterfeit Detection:** Module correctly identifies emulated clones using hardware-level diagnostic checks.
 - [ ] **NTAG216 Stability:** NDEF writing completes without timing out on high-capacity NTAG216 modules.
