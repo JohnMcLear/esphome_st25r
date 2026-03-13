@@ -74,6 +74,19 @@ class ST25RTagRemovedTrigger : public Trigger<std::string> {
   ST25R *parent_;
 };
 
+template<typename... Ts> class NDEFWriteAction : public Action<Ts...> {
+ public:
+  void set_parent(ST25R *parent) { parent_ = parent; }
+  void set_message(std::function<nfc::NdefMessage *(Ts...)> func) { message_func_ = func; }
+  void set_format(bool format) { format_ = format; }
+  void play(const Ts &...x) override;
+
+ protected:
+  ST25R *parent_;
+  std::function<nfc::NdefMessage *(Ts...)> message_func_;
+  bool format_{false};
+};
+
 class ST25R : public PollingComponent, public nfc::Nfcc {
  public:
   enum State {
@@ -90,7 +103,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   void loop() override;
   float get_setup_priority() const override { return setup_priority::DATA; }
 
-  bool ndef_write(nfc::NdefMessage *message);
+  bool ndef_write(nfc::NdefMessage *message, bool format = false);
   bool clean_tag();
 
   void set_reset_pin(GPIOPin *reset_pin) { this->reset_pin_ = reset_pin; }
@@ -121,9 +134,9 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   void process_tag_removed_(bool found);
   bool wait_for_irq_(uint8_t mask, uint32_t timeout_ms);
   void reinitialize_();
-  bool transceive_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, uint32_t timeout_ms = 50);
-  bool transceive_no_crc_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, uint32_t timeout_ms = 50);
-  bool transceive_ex_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, bool with_crc, uint32_t timeout_ms = 50);
+  bool transceive_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, uint32_t timeout_ms = 150);
+  bool transceive_no_crc_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, uint32_t timeout_ms = 150);
+  bool transceive_ex_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, bool with_crc, uint32_t timeout_ms = 150);
   std::unique_ptr<nfc::NfcTag> read_tag_(std::vector<uint8_t> &uid);
   static void isr(ST25R *arg);
   
@@ -161,6 +174,22 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   std::vector<ST25RBinarySensor *> binary_sensors_;
   binary_sensor::BinarySensor *status_binary_sensor_{nullptr};
   sensor::Sensor *field_strength_sensor_{nullptr};
+};
+
+template<typename... Ts> void NDEFWriteAction<Ts...>::play(const Ts &...x) {
+  auto *message = this->message_func_(x...);
+  if (message != nullptr) {
+    this->parent_->ndef_write(message, this->format_);
+  }
+}
+
+template<typename... Ts> class CleanTagAction : public Action<Ts...> {
+ public:
+  void set_parent(ST25R *parent) { parent_ = parent; }
+  void play(const Ts &...x) override { this->parent_->clean_tag(); }
+
+ protected:
+  ST25R *parent_;
 };
 
 class ST25RBinarySensor : public binary_sensor::BinarySensor {

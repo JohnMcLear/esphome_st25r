@@ -1,0 +1,69 @@
+esphome:
+  name: st25r-ndef-test
+
+esp32:
+  board: esp32-c6-devkitc-1
+  variant: esp32c6
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG: "y"
+      CONFIG_ESP_CONSOLE_UART_DEFAULT: "n"
+      CONFIG_ESP_CONSOLE_SECONDARY_NONE: "y"
+
+logger:
+  level: DEBUG
+  hardware_uart: USB_SERIAL_JTAG
+
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [st25r, st25r_spi]
+
+spi:
+  clk_pin: GPIO19
+  miso_pin: GPIO10
+  mosi_pin: GPIO18
+
+st25r_spi:
+  id: my_st25r
+  cs_pin: GPIO6
+  irq_pin: GPIO7
+  update_interval: 2s
+  on_tag:
+    then:
+      - script.execute: write_ndef_once
+  on_tag_removed:
+    then:
+      - script.stop: write_ndef_once
+      - globals.set:
+          id: ndef_written
+          value: 'false'
+
+globals:
+  - id: ndef_written
+    type: bool
+    initial_value: 'false'
+
+script:
+  - id: write_ndef_once
+    mode: restart
+    then:
+      - if:
+          condition:
+            lambda: 'return !id(ndef_written);'
+          then:
+            - logger.log: "Starting Format + NDEF Write..."
+            - st25r.ndef_write:
+                format: true
+                ndef_message: |-
+                  auto *message = new nfc::NdefMessage();
+                  message->add_uri_record("https://esphome.io");
+                  return message;
+            - globals.set:
+                id: ndef_written
+                value: 'true'
+            - logger.log: "Operation completed."
+          else:
+            - logger.log: "NDEF already verified for this tag session."

@@ -1,0 +1,43 @@
+esphome:
+  name: st25r-i2c-test
+
+esp32:
+  board: esp32-c6-devkitc-1
+  variant: esp32c6
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG: "y"
+      CONFIG_ESP_CONSOLE_UART_DEFAULT: "n"
+      CONFIG_ESP_CONSOLE_SECONDARY_NONE: "y"
+
+logger:
+  level: DEBUG
+  hardware_uart: USB_SERIAL_JTAG
+
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [st25r, st25r_i2c]
+
+i2c:
+  sda: 21
+  scl: 22
+  scan: true
+
+st25r_i2c:
+  id: my_st25r
+  address: 0x50
+  irq_pin: 7
+  update_interval: 1s
+  on_tag:
+    then:
+      - logger.log:
+          format: "Tag detected (I2C): %s"
+          args: ['x.c_str()']
+  on_tag_removed:
+    then:
+      - logger.log:
+          format: "Tag removed (I2C): %s"
+          args: ['x.c_str()']

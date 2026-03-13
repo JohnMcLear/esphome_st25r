@@ -13,21 +13,6 @@ from esphome.const import (
     CONF_STATUS,
 )
 
-from esphome import automation, pins
-import esphome.codegen as cg
-import esphome.config_validation as cv
-from esphome.components import binary_sensor as binary_sensor_
-from esphome.components import sensor as sensor_
-from esphome.const import (
-    CONF_ID,
-    CONF_ON_TAG,
-    CONF_ON_TAG_REMOVED,
-    CONF_TRIGGER_ID,
-    CONF_IRQ_PIN,
-    CONF_RESET_PIN,
-    CONF_STATUS,
-)
-
 CODEOWNERS = ["@JohnMcLear"]
 AUTO_LOAD = ["binary_sensor", "sensor", "nfc"]
 MULTI_CONF = True
@@ -47,6 +32,9 @@ ST25RTagTrigger = st25r_ns.class_(
 ST25RTagRemovedTrigger = st25r_ns.class_(
     "ST25RTagRemovedTrigger", automation.Trigger.template(cg.std_string)
 )
+
+NDEFWriteAction = st25r_ns.class_("NDEFWriteAction", automation.Action)
+CleanTagAction = st25r_ns.class_("CleanTagAction", automation.Action)
 
 ST25R_SCHEMA = cv.Schema(
     {
@@ -108,3 +96,42 @@ async def setup_st25r(var, config):
         await automation.build_automation(
             trigger, [(cg.std_string, "x")], conf
         )
+
+@automation.register_action(
+    "st25r.ndef_write",
+    NDEFWriteAction,
+    cv.maybe_simple_value(
+        {
+            cv.GenerateID(): cv.use_id(ST25R),
+            cv.Required("ndef_message"): cv.lambda_,
+            cv.Optional("format", default=False): cv.boolean,
+        },
+        key="ndef_message",
+    ),
+)
+async def st25r_ndef_write_to_code(config, action_id, template_arg, args):
+    var = cg.new_Pvariable(action_id, template_arg)
+    parent = await cg.get_variable(config[CONF_ID])
+    cg.add(var.set_parent(parent))
+    template_ = await cg.process_lambda(
+        config["ndef_message"], args, return_type=cg.RawExpression("esphome::nfc::NdefMessage *")
+    )
+    cg.add(var.set_message(template_))
+    cg.add(var.set_format(config["format"]))
+    return var
+
+
+@automation.register_action(
+    "st25r.clean_tag",
+    CleanTagAction,
+    cv.Schema(
+        {
+            cv.GenerateID(): cv.use_id(ST25R),
+        },
+    ),
+)
+async def st25r_clean_tag_to_code(config, action_id, template_arg, args):
+    var = cg.new_Pvariable(action_id, template_arg)
+    parent = await cg.get_variable(config[CONF_ID])
+    cg.add(var.set_parent(parent))
+    return var

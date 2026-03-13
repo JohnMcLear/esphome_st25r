@@ -1,0 +1,58 @@
+esphome:
+  name: st25r-access-control
+
+esp32:
+  board: esp32-c6-devkitc-1
+  variant: esp32c6
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG: "y"
+      CONFIG_ESP_CONSOLE_UART_DEFAULT: "n"
+      CONFIG_ESP_CONSOLE_SECONDARY_NONE: "y"
+
+logger:
+  level: DEBUG
+  hardware_uart: USB_SERIAL_JTAG
+
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [st25r, st25r_spi]
+
+spi:
+  clk_pin: GPIO19
+  miso_pin: GPIO10
+  mosi_pin: GPIO18
+
+st25r_spi:
+  id: my_st25r
+  cs_pin: GPIO6
+  irq_pin: GPIO7
+  update_interval: 1s
+  on_tag:
+    then:
+      - if:
+          condition:
+            lambda: 'return x == "DEA30D00";'
+          then:
+            - logger.log: "Access Granted!"
+            - output.turn_on: gate_latch
+            - delay: 2s
+            - output.turn_off: gate_latch
+          else:
+            - logger.log:
+                format: "Access Denied for tag: %s"
+                args: ['x.c_str()']
+
+output:
+  - platform: gpio
+    pin: GPIO2
+    id: gate_latch
+
+binary_sensor:
+  - platform: st25r
+    st25r_id: my_st25r
+    uid: "DE-A3-0D-00"
+    name: "Authorized Tag Presence"

@@ -130,6 +130,7 @@ bool ST25R::transceive_ex_(const uint8_t *data, size_t len, uint8_t *resp, uint8
     if (this->irq_triggered_) {
       this->irq_triggered_ = false;
       this->irq_status_ = this->read_register(IRQ_MAIN);
+      ESP_LOGVV(TAG, "  transceive_ex: IRQ status=%02X", this->irq_status_);
       
       if (this->irq_status_ & IRQ_TXE) {
         tx_done = true;
@@ -162,6 +163,12 @@ std::unique_ptr<nfc::NfcTag> ST25R::read_tag_(std::vector<uint8_t> &uid) {
   uint8_t type = nfc::guess_tag_type(uid.size());
   ESP_LOGD(TAG, "Guessed tag type: %d for UID length: %d", type, uid.size());
   
+  if (type == nfc::TAG_TYPE_MIFARE_CLASSIC) {
+    ESP_LOGI(TAG, "Mifare Classic detected, but authentication is not yet implemented.");
+    nfc::NfcTagUid nfc_uid(uid.begin(), uid.end());
+    return make_unique<nfc::NfcTag>(nfc_uid, nfc::MIFARE_CLASSIC);
+  }
+
   if (type == nfc::TAG_TYPE_2) {
     std::vector<uint8_t> data;
     uint8_t buffer[16];
@@ -242,7 +249,11 @@ std::unique_ptr<nfc::NfcTag> ST25R::read_tag_(std::vector<uint8_t> &uid) {
             std::vector<uint8_t> ndef_data(data.begin() + msg_start_idx, data.begin() + msg_start_idx + msg_len);
             ESP_LOGI(TAG, "  Successfully read NDEF message of %d bytes", msg_len);
             nfc::NfcTagUid nfc_uid(uid.begin(), uid.end());
-            return make_unique<nfc::NfcTag>(nfc_uid, nfc::NFC_FORUM_TYPE_2, ndef_data);
+            if (msg_len > 0) {
+              return make_unique<nfc::NfcTag>(nfc_uid, nfc::NFC_FORUM_TYPE_2, ndef_data);
+            } else {
+              return make_unique<nfc::NfcTag>(nfc_uid, nfc::NFC_FORUM_TYPE_2);
+            }
           }
         }
       } else {
@@ -589,7 +600,42 @@ void ST25R::field_on_() {
   this->write_command(ST25R_CMD_ADJUST_REGULATORS);
 }
 
-bool ST25R::ndef_write(nfc::NdefMessage *message) {
+bool ST25R::ndef_write(nfc::NdefMessage *message, bool format) {
+  uint8_t buffer[16];
+  uint8_t len;
+
+  if (format) {
+    ESP_LOGD(TAG, "Formatting tag (NTAG215 CC)...");
+    uint8_t cc_cmd[6] = {0xA2, 0x03, 0xE1, 0x10, 0x3E, 0x00};
+    bool cc_success = false;
+    for (uint8_t i = 0; i < 3; i++) {
+      delay(20);
+      if (this->transceive_(cc_cmd, 6, buffer, len) && (len > 0 && (buffer[0] & 0x0F) == 0x0A)) {
+        cc_success = true;
+        break;
+      }
+    }
+    if (!cc_success) {
+      ESP_LOGE(TAG, "Failed to write CC page during format");
+      return false;
+    }
+    delay(50);
+  }
+
+  if (message == nullptr) {
+    // Just formatting/cleaning
+    uint8_t empty_ndef[6] = {0xA2, 0x04, 0x03, 0x00, 0xFE, 0x00};
+    bool empty_success = false;
+    for (uint8_t i = 0; i < 3; i++) {
+      delay(20);
+      if (this->transceive_(empty_ndef, 6, buffer, len) && (len > 0 && (buffer[0] & 0x0F) == 0x0A)) {
+        empty_success = true;
+        break;
+      }
+    }
+    return empty_success;
+  }
+
   std::vector<uint8_t> ndef_data = message->encode();
   std::vector<uint8_t> payload;
   
@@ -613,12 +659,19 @@ bool ST25R::ndef_write(nfc::NdefMessage *message) {
   for (size_t i = 0; i < payload.size(); i += 4) {
     uint8_t page = 4 + (i / 4);
     uint8_t write_cmd[6] = {0xA2, page, payload[i], payload[i+1], payload[i+2], payload[i+3]};
-    uint8_t buffer[16];
-    uint8_t len;
+    bool success = false;
     
-    delay(10);
-    if (!this->transceive_(write_cmd, 6, buffer, len) || (len > 0 && buffer[0] != 0x0A)) {
-      ESP_LOGE(TAG, "NDEF write failed at page %d", page);
+    for (uint8_t retry = 0; retry < 3; retry++) {
+      delay(20);
+      if (this->transceive_(write_cmd, 6, buffer, len) && (len > 0 && (buffer[0] & 0x0F) == 0x0A)) {
+        success = true;
+        break;
+      }
+      ESP_LOGW(TAG, "NDEF write retry %d for page %d (resp_len=%d, byte0=%02X)", retry + 1, page, len, len > 0 ? buffer[0] : 0);
+    }
+
+    if (!success) {
+      ESP_LOGE(TAG, "NDEF write failed at page %d after retries", page);
       return false;
     }
   }
@@ -627,16 +680,7 @@ bool ST25R::ndef_write(nfc::NdefMessage *message) {
 }
 
 bool ST25R::clean_tag() {
-  uint8_t buffer[16];
-  uint8_t len;
-  
-  // Format Capability Container (Page 3)
-  uint8_t cc_cmd[6] = {0xA2, 0x03, 0xE1, 0x10, 0x6D, 0x00};
-  if (!this->transceive_(cc_cmd, 6, buffer, len)) return false;
-  
-  // Clear first data page with empty NDEF TLV (Page 4)
-  uint8_t empty_ndef[6] = {0xA2, 0x04, 0x03, 0x00, 0xFE, 0x00};
-  return this->transceive_(empty_ndef, 6, buffer, len);
+  return this->ndef_write(nullptr, true);
 }
 
 void ST25R::dump_config() {
