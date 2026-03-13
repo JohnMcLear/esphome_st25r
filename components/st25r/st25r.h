@@ -101,6 +101,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   void dump_config() override;
   void update() override;
   void loop() override;
+  void process_state_();
   float get_setup_priority() const override { return setup_priority::DATA; }
 
   bool ndef_write(nfc::NdefMessage *message, bool format = false);

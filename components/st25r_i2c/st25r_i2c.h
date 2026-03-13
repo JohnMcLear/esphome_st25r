@@ -12,9 +12,6 @@ class ST25RI2c : public st25r::ST25R, public i2c::I2CDevice {
   void setup() override;
   void dump_config() override;
 
-  using i2c::I2CDevice::read_register;
-  using i2c::I2CDevice::write_register;
-
  protected:
   uint8_t read_register(uint8_t reg) override;
   void write_register(uint8_t reg, uint8_t value) override;

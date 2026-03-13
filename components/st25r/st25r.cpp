@@ -279,6 +279,10 @@ void ST25R::loop() {
     this->irq_status_ = 0;
   }
 
+  this->process_state_();
+}
+
+void ST25R::process_state_() {
   switch (this->state_) {
     case STATE_IDLE:
       break;
@@ -298,9 +302,9 @@ void ST25R::loop() {
             this->cascade_level_ = 0;
             this->current_uid_ = "";
             
+            uint8_t cl[] = {0x93, 0x20};
             this->write_command(ST25R_CMD_CLEAR_FIFO);
             this->read_register(IRQ_MAIN); // Clear any pending IRQs
-            uint8_t cl[] = {0x93, 0x20};
             this->irq_triggered_ = false;
             this->write_fifo(cl, 2);
             this->write_register(NUM_TX_BYTES1, 0x00);
@@ -332,59 +336,58 @@ void ST25R::loop() {
       if (this->irq_status_ != 0) {
         if (this->irq_status_ & (IRQ_RXE | IRQ_COL)) {
           uint8_t f1 = this->read_register(FIFO_STATUS1);
-          if (f1 < 5) {
-            if (this->irq_status_ & IRQ_COL) {
-                // Collision happened, we might need to handle it better in future
-                // For now, we just try to read what we have or fail
-                ESP_LOGD(TAG, "Collision detected in ANTICOL");
+          if (f1 > 0) {
+            uint8_t resp[16];
+            uint8_t bytes_to_read = std::min((uint8_t)16, f1);
+            delay(5); // Small delay for I2C FIFO to be ready
+            this->read_fifo(resp, bytes_to_read);
+            
+            if (bytes_to_read < 5) {
+               ESP_LOGD(TAG, "ANTICOL too short: %u", bytes_to_read);
+               this->state_ = STATE_IDLE;
+               this->process_tag_removed_(false);
+               return;
             }
-            if (f1 == 0) {
-                this->state_ = STATE_IDLE;
-                this->process_tag_removed_(false);
-                return;
+
+            uint8_t sel_cmds[] = {0x93, 0x95, 0x97};
+            uint8_t sel_pk[7] = {sel_cmds[this->cascade_level_], 0x70, resp[0], resp[1], resp[2], resp[3], resp[4]};
+
+            // Construct UID from response
+            if (resp[0] == 0x88) { // Cascade Tag
+                ESP_LOGV(TAG, "  Cascade Tag detected");
+                for(int i=1; i<4; i++) {
+                    char buf[3];
+                    sprintf(buf, "%02X", resp[i]);
+                    this->current_uid_ += buf;
+                }
+            } else {
+                for(int i=0; i<4; i++) {
+                    char buf[3];
+                    sprintf(buf, "%02X", resp[i]);
+                    this->current_uid_ += buf;
+                }
             }
-          }
 
-          uint8_t resp[16];
-          uint8_t bytes_to_read = std::min((uint8_t)16, f1);
-          this->read_fifo(resp, bytes_to_read);
-          
-          if (bytes_to_read < 5) {
-             ESP_LOGD(TAG, "ANTICOL too short: %u", bytes_to_read);
-             this->state_ = STATE_IDLE;
-             return;
-          }
+            // Verify XOR checksum (BCC)
+            uint8_t check = resp[0] ^ resp[1] ^ resp[2] ^ resp[3];
+            if (check != resp[4]) {
+               ESP_LOGD(TAG, "ANTICOL BCC mismatch: calculated 0x%02X, got 0x%02X (bytes: %02X %02X %02X %02X)", 
+                        check, resp[4], resp[0], resp[1], resp[2], resp[3]);
+            }
 
-          uint8_t sel_cmds[] = {0x93, 0x95, 0x97};
-          uint8_t sel_pk[7] = {sel_cmds[this->cascade_level_], 0x70, resp[0], resp[1], resp[2], resp[3], resp[4]};
-          
-          ESP_LOGD(TAG, "Sending SELECT level %u (UID part: %02X%02X%02X%02X)", 
-                    this->cascade_level_, resp[0], resp[1], resp[2], resp[3]);
-          
-          this->write_command(ST25R_CMD_CLEAR_FIFO);
-          this->read_register(IRQ_MAIN); // Clear any pending IRQs
-          this->irq_triggered_ = false;
-          this->write_fifo(sel_pk, 7);
-          this->write_register(NUM_TX_BYTES1, 0x00);
-          this->write_register(NUM_TX_BYTES2, 0x38); // 7 bytes
-          this->write_command(ST25R_CMD_TRANSMIT_WITH_CRC);
-          
-          if (resp[0] == 0x88) { // Cascade Tag
-              for(int i=1; i<4; i++) {
-                  char buf[3];
-                  sprintf(buf, "%02X", resp[i]);
-                  this->current_uid_ += buf;
-              }
-          } else {
-              for(int i=0; i<4; i++) {
-                  char buf[3];
-                  sprintf(buf, "%02X", resp[i]);
-                  this->current_uid_ += buf;
-              }
-          }
+            ESP_LOGD(TAG, "Sending SELECT level %u (UID so far: %s, BCC: 0x%02X)", 
+                      this->cascade_level_, this->current_uid_.c_str(), resp[4]);
+            this->write_command(ST25R_CMD_CLEAR_FIFO);
+            this->read_register(IRQ_MAIN); // Clear any pending IRQs
+            this->irq_triggered_ = false;
+            this->write_fifo(sel_pk, 7);
+            this->write_register(NUM_TX_BYTES1, 0x00);
+            this->write_register(NUM_TX_BYTES2, 0x38); // 7 bytes
+            this->write_command(ST25R_CMD_TRANSMIT_WITH_CRC);
 
-          this->state_ = STATE_SELECT;
-          this->last_state_change_ = millis();
+            this->state_ = STATE_SELECT;
+            this->last_state_change_ = millis();
+          }
         } else if (this->irq_status_ & IRQ_NRE) {
             this->state_ = STATE_IDLE;
             this->process_tag_removed_(false);
@@ -402,89 +405,64 @@ void ST25R::loop() {
       }
 
       if (this->irq_status_ != 0) {
-        if (this->irq_status_ & (IRQ_RXE | IRQ_COL)) {
+        if (this->irq_status_ & (IRQ_RXE | IRQ_COL | IRQ_NRE)) {
+          delay(5); // Small delay for FIFO to populate in I2C mode
           uint8_t f1 = this->read_register(FIFO_STATUS1);
-          if (f1 == 0) {
-             this->state_ = STATE_IDLE;
-             this->process_tag_removed_(false);
-             return;
-          }
-
-          uint8_t sak;
-          this->read_fifo(&sak, 1);
-          ESP_LOGD(TAG, "SELECT SAK: 0x%02X", sak);
-
-          if (sak & 0x04) { // Cascade bit set
-            this->cascade_level_++;
-            if (this->cascade_level_ > 2) {
-                ESP_LOGE(TAG, "Too many cascade levels");
-                this->state_ = STATE_IDLE;
-                return;
-            }
+          if (f1 > 0) {
+            uint8_t buffer[16];
+            uint8_t to_read = std::min((uint8_t)16, f1);
+            this->read_fifo(buffer, to_read);
+            uint8_t sak = buffer[0];
+            ESP_LOGD(TAG, "SELECT SAK: 0x%02X (fifo_len=%d)", sak, f1);
             
-            uint8_t sel_cmds[] = {0x93, 0x95, 0x97};
-            ESP_LOGD(TAG, "Continuing to ANTICOLLISION level %u", this->cascade_level_);
             this->write_command(ST25R_CMD_CLEAR_FIFO);
-            this->read_register(IRQ_MAIN); // Clear any pending IRQs
-            uint8_t cl[] = {sel_cmds[this->cascade_level_], 0x20};
-            this->irq_triggered_ = false;
-            this->write_fifo(cl, 2);
-            this->write_register(NUM_TX_BYTES1, 0x00);
-            this->write_register(NUM_TX_BYTES2, 0x10); 
-            this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
-            
-            this->state_ = STATE_ANTICOL;
-            this->last_state_change_ = millis();
-          } else {
-            // Tag fully selected!
-            ESP_LOGI(TAG, "Tag fully selected: %s", this->current_uid_.c_str());
-            
-            std::vector<uint8_t> uid_bytes;
-            for (size_t i = 0; i < this->current_uid_.length(); i += 2) {
-              std::string byteString = this->current_uid_.substr(i, 2);
-              uint8_t byte = (uint8_t) strtol(byteString.c_str(), nullptr, 16);
-              uid_bytes.push_back(byte);
-            }
-            
-            delay(20); // Settling delay before NDEF read
-            auto nfc_tag = this->read_tag_(uid_bytes);
-            if (nfc_tag->has_ndef_message()) {
-              auto &message = nfc_tag->get_ndef_message();
-              for (auto &record : message->get_records()) {
-                ESP_LOGI(TAG, "  NDEF Record type: %s", record->get_type().c_str());
-                ESP_LOGI(TAG, "  NDEF Payload: %s", record->get_payload().c_str());
-              }
-            }
 
-            if (!this->tag_present_ || this->tag_present_uid_ != this->current_uid_) {
-              this->tag_present_ = true;
-              this->tag_present_uid_ = this->current_uid_;
-
-              for (auto *listener : this->tag_listeners_) {
-                listener->tag_on(*nfc_tag);
+            if (sak & 0x04) { // Cascade bit set
+              this->cascade_level_++;
+              if (this->cascade_level_ > 2) {
+                  ESP_LOGE(TAG, "Too many cascade levels");
+                  this->state_ = STATE_IDLE;
+                  this->process_tag_removed_(false);
+                  return;
               }
+              uint8_t sel_cmds[] = {0x93, 0x95, 0x97};
+              ESP_LOGD(TAG, "Continuing to ANTICOLLISION level %u", this->cascade_level_);
+              this->write_command(ST25R_CMD_CLEAR_FIFO);
+              this->read_register(IRQ_MAIN); // Clear any pending IRQs
+              uint8_t cl[] = {sel_cmds[this->cascade_level_], 0x20};
+              this->irq_triggered_ = false;
+              this->write_fifo(cl, 2);
+              this->write_register(NUM_TX_BYTES1, 0x00);
+              this->write_register(NUM_TX_BYTES2, 0x10); 
+              this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
+              
+              this->state_ = STATE_ANTICOL;
+              this->last_state_change_ = millis();
+            } else {
+              // Tag fully selected!
+              ESP_LOGI(TAG, "Tag fully selected: %s", this->current_uid_.c_str());
+              
+              if (!this->tag_present_ || this->tag_present_uid_ != this->current_uid_) {
+                this->tag_present_ = true;
+                this->tag_present_uid_ = this->current_uid_;
 
-              for (auto *trigger : this->on_tag_triggers_) {
-                trigger->trigger(this->current_uid_);
+                for (auto *trigger : this->on_tag_triggers_) {
+                  trigger->trigger(this->current_uid_);
+                }
               }
+              for (auto *obj : this->binary_sensors_) obj->process(this->current_uid_);
+              
+              // Power cycle field to reset tags (reliable way to ensure they respond to next WUPA)
+              this->write_command(ST25R_CMD_FIELD_OFF);
+              delay(50);
+              this->field_on_();
+              
+              this->state_ = STATE_IDLE;
+              this->process_tag_removed_(true);
             }
-            for (auto *obj : this->binary_sensors_) obj->process(this->current_uid_);
-            
-            // Power cycle field to reset tags (reliable way to ensure they respond to next WUPA)
-            this->write_command(ST25R_CMD_FIELD_OFF);
-            delay(50);
-            this->field_on_();
-            
-            this->state_ = STATE_IDLE;
-            this->process_tag_removed_(true);
           }
         } else if (this->irq_status_ & IRQ_NRE) {
-            // No tag responded, power cycle anyway to be safe if we were in a weird state
-            if (this->tag_present_) {
-                this->write_command(ST25R_CMD_FIELD_OFF);
-                delay(50);
-                this->field_on_();
-            }
+            ESP_LOGV(TAG, "SELECT NRE, returning to IDLE");
             this->state_ = STATE_IDLE;
             this->process_tag_removed_(false);
         }
@@ -546,16 +524,23 @@ bool ST25R::wait_for_irq_(uint8_t mask, uint32_t timeout_ms) {
 }
 
 bool ST25R::reset_() {
+  ESP_LOGV(TAG, "  reset_: Sending SET_DEFAULT");
   this->write_command(ST25R_CMD_SET_DEFAULT);
   delay(10);
 
   uint8_t ic_identity = this->read_register(IC_IDENTITY);
-  if ((ic_identity >> 3) != 0x05) return false;
+  ESP_LOGD(TAG, "  reset_: IC identity read: 0x%02X", ic_identity);
+  if ((ic_identity >> 3) != 0x05) {
+    ESP_LOGE(TAG, "  reset_: IC identity mismatch! Expected 0x28 (shifted), got 0x%02X", ic_identity >> 3);
+    return false;
+  }
   ESP_LOGI(TAG, "IC identity match: 0x%02X", ic_identity);
 
+  ESP_LOGV(TAG, "  reset_: Enabling Ready mode");
   this->write_register(OP_CONTROL, 0x80); // en=1: Ready mode (enable oscillator and regulators)
   delay(10); // Wait for oscillator to stabilize
 
+  ESP_LOGV(TAG, "  reset_: Configuring registers");
   this->write_register(IO_CONF1, 0x00);  // single=0: differential antenna driving (full power)
   this->write_register(IO_CONF2, this->supply_3v3_ ? 0x80 : 0x00); 
   this->write_register(MODE, 0x08); 
@@ -569,9 +554,13 @@ bool ST25R::reset_() {
   uint8_t d_res = (15 - this->rf_power_) & 0x0F; 
   this->write_register(TX_DRIVER_CONF, d_res); 
 
-  if (this->rf_field_enabled_) this->field_on_();
+  if (this->rf_field_enabled_) {
+    ESP_LOGV(TAG, "  reset_: Enabling RF field");
+    this->field_on_();
+  }
   delay(10);
 
+  ESP_LOGV(TAG, "  reset_: Complete");
   return true;
 }
 

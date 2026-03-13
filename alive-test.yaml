@@ -1,0 +1,21 @@
+esphome:
+  name: alive-test
+  on_boot:
+    priority: 1000
+    then:
+      - logger.log: "DEVICE IS ALIVE!"
+
+esp32:
+  board: esp32-c6-devkitc-1
+  variant: esp32c6
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG: "y"
+      CONFIG_ESP_CONSOLE_UART_DEFAULT: "n"
+      CONFIG_ESP_CONSOLE_SECONDARY_NONE: "y"
+
+logger:
+  level: VERY_VERBOSE
+  hardware_uart: USB_SERIAL_JTAG
+

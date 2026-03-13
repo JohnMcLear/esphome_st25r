@@ -60,6 +60,7 @@ binary_sensor:
 | Test Case | Operator Action | Expected Result |
 |---|---|---|
 | **Mixed Boot** | **Readers:** Empty. **Action:** Power cycle ESP32. | Logs show initialization for both `ST25R_i2c` and `ST25R_spi`. |
+| **I2C Hardware** | **Action:** Connect ST25R via I2C. Observe scan and ID logs. | Device found at 0x50. IC Identity match (0x2A) confirmed. (Passed) |
 | **I2C Recovery** | **Readers:** Empty. **Action:** Briefly disconnect I2C SDA wire. | `hub_i2c` enters backoff. `hub_spi` unaffected. Reconnect to see recovery. |
 | **SPI Recovery** | **Readers:** Empty. **Action:** Briefly disconnect SPI CS wire. | `hub_spi` enters backoff. `hub_i2c` unaffected. Reconnect to see recovery. |
 | **Health Check** | **Readers:** Empty. **Action:** Leave idle for 60s. | Both log periodic version/health checks. |
@@ -85,13 +86,13 @@ binary_sensor:
 
 ## 4. Success Criteria
 - [x] **SPI Hardware:** ST25R initializes and reads tags reliably over the SPI bus without timeouts or data corruption.
-- [ ] **Dual Bus Operation:** Simultaneous I2C and SPI readers function correctly on the same ESP32-C6.
+- [x] **Dual Bus Operation:** Simultaneous I2C and SPI readers function correctly on the same ESP32-C6.
 - [ ] Multi-Tag Detection: Correctly identifies and parses 2 tags in a single poll (Pending Implementation).
 - [x] **Tag Removal:** `on_tag_removed` triggers reliably across all tag types.
 - [x] **Low-Latency Reads:** Average detection speed remains under the 300ms threshold for snappy UI feedback.
 - [x] Non-blocking: No `delay()` or `took a long time` warnings during normal polling.
-- [ ] Portability: NDEF and Mifare logic performs identically on I2C and SPI.
-- [ ] Isolation: Physical failure/noise on one bus does not crash the other.
+- [x] Portability: NDEF and Mifare logic performs identically on I2C and SPI.
+- [x] Isolation: Physical failure/noise on one bus does not crash the other.
 - [x] Format compatibility: Both `AA-BB` and `AA:BB` formats accepted in YAML.
 - [x] **Silent Failure Tracking:** Loop timeouts (ACK but no response) correctly trigger warnings and auto-reset logic.
 - [ ] **Mifare Authentication:** Resolve intermittent failures with non-standard keys (Not Yet Implemented).

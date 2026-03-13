@@ -1,5 +1,5 @@
 esphome:
-  name: st25r-i2c-test
+  name: st25r-dual-test
 
 esp32:
   board: esp32-c6-devkitc-1
@@ -19,7 +19,12 @@ external_components:
   - source:
       type: local
       path: components
-    components: [st25r, st25r_i2c]
+    components: [st25r, st25r_spi, st25r_i2c]
+
+spi:
+  clk_pin: GPIO19
+  miso_pin: GPIO10
+  mosi_pin: GPIO18
 
 i2c:
   sda: 21
@@ -27,18 +32,24 @@ i2c:
   scan: true
   frequency: 100khz
 
+st25r_spi:
+  id: st25r_spi_board
+  cs_pin: GPIO6
+  irq_pin: GPIO7
+  update_interval: 1s
+  on_tag:
+    then:
+      - logger.log:
+          format: "SPI Tag detected: %s"
+          args: ['x.c_str()']
+
 st25r_i2c:
-  id: my_st25r
+  id: st25r_i2c_board
   address: 0x50
   irq_pin: 5
   update_interval: 1s
   on_tag:
     then:
       - logger.log:
-          format: "Tag detected (I2C): %s"
-          args: ['x.c_str()']
-  on_tag_removed:
-    then:
-      - logger.log:
-          format: "Tag removed (I2C): %s"
+          format: "I2C Tag detected: %s"
           args: ['x.c_str()']
