@@ -8,19 +8,6 @@
 #include "esphome/components/nfc/nfc.h"
 #include <vector>
 #include <string>
-#include <set>
-#include <map>
-
-// Compatibility for ESPHome versions
-#include "esphome/core/version.h"
-
-namespace esphome {
-namespace nfc {
-#if ESPHOME_VERSION_CODE < VERSION_CODE(2025, 1, 0)
-  using NfcTagUid = std::vector<uint8_t>;
-#endif
-} // namespace nfc
-} // namespace esphome
 
 namespace esphome {
 namespace st25r {
@@ -47,32 +34,26 @@ enum ST25RRegister : uint8_t {
   FIFO_STATUS2 = 0x1F,
   NUM_TX_BYTES1 = 0x22,
   NUM_TX_BYTES2 = 0x23,
-  COLLISION_DISPLAY = 0x20,
+  COLLISION_DISPLAY = 0x24,
   TX_DRIVER_CONF = 0x28,
-  AD_CONV_RESULT = 0x25,
-  AAT_A = 0x26,
-  AAT_B = 0x27,
+  AD_CONV_RESULT = 0x2A,
   IC_IDENTITY = 0x3F,
-  CORR_CONF1 = 0x4C,
-  CORR_CONF2 = 0x4D,
 };
 
 // ST25R Commands
 enum ST25RCommand : uint8_t {
   ST25R_CMD_SET_DEFAULT = 0xC1,
+  ST25R_CMD_READ_FIFO = 0x9F,
   ST25R_CMD_STOP_ALL = 0xC2,
-  ST25R_CMD_CLEAR_FIFO = 0xDB,
+  ST25R_CMD_CLEAR_FIFO = 0xC3,
   ST25R_CMD_TRANSMIT_WITH_CRC = 0xC4,
   ST25R_CMD_TRANSMIT_WITHOUT_CRC = 0xC5,
   ST25R_CMD_TRANSMIT_REQA = 0xC6,
   ST25R_CMD_TRANSMIT_WUPA = 0xC7,
   ST25R_CMD_FIELD_ON = 0xC8,
   ST25R_CMD_FIELD_OFF = 0xC9,
-  ST25R_CMD_ANTENNA_TUNE = 0xCD,
   ST25R_CMD_MEASURE_AMPLITUDE = 0xD3,
   ST25R_CMD_ADJUST_REGULATORS = 0xD6,
-  ST25R_CMD_READ_FIFO = 0x9F,
-  ST25R_CMD_RC_CAL = 0xEA,
 };
 
 class ST25R;
@@ -117,8 +98,6 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   void set_rf_field_enabled(bool enabled) { this->rf_field_enabled_ = enabled; }
   void set_rf_power(uint8_t power) { this->rf_power_ = power; }
   void set_supply_3v3(bool supply_3v3) { this->supply_3v3_ = supply_3v3; }
-  void set_aat_enabled(bool enabled) { this->aat_enabled_ = enabled; }
-  void add_known_uid(const std::string &uid) { this->known_uids_.push_back(uid); }
 
   void register_on_tag_trigger(ST25RTagTrigger *trig) { this->on_tag_triggers_.push_back(trig); }
   void register_on_tag_removed_trigger(ST25RTagRemovedTrigger *trig) {
@@ -128,7 +107,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   void set_status_binary_sensor(binary_sensor::BinarySensor *sensor) { this->status_binary_sensor_ = sensor; }
   void set_field_strength_sensor(sensor::Sensor *sensor) { this->field_strength_sensor_ = sensor; }
 
-  bool is_tag_present() const { return !this->present_tags_.empty(); }
+  bool is_tag_present() const { return this->tag_present_; }
 
  protected:
   virtual uint8_t read_register(uint8_t reg) = 0;
@@ -137,52 +116,45 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   virtual void write_fifo(const uint8_t *data, size_t len) = 0;
   virtual void read_fifo(uint8_t *data, size_t len) = 0;
 
-  void write_register_b(uint8_t reg, uint8_t value);
-
   bool reset_();
   void field_on_();
-  void finalize_scan_();
+  void process_tag_removed_(bool found);
   bool wait_for_irq_(uint8_t mask, uint32_t timeout_ms);
   void reinitialize_();
   bool transceive_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, uint32_t timeout_ms = 50);
-  bool transceive_ex_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, bool with_crc, uint32_t timeout_ms = 50, bool reset_all = true);
+  bool transceive_no_crc_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, uint32_t timeout_ms = 50);
+  bool transceive_ex_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, bool with_crc, uint32_t timeout_ms = 50);
   std::unique_ptr<nfc::NfcTag> read_tag_(std::vector<uint8_t> &uid);
   static void isr(ST25R *arg);
   
   GPIOPin *reset_pin_{nullptr};
   InternalGPIOPin *irq_pin_{nullptr};
 
-  std::set<std::string> present_tags_;
-  std::set<std::string> tags_this_scan_;
-  std::map<std::string, uint8_t> tag_miss_counts_;
-  std::vector<std::string> known_uids_;
+  bool tag_present_{false};
+  std::string tag_present_uid_;
   bool rf_field_enabled_{true};
   uint8_t rf_power_{15};
   bool supply_3v3_{true};
-  bool aat_enabled_{false};
-  bool is_b_version_{false};
   uint8_t health_check_failures_{0};
   uint8_t reinitialization_attempts_{0};
-  uint8_t current_profile_idx_{0};
-  uint8_t winner_profile_idx_{0xFF};
   volatile bool irq_triggered_{false};
   volatile uint8_t irq_status_{0};
-  volatile uint8_t irq_timer_status_{0};
   
-  static const uint8_t IRQ_OSC     = 0x80;
-  static const uint8_t IRQ_RXS     = 0x20;
-  static const uint8_t IRQ_RXE     = 0x10;
-  static const uint8_t IRQ_TXE     = 0x08;
-  static const uint8_t IRQ_COL     = 0x04;
-  static const uint8_t IRQ_TIMER_NRE = 0x40;
+  static const uint8_t IRQ_OSC = 0x80;
+  static const uint8_t IRQ_WL  = 0x40;
+  static const uint8_t IRQ_RXS = 0x20;
+  static const uint8_t IRQ_TXE = 0x10;
+  static const uint8_t IRQ_COL = 0x08;
+  static const uint8_t IRQ_RX_REST = 0x04;
+  static const uint8_t IRQ_RXE = 0x02;
+  static const uint8_t IRQ_NRE = 0x01;
+  static const uint8_t IRQ_ERR = 0x08; // Mapping COL to ERR for general error handling
   
   State state_{STATE_IDLE};
   uint32_t last_state_change_{0};
   uint8_t cascade_level_{0};
-  uint8_t valid_bits_{0};
-  uint8_t collision_retries_{0};
-  uint8_t uid_buffer_[5];
   std::string current_uid_;
+  uint8_t missed_updates_{0};
 
   std::vector<ST25RTagTrigger *> on_tag_triggers_;
   std::vector<ST25RTagRemovedTrigger *> on_tag_removed_triggers_;
