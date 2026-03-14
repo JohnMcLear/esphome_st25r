@@ -329,7 +329,6 @@ void ST25R::process_state_() {
         if (this->anticol_col_pos_ > 0 && this->anticol_prefix_val_ < max_prefix_val) {
           this->anticol_prefix_val_++;
           this->apply_anticol_prefix_();
-          ESP_LOGD(TAG, "ANTICOL timeout → try prefix_val=%u/%u via WUPA", this->anticol_prefix_val_, max_prefix_val);
           // Send WUPA before each new prefix attempt — some cards (e.g. Mifare Classic) leave
           // the READY state quickly after responding to an anticol they don't match.
           this->write_command(ST25R_CMD_CLEAR_FIFO);
@@ -343,7 +342,6 @@ void ST25R::process_state_() {
           this->last_state_change_ = millis();
           return;
         }
-        ESP_LOGD(TAG, "ANTICOL timeout — all prefixes exhausted");
         this->state_ = STATE_IDLE;
         this->finalize_scan_();
         return;
@@ -370,8 +368,6 @@ void ST25R::process_state_() {
           this->anticol_prefix_val_ = 0;
           this->apply_anticol_prefix_();
 
-          ESP_LOGD(TAG, "  ANTICOL collision at UID bit %d (col_raw=0x%02X) → try prefix_val=0", uid_col_pos, col_raw);
-
           this->send_anticol_frame_();
           this->last_state_change_ = millis();
 
@@ -379,7 +375,6 @@ void ST25R::process_state_() {
           // Clean response — full UID received
           uint8_t resp[5];
           this->read_fifo(resp, 5);
-          ESP_LOGD(TAG, "  ANTICOL clean raw: %02X %02X %02X %02X %02X", resp[0], resp[1], resp[2], resp[3], resp[4]);
 
           // ST25R3916 FIFO behaviour with prefix bits:
           // The tag only sends the bits NOT covered by the prefix. The FIFO stores the
@@ -397,7 +392,6 @@ void ST25R::process_state_() {
                 (resp[this->anticol_prefix_full_] & (uint8_t)(~mask));
           }
           uint8_t bcc = full_uid[0] ^ full_uid[1] ^ full_uid[2] ^ full_uid[3];
-          ESP_LOGD(TAG, "  ANTICOL clean UID: %02X%02X%02X%02X BCC=%02X (raw_bcc=%02X)", full_uid[0], full_uid[1], full_uid[2], full_uid[3], bcc, resp[4]);
 
           uint8_t sel_cmds[] = {0x93, 0x95, 0x97};
           uint8_t sel_pk[7] = {sel_cmds[this->cascade_level_], 0x70,
@@ -413,19 +407,16 @@ void ST25R::process_state_() {
             }
           }
 
-          ESP_LOGD(TAG, "Sending SELECT level %u (UID so far: %s)", this->cascade_level_, this->current_uid_.c_str());
-
           this->write_register(ISO14443A_CONF, 0x00);  // clear antcl — SELECT uses CRC
           uint8_t sak_buf[3];
           uint8_t sak_len = 0;
           if (!this->transceive_(sel_pk, 7, sak_buf, sak_len) || sak_len == 0) {
-            ESP_LOGD(TAG, "SELECT failed (no SAK)");
+            ESP_LOGW(TAG, "SELECT failed (no SAK)");
             this->state_ = STATE_IDLE;
             this->finalize_scan_();
             return;
           }
           uint8_t sak = sak_buf[0];
-          ESP_LOGD(TAG, "SELECT SAK: 0x%02X", sak);
 
           if (sak & 0x04) {  // Cascade bit — need another anticollision level
             // Save CL1 collision state before overwriting for CL2
@@ -441,7 +432,6 @@ void ST25R::process_state_() {
               this->finalize_scan_();
               return;
             }
-            ESP_LOGD(TAG, "Continuing to ANTICOLLISION level %u", this->cascade_level_);
             this->anticol_prefix_full_ = 0;
             this->anticol_prefix_bits_ = 0;
             this->anticol_col_pos_ = 0;
@@ -504,8 +494,7 @@ void ST25R::process_state_() {
               uint8_t max_val = (1 << (resume_col_pos + 1)) - 1;
               if (this->anticol_prefix_val_ > max_val) {
                 // All branches at this collision level exhausted — done
-                ESP_LOGD(TAG, "All anticol branches exhausted, finalizing");
-                this->state_ = STATE_IDLE;
+              this->state_ = STATE_IDLE;
                 this->finalize_scan_();
                 return;
               }
@@ -704,10 +693,6 @@ void ST25R::send_anticol_frame_() {
   this->write_register(NUM_TX_BYTES2, ((ntx_n & 0x1F) << 3) | (ntx_b & 0x07));
   this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
 
-  ESP_LOGD(TAG, "  send_anticol: sel=0x%02X nvb=0x%02X prefix_full=%u prefix_bits=%u partial_byte=0x%02X ntx2=0x%02X",
-           sel, nvb, this->anticol_prefix_full_, this->anticol_prefix_bits_,
-           this->anticol_prefix_bits_ > 0 ? this->anticol_prefix_[this->anticol_prefix_full_] : 0,
-           ((ntx_n & 0x1F) << 3) | (ntx_b & 0x07));
 }
 
 void ST25R::field_on_() {
