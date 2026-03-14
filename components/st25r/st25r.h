@@ -6,6 +6,8 @@
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/nfc/nfc.h"
+#include <map>
+#include <set>
 #include <vector>
 #include <string>
 
@@ -34,9 +36,9 @@ enum ST25RRegister : uint8_t {
   FIFO_STATUS2 = 0x1F,
   NUM_TX_BYTES1 = 0x22,
   NUM_TX_BYTES2 = 0x23,
-  COLLISION_DISPLAY = 0x24,
+  COLLISION_DISPLAY = 0x20,
   TX_DRIVER_CONF = 0x28,
-  AD_CONV_RESULT = 0x2A,
+  AD_CONV_RESULT = 0x25,
   IC_IDENTITY = 0x3F,
 };
 
@@ -45,7 +47,7 @@ enum ST25RCommand : uint8_t {
   ST25R_CMD_SET_DEFAULT = 0xC1,
   ST25R_CMD_READ_FIFO = 0x9F,
   ST25R_CMD_STOP_ALL = 0xC2,
-  ST25R_CMD_CLEAR_FIFO = 0xC3,
+  ST25R_CMD_CLEAR_FIFO = 0xC3,  // Table 13: 0xC2/0xC3 = Stop all activities (clears FIFO state)
   ST25R_CMD_TRANSMIT_WITH_CRC = 0xC4,
   ST25R_CMD_TRANSMIT_WITHOUT_CRC = 0xC5,
   ST25R_CMD_TRANSMIT_REQA = 0xC6,
@@ -121,7 +123,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   void set_status_binary_sensor(binary_sensor::BinarySensor *sensor) { this->status_binary_sensor_ = sensor; }
   void set_field_strength_sensor(sensor::Sensor *sensor) { this->field_strength_sensor_ = sensor; }
 
-  bool is_tag_present() const { return this->tag_present_; }
+  bool is_tag_present() const { return !this->present_tags_.empty(); }
 
  protected:
   virtual uint8_t read_register(uint8_t reg) = 0;
@@ -132,7 +134,9 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
 
   bool reset_();
   void field_on_();
-  void process_tag_removed_(bool found);
+  void finalize_scan_();
+  void send_anticol_frame_();
+  void apply_anticol_prefix_();
   bool wait_for_irq_(uint8_t mask, uint32_t timeout_ms);
   void reinitialize_();
   bool transceive_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, uint32_t timeout_ms = 150);
@@ -144,8 +148,6 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   GPIOPin *reset_pin_{nullptr};
   InternalGPIOPin *irq_pin_{nullptr};
 
-  bool tag_present_{false};
-  std::string tag_present_uid_;
   bool rf_field_enabled_{true};
   uint8_t rf_power_{15};
   bool supply_3v3_{true};
@@ -153,22 +155,41 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   uint8_t reinitialization_attempts_{0};
   volatile bool irq_triggered_{false};
   volatile uint8_t irq_status_{0};
-  
-  static const uint8_t IRQ_OSC = 0x80;
-  static const uint8_t IRQ_WL  = 0x40;
-  static const uint8_t IRQ_RXS = 0x20;
-  static const uint8_t IRQ_TXE = 0x10;
-  static const uint8_t IRQ_COL = 0x08;
-  static const uint8_t IRQ_RX_REST = 0x04;
-  static const uint8_t IRQ_RXE = 0x02;
+
+  // Multi-tag tracking
+  // present_tags_: UID → consecutive miss count (0 = seen this or prior scan)
+  std::map<std::string, uint8_t> present_tags_;
+  std::set<std::string> tags_this_scan_;  // UIDs found in current scan cycle
+
+  // IRQ_MAIN (0x1A) bit definitions per Table 62
+  static const uint8_t IRQ_OSC     = 0x80;  // bit7: oscillator stable
+  static const uint8_t IRQ_WL      = 0x40;  // bit6: FIFO water level
+  static const uint8_t IRQ_RXS     = 0x20;  // bit5: start of receive
+  static const uint8_t IRQ_RXE     = 0x10;  // bit4: end of receive ← tag response
+  static const uint8_t IRQ_TXE     = 0x08;  // bit3: end of transmission
+  static const uint8_t IRQ_COL     = 0x04;  // bit2: bit collision ← anticollision
+  static const uint8_t IRQ_RX_REST = 0x02;  // bit1: automatic reception restart
+  // NRE (no-response timer expired) is bit6 of IRQ_TIMER (0x1B), not IRQ_MAIN;
+  // millis() timeouts are used instead — this constant is a placeholder that won't match
   static const uint8_t IRQ_NRE = 0x01;
-  static const uint8_t IRQ_ERR = 0x08; // Mapping COL to ERR for general error handling
-  
+
   State state_{STATE_IDLE};
   uint32_t last_state_change_{0};
   uint8_t cascade_level_{0};
   std::string current_uid_;
-  uint8_t missed_updates_{0};
+
+  // Anticollision loop state
+  uint8_t anticol_prefix_[5]{};   // UID prefix bytes being used to narrow search
+  uint8_t anticol_prefix_full_;   // complete prefix bytes
+  uint8_t anticol_prefix_bits_;   // partial bits in last prefix byte
+  uint8_t anticol_col_pos_{0};    // collision bit position (bits 0..col_pos are prefix)
+  uint8_t anticol_prefix_val_{0}; // current prefix value being tried (brute-forced)
+
+  // Multi-tag tree traversal: saved CL1 collision state for resuming after cascade CL2
+  uint8_t saved_col_pos_{0};
+  uint8_t saved_prefix_val_{0};
+  bool saved_anticol_valid_{false};
+  bool anticol_resume_{false};    // when true: STATE_WUPA uses saved prefix instead of resetting
 
   std::vector<ST25RTagTrigger *> on_tag_triggers_;
   std::vector<ST25RTagRemovedTrigger *> on_tag_removed_triggers_;

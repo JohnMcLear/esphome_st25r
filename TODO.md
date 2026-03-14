@@ -8,13 +8,13 @@
 - [x] **Component Status Tracking**: Mark the component as failed/unavailable in ESPHome if the hardware becomes unresponsive.
 - [x] **Connectivity Binary Sensor**: Expose a binary sensor to Home Assistant indicating if the reader hardware is healthy.
 - [x] **Non-Blocking Logic**: Refactor the `update()` loop into a non-blocking state machine to avoid ESPHome "took too long" warnings.
-- [ ] **I2C Verification**: Comprehensive testing of the I2C transport layer with actual hardware.
+- [x] **I2C Verification**: Comprehensive testing of the I2C transport layer with actual hardware.
 - [x] **I2C CI Tests**: Add I2C-based compilation tests to the CI workflow.
 
 ## Protocol Support
 - [ ] **Mifare Classic Support**: Implementation of authentication and sector reading/writing.
 - [x] **NDEF Parsing**: Support for reading NDEF records (URLs, Text, etc.) for Type 2 tags.
-- [x] **Multi-Tag Anticollision**: Robust handling when multiple tags are in the field simultaneously.
+- [x] **Multi-Tag Detection**: ISO14443A HALT+REQA loop — select a tag, HALT it, REQA for remaining, repeat until all found. Per-UID miss-count tracking for reliable removal detection.
 - [ ] **ISO14443B Support**: Implementation of the Type B protocol.
 - [ ] **FeliCa (NFC-F) Support**: Support for FeliCa cards.
 - [ ] **ISO15693 (NFC-V) Support**: Support for vicinity cards.
