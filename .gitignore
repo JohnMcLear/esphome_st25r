@@ -11,3 +11,4 @@ debug.yaml
 *.log
 *.txt
 *.txt
+tests/unit/test_crypto1
