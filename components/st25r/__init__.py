@@ -17,6 +17,17 @@ CODEOWNERS = ["@JohnMcLear"]
 AUTO_LOAD = ["binary_sensor", "sensor", "nfc"]
 MULTI_CONF = True
 
+def _validate_mifare_key(value):
+    value = cv.string_strict(value)
+    if len(value) != 12:
+        raise cv.Invalid(f"Mifare key must be exactly 12 hex characters, got {len(value)}")
+    try:
+        int(value, 16)
+    except ValueError as err:
+        raise cv.Invalid("Mifare key must contain only hex characters (0-9, A-F)") from err
+    return value.upper()
+
+
 CONF_ST25R_ID = "st25r_id"
 CONF_RF_FIELD_ENABLED = "rf_field_enabled"
 CONF_RF_POWER = "rf_power"
@@ -46,12 +57,8 @@ ST25R_SCHEMA = cv.Schema(
         cv.Optional(CONF_RF_FIELD_ENABLED, default=True): cv.boolean,
         cv.Optional(CONF_RF_POWER, default=15): cv.int_range(min=0, max=15),
         cv.Optional(CONF_SUPPLY_3V3, default=True): cv.boolean,
-        cv.Optional(CONF_MIFARE_KEY_A, default="FFFFFFFFFFFF"): cv.All(
-            cv.string, cv.Length(min=12, max=12)
-        ),
-        cv.Optional(CONF_MIFARE_KEY_B, default="FFFFFFFFFFFF"): cv.All(
-            cv.string, cv.Length(min=12, max=12)
-        ),
+        cv.Optional(CONF_MIFARE_KEY_A, default="FFFFFFFFFFFF"): _validate_mifare_key,
+        cv.Optional(CONF_MIFARE_KEY_B, default="FFFFFFFFFFFF"): _validate_mifare_key,
         cv.Optional(CONF_STATUS): binary_sensor_.binary_sensor_schema(),
         cv.Optional(CONF_FIELD_STRENGTH): sensor_.sensor_schema(),
         cv.Optional(CONF_ON_TAG): automation.validate_automation(

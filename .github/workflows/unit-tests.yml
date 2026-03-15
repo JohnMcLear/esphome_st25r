@@ -1,0 +1,35 @@
+name: Unit Tests
+
+on:
+  push:
+    branches: [main, claude]
+  pull_request:
+    branches: [main, claude]
+
+jobs:
+
+  cpp-unit-tests:
+    name: C++ unit tests (crypto1)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and run crypto1 unit tests
+        run: make -C tests/unit run
+
+  python-unit-tests:
+    name: Python unit tests (schema validators)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install esphome pytest
+
+      - name: Run schema tests
+        run: pytest tests/python/ -v

@@ -1,6 +1,72 @@
-# ST25R Enhanced Component Hardware Testing Procedure
+# ST25R Component Testing
 
-This document outlines the validation steps required to ensure the stability and functionality of the enhanced ST25R component across both I2C and SPI interfaces.
+This document covers all test types: automated unit tests (no hardware required), CI compile tests, and hardware validation procedures.
+
+---
+
+## Unit Tests (no hardware required)
+
+### C++ — Crypto1 / PRNG
+
+Tests the Crypto1 stream cipher and tag PRNG implementations against hardware-verified vectors captured from a genuine ST25R3916 reader. Covers initialisation, key loading, PRNG successor, NR/AR encryption and parity, AT verification, and a regression test for the `crypto1_filter` parity bug.
+
+```bash
+make -C tests/unit run
+```
+
+Expected: `20 passed, 0 failed`
+
+Test vectors (Key=FFFFFFFFFFFF, UID=DEA30D00, NT=009080A2, NR=12345678):
+- NR enc: `6D EA 01 99`
+- NR par: `01 01 01 01`
+- AR plain: `B172DED3`
+- AR enc: `5D 84 6C 02`
+- AR par: `01 00 00 01`
+- AT: `51D37655`
+
+### Python — Schema validators
+
+Tests the YAML config validators (UID format, Mifare key hex validation, rf_power range) and a pure-Python PRNG cross-check.
+
+```bash
+pytest tests/python/ -v
+```
+
+Expected: `40 passed`
+
+Requires: `pip install esphome pytest`
+
+### CI
+
+Both test suites run automatically on every push/PR via `.github/workflows/unit-tests.yml`.
+
+---
+
+## Compile Tests (CI)
+
+Verifies the component compiles cleanly for both transports:
+
+```bash
+esphome compile tests/ci-test-spi.yaml
+esphome compile tests/ci-test-i2c.yaml
+```
+
+Run automatically via `.github/workflows/compile.yml`.
+
+---
+
+## Hardware Validation Procedure
+
+This section outlines validation steps requiring physical hardware.
+
+### Requirements
+- **Hardware:**
+  - ESP32 (Required for sufficient GPIO count for simultaneous I2C + SPI testing).
+  - **2 ST25R Modules:** One configured for I2C (I2C_EN to VDD_D) and one for SPI (I2C_EN to GND).
+  - **Tags Required:** At least one of each:
+    - Genuine NXP Mifare Classic 1K (not a clone — clone cards have fixed NT and cannot complete Crypto1 auth)
+    - NTAG213/215/216 or Mifare Ultralight
+- **Estimated Time:** 20–30 minutes.
 
 ## 1. Requirements
 - **Hardware:**
