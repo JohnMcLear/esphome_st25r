@@ -6,7 +6,7 @@ This file documents how to work in this repository, intended for both human cont
 
 ## Project Overview
 
-This is an **external ESPHome component** for the ST25R3916 NFC reader chip. It provides ISO14443A (NFC-A) tag detection, UID reading, multi-tag support, and tag presence/removal triggers for Home Assistant integration.
+This is an **external ESPHome component** for the ST25R3916 NFC reader chip. It provides ISO14443A (NFC-A) tag detection, UID reading, multi-tag anticollision, Mifare Classic authentication and block read, and tag presence/removal triggers for Home Assistant integration.
 
 **Component locations:**
 - `components/st25r/` — abstract base (C++ protocol logic, ISO14443A state machine, triggers, sensors)
@@ -19,7 +19,7 @@ This is an **external ESPHome component** for the ST25R3916 NFC reader chip. It 
 
 ```
 components/
-  st25r/             Base component (st25r.h/cpp, __init__.py, binary_sensor.py)
+  st25r/             Base component (st25r.h/cpp, crypto1.h/cpp, __init__.py, binary_sensor.py)
   st25r_spi/         SPI transport (st25r_spi.h/cpp, __init__.py)
   st25r_i2c/         I2C transport (st25r_i2c.h/cpp, __init__.py)
 docs/
@@ -141,13 +141,51 @@ Read `memory/multitag_anticol.md` first. Key invariants that must be preserved:
 
 ---
 
+## Protocol Support
+
+| Protocol | Status | Notes |
+|---|---|---|
+| ISO14443A (NFC-A) | **Working** | UID detection, multi-tag, anticollision |
+| Mifare Classic auth | **Working** | Crypto1 3-pass auth; see below for clone card caveat |
+| Mifare Classic block read | **Working** | 16-byte block read with parity verification |
+| Mifare Classic NDEF | Not started | Would need sector/block traversal on top of auth |
+| ISO14443B (NFC-B) | Not implemented | ST25R3916 supports it; MODE register value differs |
+| ISO15693 (NFC-V) | Not implemented | ST25R3916 supports it; requires different MODE + protocol |
+| FeliCa (NFC-F) | Not implemented | ST25R3916 supports it |
+
+---
+
+## Mifare Classic Implementation Notes
+
+### Crypto1 authentication (`mifare_authenticate_()`)
+
+3-pass mutual authentication flow:
+1. Send AUTH1 (`0x60`/`0x61` + block) — tag responds with NT (4-byte nonce)
+2. Compute NR+AR with Crypto1 (`crypto1_init`, prime with `NT ^ UID`, then `crypto1_byte`/`crypto1_bit` for 8 bytes)
+3. Send NR+AR via `transceive_mifare_()` — tag responds with AT
+4. Verify AT = `prng_successor(AR_plain, 32) ^ crypto1_word(cs, 0, 0)`
+
+**Critical: parity bits advance Crypto1 LFSR state.** Use `crypto1_bit(cs, 0, 0)` (1-bit advance) for each parity byte — NOT `crypto1_filter(cs->odd)` (which reads output without advancing). This applies in both TX (NR/AR encoding) and RX (block data decryption) paths.
+
+**AR computation:** `prng_successor(NT, 64)` — advance tag PRNG by 64 steps, then encode MSB-first over 4 bytes.
+
+### Clone card behaviour
+
+Cards where NT never changes (e.g. DEA30D00 always returns NT=0x009080A2) are clone/magic cards with broken PRNG. These respond to AUTH1 with the static NT, but silently HALT on receiving NR+AR. The implementation is cryptographically correct — clone cards simply do not complete authentication. Genuine NXP Mifare Classic 1K generates a random NT each time.
+
+### `transceive_mifare_()` — 9-bit parity mode
+
+Set `ISO14443A_CONF = 0xC0` (`no_tx_par | no_rx_par`) before each Mifare transceive so the chip passes raw bits without inserting/checking hardware parity. Host software packs/unpacks 9-bit frames (8 data + 1 parity per byte) into the FIFO manually.
+
+Send `ST25R_CMD_RESET_RX_GAIN` (0xD5) before each transceive (both `transceive_ex_` and `transceive_mifare_`) to reset AGC/squelch and ensure clean reception.
+
+---
+
 ## Known Issues
 
 - **SPI Mode wrong in `st25r_spi.h`**: should be `CLOCK_PHASE_TRAILING` (Mode 1), currently `CLOCK_PHASE_LEADING` — works in practice due to signal timing margins.
 - **IC identity check**: `(ic_identity >> 3) != 0x05` should be `(ic_identity & 0xF8) != 0x28`.
-- **Space B register access broken**: `write_register()` masks `addr & 0x3F`, so registers 0x40–0x7F cannot be written via normal path.
-- **Mifare Classic NDEF**: authentication not yet implemented; tags are detected by UID only.
-- **ISO14443B / FeliCa**: not supported.
+- **Space B register access broken**: `write_register()` masks `addr & 0x3F`, so registers 0x40–0x7F cannot be written via normal path. CORR_CONF1/2 left at factory defaults.
 
 ---
 
