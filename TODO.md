@@ -12,12 +12,13 @@
 - [x] **I2C CI Tests**: Add I2C-based compilation tests to the CI workflow.
 
 ## Protocol Support
-- [ ] **Mifare Classic Support**: Implementation of authentication and sector reading/writing.
+- [x] **Mifare Classic Auth**: Crypto1 3-pass mutual authentication and block read. Note: requires genuine NXP card (clone cards with fixed NT will not complete auth).
+- [ ] **Mifare Classic NDEF**: Sector/block traversal on top of auth to read NDEF from Mifare Classic sectors.
 - [x] **NDEF Parsing**: Support for reading NDEF records (URLs, Text, etc.) for Type 2 tags.
-- [x] **Multi-Tag Detection**: ISO14443A HALT+REQA loop — select a tag, HALT it, REQA for remaining, repeat until all found. Per-UID miss-count tracking for reliable removal detection.
-- [ ] **ISO14443B Support**: Implementation of the Type B protocol.
-- [ ] **FeliCa (NFC-F) Support**: Support for FeliCa cards.
-- [ ] **ISO15693 (NFC-V) Support**: Support for vicinity cards.
+- [x] **Multi-Tag Detection**: ISO14443A HALT+WUPA loop — select a tag, HALT it, WUPA for remaining, repeat until all found. Per-UID miss-count tracking for reliable removal detection.
+- [ ] **ISO14443B Support**: ST25R3916 supports it; needs MODE register change and Type B state machine.
+- [ ] **ISO15693 (NFC-V) Support**: ST25R3916 supports it; needs MODE change and ISO15693 protocol layer.
+- [ ] **FeliCa (NFC-F) Support**: ST25R3916 supports it; needs NFC-F protocol layer.
 
 ## Advanced Features
 - [ ] **Low Power "Sense" Mode**: Use capacitive/inductive wake-up to keep the RF field off until a tag is detected.

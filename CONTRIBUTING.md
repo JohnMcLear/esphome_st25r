@@ -127,8 +127,8 @@ Feature suggestions are welcome! Please:
 
 ```bash
 # Clone your fork
-git clone https://github.com/yourusername/esphome-st25r3916.git
-cd esphome-st25r3916
+git clone https://github.com/JohnMcLear/esphome_st25r.git
+cd esphome_st25r
 
 # Install ESPHome
 pip install esphome
@@ -137,7 +137,8 @@ pip install esphome
 pip install black flake8 pylint
 
 # Test compilation
-esphome compile example-basic.yaml
+esphome compile tests/ci-test-spi.yaml
+esphome compile tests/ci-test-i2c.yaml
 ```
 
 ### Development Workflow
@@ -246,7 +247,8 @@ Before submitting a PR:
 
 1. **Compile test:**
    ```bash
-   esphome compile example-basic.yaml
+   esphome compile tests/ci-test-spi.yaml
+   esphome compile tests/ci-test-i2c.yaml
    ```
 
 2. **Hardware test:**

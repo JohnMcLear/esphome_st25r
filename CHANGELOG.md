@@ -7,16 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Mifare Classic support**: Crypto1 stream cipher (`crypto1.cpp/h`), 3-pass mutual authentication (`mifare_authenticate_()`), and 16-byte block read (`mifare_read_block_()`) with full parity verification
+- **Multi-tag anticollision**: ISO14443A binary tree search — detects all tags in field simultaneously; HALT+WUPA loop resumes tree traversal; per-UID miss-count for reliable removal detection
+- **NDEF read**: Type 2 tags (NTAG / Ultralight) — reads URL and text records into Home Assistant
+- **I2C transport**: `st25r_i2c` component (code-complete; awaiting hardware verification)
+- **Chip health monitor**: IC_IDENTITY check + auto-reinitialization after repeated failures
+- **RF field strength sensor**: exposed via `field_strength` sensor (MEASURE_AMPLITUDE)
+- **Configurable Mifare keys**: `mifare_key_a` / `mifare_key_b` YAML options
+- Test YAML configs moved to `tests/` folder
+
+### Fixed
+- `RESET_RX_GAIN` (0xD5) issued before each transceive to reset AGC/squelch
+- Crypto1 parity bits correctly advance LFSR state via `crypto1_bit()` (not `crypto1_filter()`)
+- Anticollision prefix bits correctly restored after `read_fifo()` (chip zeros them)
+- CL1 collision state saved and restored before/after CL2 cascade anticollision
+- WUPA (not REQA) used after HALTing a tag — Mifare Classic returns to HALT, not IDLE
+
 ### Planned
 - ISO14443B support
 - ISO15693 support
 - NFC-F (FeliCa) support
-- NFC-V support
-- NDEF message parsing
+- Mifare Classic NDEF (sector traversal)
 - Write operations
-- Peer-to-peer mode
-- Low power / sleep modes
-- Adjustable field strength
+- Low power / sense mode
 
 ## [1.0.0] - 2024-02-26
 
