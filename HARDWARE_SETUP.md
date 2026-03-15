@@ -22,8 +22,9 @@ This guide provides detailed instructions for setting up the ST25R3916 NFC reade
    - Available from major electronics distributors
 
 2. **ESP32 Development Board**
-   - Any ESP32 variant with SPI support
-   - Recommended: ESP32-DevKitC, ESP32-WROOM-32
+   - Any ESP32 variant with SPI or I2C support
+   - Verified: ESP32-C6-DevKitC-1 (primary dev board)
+   - Also works: ESP32-DevKitC, ESP32-WROOM-32
    - Minimum 4MB flash recommended
 
 3. **Antenna**
@@ -123,34 +124,52 @@ RFO2              Antenna terminal 2 (via matching)
 
 ## Wiring Diagram
 
-### Minimal Connection (Basic Operation)
+### Verified wiring — ESP32-C6 + Elechouse ST25R3916 module (SPI)
 
 ```
-ST25R3916        ESP32
----------        -----
+ST25R3916        ESP32-C6     Notes
+---------        --------     -----
+VDD         ---> 3.3V         Power supply
+GND         ---> GND          Ground
+MOSI        ---> GPIO18       SPI Data Out
+MISO        ---> GPIO10       SPI Data In
+SCK         ---> GPIO19       SPI Clock
+CS          ---> GPIO6        Chip Select
+IRQ         ---> GPIO7        Interrupt pin
+I2C_EN      ---> GND          Selects SPI mode (VDD_D = I2C mode)
+```
+
+> **ESP32-C6 strapping pin warning:** Avoid GPIO9 for CS — it is a strapping pin and can prevent boot.
+
+### Generic ESP32 connection (SPI)
+
+```
+ST25R3916        ESP32        Notes
+---------        -----        -----
 VDD         ---> 3.3V
 GND         ---> GND
 MOSI        ---> GPIO23
 MISO        ---> GPIO19
 SCK         ---> GPIO18
-CS          ---> GPIO5
-IRQ         ---> GPIO21
-```
-
-### Full Connection (Recommended)
-
-```
-ST25R3916        ESP32        Notes
----------        -----        -----
-VDD         ---> 3.3V         Power supply
-GND         ---> GND          Ground
-MOSI        ---> GPIO23       SPI Data In
-MISO        ---> GPIO19       SPI Data Out
-SCK         ---> GPIO18       SPI Clock
 CS          ---> GPIO5        Chip Select (configurable)
 IRQ         ---> GPIO21       Interrupt (configurable)
 RESET       ---> GPIO22       Hardware Reset (optional)
 ```
+
+### I2C connection (ESP32-C6 reusing same pins)
+
+```
+ST25R3916        ESP32-C6     Notes
+---------        --------     -----
+VDD         ---> 3.3V
+GND         ---> GND
+SDA         ---> GPIO10       I2C data
+SCL         ---> GPIO19       I2C clock
+IRQ         ---> GPIO5        Interrupt pin
+I2C_EN      ---> VDD_D        Selects I2C mode
+```
+
+I2C address: `0x50`
 
 ### Decoupling Capacitors
 
@@ -296,23 +315,23 @@ USB 5V ---[LDO 3.3V]---+---[10µF]--- ESP32 VDD
 
 2. **SPI Communication Test**
    ```yaml
-   # Minimal test config
+   # Minimal test config (adjust pins for your board)
    logger:
      level: DEBUG
-   
+
    spi:
-     clk_pin: GPIO18
-     mosi_pin: GPIO19
-     miso_pin: GPIO23
-   
-   st25r3916:
-     cs_pin: GPIO5
-     irq_pin: GPIO21
+     clk_pin: GPIO19
+     mosi_pin: GPIO18
+     miso_pin: GPIO10
+
+   st25r_spi:
+     cs_pin: GPIO6
+     irq_pin: GPIO7
    ```
-   
-   - Flash ESP32
-   - Check logs for IC identity read
-   - Should see: "IC Identity: 0x05" or "0x0A"
+
+   - Flash the board
+   - Check logs for IC identity confirmation
+   - Should see: `ST25R initialized successfully`
 
 3. **Field Generation Test**
    - Place oscilloscope probe near antenna
@@ -387,7 +406,7 @@ spi:
   miso_pin: GPIO19
   interface: hardware
 
-st25r3916:
+st25r_spi:
   spi_id: spi_bus
   cs_pin: GPIO5
   reset_pin: GPIO22  # Add hardware reset
@@ -427,7 +446,7 @@ st25r3916:
 **Solution:**
 ```yaml
 # Try longer polling interval
-st25r3916:
+st25r_spi:
   update_interval: 2s  # Slower polling
   cs_pin: GPIO5
   irq_pin: GPIO21
@@ -447,7 +466,7 @@ st25r3916:
 
 **Solution:**
 ```yaml
-st25r3916:
+st25r_spi:
   irq_pin:
     number: GPIO21
     mode:
@@ -513,13 +532,17 @@ st25r3916:
 
 ### Ready-Made Solutions
 
-1. **ST25R3916-DISCO**
-   - Official evaluation board from ST
-   - Pre-tuned antenna
-   - SPI interface ready
-   - Recommended for development
+1. **Elechouse ST25R3916 Module** *(verified with this component)*
+   - Pre-tuned antenna, SPI or I2C selectable via I2C_EN pin
+   - I2C_EN pin: GND = SPI mode, VDD_D = I2C mode
+   - 3.3V logic, works directly with ESP32 GPIO
+   - I2C address: 0x50
 
-2. **Custom Breakout Boards**
+2. **ST25R3916-DISCO**
+   - Official evaluation board from ST
+   - Pre-tuned antenna, SPI interface
+
+3. **Custom Breakout Boards**
    - Various third-party options available
    - Check antenna tuning specifications
    - Verify 3.3V logic compatibility
