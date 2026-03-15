@@ -8,6 +8,78 @@
 #include <algorithm>
 #include <cstring>
 
+/*
+ * Mifare Classic support.
+ *
+ * Protocol flow adapted from mf1.c — MIT licence:
+ *   https://github.com/suut/rfal-mifare-classic/blob/master/mf1/mf1.c
+ *
+ * ST25R3916 9-bit parity interleaving (mf1_encode/decode_parity_st25r3916):
+ *   Each byte is stored as 9 bits in the FIFO: 8 data bits then 1 parity bit.
+ *   CRC and parity are both handled manually; ISO14443A_CONF bits no_tx_par
+ *   (bit6) and no_rx_par (bit7) must be set before transmitting/receiving.
+ */
+
+// ── Mifare CRC-A ────────────────────────────────────────────────────────────
+// Inline from mf1.h (MIT, suut/rfal-mifare-classic)
+static uint16_t mifare_crc_a(const uint8_t *data, size_t len) {
+  uint16_t crc = 0x6363;
+  for (size_t i = 0; i < len; i++) {
+    uint8_t b = data[i] ^ (uint8_t)(crc & 0xFF);
+    b ^= b << 4;
+    crc = (crc >> 8) ^ ((uint16_t) b << 8) ^ ((uint16_t) b << 3) ^ ((uint16_t) b >> 4);
+  }
+  return crc;
+}
+
+// ── Odd parity lookup ────────────────────────────────────────────────────────
+static const uint8_t ODD_PARITY[256] = {
+  1,0,0,1,0,1,1,0,0,1,1,0,1,0,0,1,0,1,1,0,1,0,0,1,1,0,0,1,0,1,1,0,
+  0,1,1,0,1,0,0,1,1,0,0,1,0,1,1,0,1,0,0,1,0,1,1,0,0,1,1,0,1,0,0,1,
+  0,1,1,0,1,0,0,1,1,0,0,1,0,1,1,0,1,0,0,1,0,1,1,0,0,1,1,0,1,0,0,1,
+  1,0,0,1,0,1,1,0,0,1,1,0,1,0,0,1,0,1,1,0,1,0,0,1,1,0,0,1,0,1,1,0,
+  0,1,1,0,1,0,0,1,1,0,0,1,0,1,1,0,1,0,0,1,0,1,1,0,0,1,1,0,1,0,0,1,
+  1,0,0,1,0,1,1,0,0,1,1,0,1,0,0,1,0,1,1,0,1,0,0,1,1,0,0,1,0,1,1,0,
+  1,0,0,1,0,1,1,0,0,1,1,0,1,0,0,1,0,1,1,0,1,0,0,1,1,0,0,1,0,1,1,0,
+  0,1,1,0,1,0,0,1,1,0,0,1,0,1,1,0,1,0,0,1,0,1,1,0,0,1,1,0,1,0,0,1,
+};
+
+// ── 9-bit parity pack/unpack ─────────────────────────────────────────────────
+// Each byte → 9 bits in the buffer: data bits 0..7 then parity bit.
+// Adapted from mf1_encode/decode_parity_st25r3916 (MIT, suut/rfal-mifare-classic)
+
+static void mifare_pack_parity(const uint8_t *in, const uint8_t *par,
+                                uint8_t *out, uint8_t nbytes,
+                                uint16_t *out_bits) {
+  uint16_t total = 9u * nbytes;
+  memset(out, 0, (total + 7u) / 8u);
+  for (uint8_t i = 0; i < nbytes; i++) {
+    for (uint8_t j = 0; j < 8; j++) {
+      uint32_t p = j + 9u * i;
+      out[p / 8] |= (uint8_t)(((in[i] >> j) & 1u) << (p % 8));
+    }
+    uint32_t p = 8u + 9u * i;
+    out[p / 8] |= (uint8_t)((par[i] & 1u) << (p % 8));
+  }
+  *out_bits = total;
+}
+
+static uint8_t mifare_unpack_parity(const uint8_t *in, uint8_t *out,
+                                     uint8_t *par, uint16_t in_bits) {
+  uint8_t nbytes = (uint8_t)(in_bits / 9u);
+  memset(out, 0, nbytes);
+  memset(par, 0, nbytes);
+  for (uint8_t i = 0; i < nbytes; i++) {
+    for (uint8_t j = 0; j < 8; j++) {
+      uint32_t p = j + 9u * i;
+      out[i] |= (uint8_t)(((in[p / 8] >> (p % 8)) & 1u) << j);
+    }
+    uint32_t p = 8u + 9u * i;
+    par[i] = (in[p / 8] >> (p % 8)) & 1u;
+  }
+  return nbytes;
+}
+
 namespace esphome {
 namespace st25r {
 
@@ -70,19 +142,20 @@ void ST25R::update() {
     this->status_binary_sensor_->publish_state(true);
   }
 
-  if (this->rf_field_enabled_ && this->field_strength_sensor_ != nullptr) {
-    this->write_command(ST25R_CMD_MEASURE_AMPLITUDE);
-    uint8_t amplitude = this->read_register(AD_CONV_RESULT);
-    this->field_strength_sensor_->publish_state(amplitude);
-  }
-
   this->read_register(IRQ_MAIN);
   this->read_register(IRQ_TIMER);
   this->read_register(IRQ_ERROR);
   this->write_command(ST25R_CMD_CLEAR_FIFO);
+  this->write_command(ST25R_CMD_RESET_RX_GAIN);  // reset AGC/squelch to initial state per datasheet
 
   if (this->rf_field_enabled_) {
     this->write_register(OP_CONTROL, 0xC8); // en=1, rx_en=1, tx_en=1
+  }
+
+  if (this->rf_field_enabled_ && this->field_strength_sensor_ != nullptr) {
+    this->write_command(ST25R_CMD_MEASURE_AMPLITUDE);
+    uint8_t amplitude = this->read_register(AD_CONV_RESULT);
+    this->field_strength_sensor_->publish_state(amplitude);
   }
 
   this->write_register(RX_CONF3, 0xE2);  // required for anticol/tag reception on this hardware
@@ -108,6 +181,7 @@ bool ST25R::transceive_no_crc_(const uint8_t *data, size_t len, uint8_t *resp, u
 
 bool ST25R::transceive_ex_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, bool with_crc, uint32_t timeout_ms) {
   this->write_command(ST25R_CMD_CLEAR_FIFO);
+  this->write_command(ST25R_CMD_RESET_RX_GAIN);  // reset AGC/squelch per datasheet transceive sequence
   // Clear ALL IRQ registers so IRQ pin goes low — required for ISR rising-edge to fire
   this->read_register(IRQ_MAIN);
   this->read_register(IRQ_TIMER);
@@ -165,13 +239,244 @@ bool ST25R::transceive_ex_(const uint8_t *data, size_t len, uint8_t *resp, uint8
   return resp_len > 0;
 }
 
+// ── transceive_mifare_ ───────────────────────────────────────────────────────
+// Send/receive with manual CRC and parity (ISO14443A_CONF no_tx_par + no_rx_par).
+// data/parity: len plaintext bytes + precomputed parity bits.
+// resp/resp_parity: decoded response bytes and their parity bits.
+// Adapted from mf1_send_receive_raw (MIT, suut/rfal-mifare-classic).
+bool ST25R::transceive_mifare_(const uint8_t *data, const uint8_t *parity,
+                                uint8_t len,
+                                uint8_t *resp, uint8_t *resp_parity,
+                                uint8_t &resp_len,
+                                uint32_t timeout_ms) {
+  // Max encoded size: ceil(9*64/8) = 72 bytes
+  uint8_t encoded[72];
+  uint16_t tx_bits = 0;
+  mifare_pack_parity(data, parity, encoded, len, &tx_bits);
+
+  uint8_t ntx_n   = (uint8_t)(tx_bits >> 3);
+  uint8_t ntx_b   = (uint8_t)(tx_bits & 7);
+  uint8_t fifo_bytes = (uint8_t)((tx_bits + 7) / 8);
+
+  // Set manual parity mode: no_tx_par (bit6) + no_rx_par (bit7)
+  this->write_register(ISO14443A_CONF, 0xC0);
+  this->write_command(ST25R_CMD_CLEAR_FIFO);
+  this->write_command(ST25R_CMD_RESET_RX_GAIN);
+  this->read_register(IRQ_MAIN);
+  this->read_register(IRQ_TIMER);
+  this->read_register(IRQ_ERROR);
+  this->irq_triggered_ = false;
+
+  this->write_register(NUM_TX_BYTES1, ntx_n >> 5);
+  this->write_register(NUM_TX_BYTES2, (uint8_t)(((ntx_n & 0x1F) << 3) | (ntx_b & 7)));
+  this->write_fifo(encoded, fifo_bytes);
+  this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
+
+  // Wait for RXE (end of receive)
+  uint32_t start = millis();
+  resp_len = 0;
+  bool tx_done = false;
+  while (millis() - start < timeout_ms) {
+    uint8_t irq = this->read_register(IRQ_MAIN);
+    if (irq & IRQ_TXE) tx_done = true;
+    if (tx_done) {
+      uint8_t f1 = this->read_register(FIFO_STATUS1);
+      if (irq & IRQ_RXE) {
+        // Read all FIFO bytes; FIFO holds 9*n bits packed
+        uint8_t rx_fifo[72] = {};
+        uint8_t rx_bytes = std::min(f1, (uint8_t) 72);
+        if (rx_bytes > 0)
+          this->read_fifo(rx_fifo, rx_bytes);
+
+        // We need to know how many bits arrived; use FIFO_STATUS2 fifo_lb
+        uint8_t fs2 = this->read_register(FIFO_STATUS2);
+        uint8_t last_bits = (fs2 >> 1) & 0x07;  // fifo_lb: bits in last byte (0 = full byte)
+        uint16_t rx_bits = (uint16_t)(rx_bytes * 8) - (last_bits ? (uint8_t)(8 - last_bits) : 0);
+
+        resp_len = mifare_unpack_parity(rx_fifo, resp, resp_parity, rx_bits);
+
+        this->write_register(ISO14443A_CONF, 0x00);
+        return resp_len > 0;
+      }
+    }
+    delay(1);
+  }
+
+  this->write_register(ISO14443A_CONF, 0x00);
+  return false;
+}
+
+// ── mifare_authenticate_ ─────────────────────────────────────────────────────
+// Three-pass mutual authentication per ISO 14443-3 / NXP AN10609.
+// Protocol flow from mf1_authenticate() (MIT, suut/rfal-mifare-classic).
+bool ST25R::mifare_authenticate_(uint8_t block, bool key_b, uint64_t key,
+                                  const uint8_t *uid, uint8_t uid_len,
+                                  struct Crypto1State *cs) {
+  // ── Step 1: send AUTHENT command (plain text, with CRC) ──────────────────
+  uint8_t auth_cmd[2] = {(uint8_t)(key_b ? 0x61 : 0x60), block};
+  uint8_t nt_raw[4] = {};
+  uint8_t nt_len = 0;
+  if (!this->transceive_(auth_cmd, 2, nt_raw, nt_len, 20) || nt_len < 4) {
+    ESP_LOGW(TAG, "Mifare auth: no NT from tag (block %u)", block);
+    return false;
+  }
+
+  // ── Step 2: Crypto1 challenge-response ───────────────────────────────────
+  uint8_t uid_offset = (uid_len > 4) ? (uint8_t)(uid_len - 4) : 0;
+  uint32_t uid_u32 = ((uint32_t) uid[uid_offset]     << 24) |
+                     ((uint32_t) uid[uid_offset + 1] << 16) |
+                     ((uint32_t) uid[uid_offset + 2] <<  8) |
+                      (uint32_t) uid[uid_offset + 3];
+  uint32_t nt = ((uint32_t) nt_raw[0] << 24) | ((uint32_t) nt_raw[1] << 16) |
+                ((uint32_t) nt_raw[2] <<  8) |  (uint32_t) nt_raw[3];
+  ESP_LOGD(TAG, "Mifare auth: NT=%08X UID=%08X", nt, uid_u32);
+
+  crypto1_init(cs, key);
+  crypto1_word(cs, nt ^ uid_u32, 0);
+
+  // Choose a fixed nr (reader nonce); any value works for normal auth
+  const uint8_t nr[4] = {0x12, 0x34, 0x56, 0x78};
+  uint8_t nr_ar[8], nr_ar_par[8];
+
+  // Encrypt NR: feed plaintext NR into LFSR (is_encrypted=0), advance parity bit with crypto1_bit
+  for (int i = 0; i < 4; i++) {
+    nr_ar[i]     = crypto1_byte(cs, nr[i], 0) ^ nr[i];
+    nr_ar_par[i] = crypto1_bit(cs, 0, 0) ^ ODD_PARITY[nr[i]];
+  }
+
+  // AR = 4 bytes of prng_successor(NT, 64) MSB-first
+  uint32_t ar_plain = prng_successor(nt, 64);
+  for (int i = 0; i < 4; i++) {
+    uint8_t b = (uint8_t)((ar_plain >> (24 - 8 * i)) & 0xFF);
+    nr_ar[4 + i]     = crypto1_byte(cs, 0, 0) ^ b;
+    nr_ar_par[4 + i] = crypto1_bit(cs, 0, 0) ^ ODD_PARITY[b];
+  }
+
+  // ── Step 3: send nr+ar (encrypted, manual parity, no CRC) ────────────────
+  uint8_t at[4] = {}, at_par[4] = {};
+  uint8_t at_len = 0;
+  if (!this->transceive_mifare_(nr_ar, nr_ar_par, 8, at, at_par, at_len) || at_len < 4) {
+    ESP_LOGW(TAG, "Mifare auth: no AT from tag (block %u)", block);
+    return false;
+  }
+
+  // ── Step 4: verify tag answer ─────────────────────────────────────────────
+  uint32_t at_expected = prng_successor(ar_plain, 32) ^ crypto1_word(cs, 0, 0);
+  uint32_t at_got = ((uint32_t) at[0] << 24) | ((uint32_t) at[1] << 16) |
+                    ((uint32_t) at[2] <<  8) |  (uint32_t) at[3];
+  if (at_got != at_expected) {
+    ESP_LOGW(TAG, "Mifare auth: AT mismatch (got %08" PRIx32 " expected %08" PRIx32 ")", at_got, at_expected);
+    return false;
+  }
+
+  ESP_LOGI(TAG, "Mifare auth OK (block %u, key %s)", block, key_b ? "B" : "A");
+  return true;
+}
+
+// ── mifare_read_block_ ───────────────────────────────────────────────────────
+// Read one 16-byte block after a successful mifare_authenticate_().
+// Protocol flow from mf1_send_receive_encrypted (MIT, suut/rfal-mifare-classic).
+bool ST25R::mifare_read_block_(uint8_t block, uint8_t *data,
+                                struct Crypto1State *cs) {
+  // Build: READ(0x30) + block + CRC_A — then encrypt all 4 bytes + CRC
+  uint8_t cmd[4];
+  cmd[0] = 0x30;
+  cmd[1] = block;
+  uint16_t crc = mifare_crc_a(cmd, 2);
+  cmd[2] = (uint8_t)(crc & 0xFF);
+  cmd[3] = (uint8_t)(crc >> 8);
+
+  uint8_t enc[4], enc_par[4];
+  for (int i = 0; i < 4; i++) {
+    enc[i]     = crypto1_byte(cs, 0, 0) ^ cmd[i];
+    enc_par[i] = (uint8_t)(crypto1_bit(cs, 0, 0) ^ ODD_PARITY[cmd[i]]);
+  }
+
+  // Response: 16 data bytes + 2 CRC bytes = 18 bytes, all encrypted
+  uint8_t rx_enc[18] = {}, rx_par[18] = {};
+  uint8_t rx_len = 0;
+  if (!this->transceive_mifare_(enc, enc_par, 4, rx_enc, rx_par, rx_len) || rx_len < 18) {
+    ESP_LOGW(TAG, "Mifare read block %u failed (got %u bytes)", block, rx_len);
+    return false;
+  }
+
+  // Decrypt and verify parity + CRC
+  uint8_t plain[18];
+  for (int i = 0; i < 18; i++) {
+    plain[i] = crypto1_byte(cs, 0, 0) ^ rx_enc[i];
+    uint8_t exp_par = (uint8_t)(crypto1_bit(cs, 0, 0) ^ ODD_PARITY[plain[i]]);
+    if (rx_par[i] != exp_par) {
+      ESP_LOGW(TAG, "Mifare read block %u: parity error at byte %d", block, i);
+      return false;
+    }
+  }
+  uint16_t rx_crc = mifare_crc_a(plain, 16);
+  if ((rx_crc & 0xFF) != plain[16] || (rx_crc >> 8) != plain[17]) {
+    ESP_LOGW(TAG, "Mifare read block %u: CRC error", block);
+    return false;
+  }
+
+  memcpy(data, plain, 16);
+  return true;
+}
+
 std::unique_ptr<nfc::NfcTag> ST25R::read_tag_(std::vector<uint8_t> &uid) {
   uint8_t type = nfc::guess_tag_type(uid.size());
-  ESP_LOGD(TAG, "Guessed tag type: %d for UID length: %d", type, uid.size());
-  
+  ESP_LOGI(TAG, "read_tag_: UID length=%d, guessed type=%d", uid.size(), type);
+  ESP_LOG_BUFFER_HEX_LEVEL(TAG, uid.data(), uid.size(), ESP_LOG_INFO);
+
   if (type == nfc::TAG_TYPE_MIFARE_CLASSIC) {
-    ESP_LOGI(TAG, "Mifare Classic detected, but authentication is not yet implemented.");
+    ESP_LOGI(TAG, "Mifare Classic detected - attempting authentication");
+    struct Crypto1State cs = {};
+    bool auth_ok = this->mifare_authenticate_(0, false, this->mifare_key_a_,
+                                              uid.data(), (uint8_t) uid.size(), &cs);
     nfc::NfcTagUid nfc_uid(uid.begin(), uid.end());
+    if (!auth_ok) {
+      ESP_LOGW(TAG, "Mifare Classic: sector 0 auth failed (wrong key or clone card)");
+      return make_unique<nfc::NfcTag>(nfc_uid, nfc::MIFARE_CLASSIC);
+    }
+
+    ESP_LOGI(TAG, "Mifare Classic: Auth successful, reading blocks 1 and 2");
+    // Read blocks 1 and 2 (block 0 is manufacturer data; block 3 is sector trailer)
+    uint8_t block1[16] = {}, block2[16] = {};
+    bool b1 = this->mifare_read_block_(1, block1, &cs);
+    bool b2 = b1 && this->mifare_read_block_(2, block2, &cs);
+
+    if (!b1) {
+      ESP_LOGW(TAG, "Mifare Classic: block read failed");
+      return make_unique<nfc::NfcTag>(nfc_uid, nfc::MIFARE_CLASSIC);
+    }
+
+    ESP_LOGI(TAG, "Block 1: %02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X",
+             block1[0],block1[1],block1[2],block1[3],block1[4],block1[5],block1[6],block1[7],
+             block1[8],block1[9],block1[10],block1[11],block1[12],block1[13],block1[14],block1[15]);
+    ESP_LOGI(TAG, "Block 2: %02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X",
+             block2[0],block2[1],block2[2],block2[3],block2[4],block2[5],block2[6],block2[7],
+             block2[8],block2[9],block2[10],block2[11],block2[12],block2[13],block2[14],block2[15]);
+
+    // Look for NFC Forum Type 2 NDEF TLV (0x03) in the data area
+    // On Mifare Classic the NDEF data starts at block 1 byte 0 when
+    // the card is formatted as NFC Forum Type 2 / Mifare Classic NDEF.
+    std::vector<uint8_t> raw;
+    raw.insert(raw.end(), block1, block1 + 16);
+    if (b2) raw.insert(raw.end(), block2, block2 + 16);
+
+    size_t idx = 0;
+    while (idx < raw.size()) {
+      uint8_t tlv = raw[idx++];
+      if (tlv == 0xFE) break;      // terminator
+      if (tlv == 0x00) continue;   // null
+      if (idx >= raw.size()) break;
+      uint8_t tlen = raw[idx++];
+      if (tlv == 0x03 && tlen > 0 && (idx + tlen) <= raw.size()) {
+        std::vector<uint8_t> ndef_data(raw.begin() + (int) idx, raw.begin() + (int) idx + tlen);
+        ESP_LOGI(TAG, "Mifare Classic: NDEF found (%u bytes)", tlen);
+        return make_unique<nfc::NfcTag>(nfc_uid, nfc::MIFARE_CLASSIC, ndef_data);
+      }
+      idx += tlen;
+    }
+
+    ESP_LOGD(TAG, "Mifare Classic: no NDEF TLV in sector 0 data blocks");
     return make_unique<nfc::NfcTag>(nfc_uid, nfc::MIFARE_CLASSIC);
   }
 
@@ -317,6 +622,10 @@ void ST25R::process_state_() {
           this->state_ = STATE_ANTICOL;
           this->last_state_change_ = millis();
       } else if (millis() - this->last_state_change_ > 100) {
+          uint8_t irq_t = this->read_register(IRQ_TIMER);
+          uint8_t irq_e = this->read_register(IRQ_ERROR);
+          ESP_LOGD(TAG, "WUPA timeout: IRQ_MAIN=0x%02X IRQ_TIMER=0x%02X IRQ_ERR=0x%02X FIFO=%u",
+                   this->irq_status_, irq_t, irq_e, this->read_register(FIFO_STATUS1));
           this->state_ = STATE_IDLE;
           this->finalize_scan_();
       }
@@ -440,8 +749,25 @@ void ST25R::process_state_() {
             this->state_ = STATE_ANTICOL;
             this->last_state_change_ = millis();
           } else {
-            // Tag fully selected
+            // Tag fully selected — validate UID length (must be 4 or 7 bytes; 3-byte = CL1 glitch)
+            size_t uid_bytes_len = this->current_uid_.length() / 2;
+            if (uid_bytes_len != 4 && uid_bytes_len != 7) {
+              ESP_LOGW(TAG, "Discarding invalid UID len=%u (%s)", uid_bytes_len, this->current_uid_.c_str());
+              this->state_ = STATE_IDLE;
+              this->finalize_scan_();
+              return;
+            }
+
             ESP_LOGI(TAG, "Tag selected: %s", this->current_uid_.c_str());
+
+            // Read tag data on first detection only (auth + NDEF read if Mifare)
+            if (!this->present_tags_.count(this->current_uid_)) {
+              std::vector<uint8_t> uid_bytes;
+              for (size_t i = 0; i < this->current_uid_.length(); i += 2)
+                uid_bytes.push_back((uint8_t) strtol(this->current_uid_.substr(i, 2).c_str(), nullptr, 16));
+              this->tags_data_[this->current_uid_] = this->read_tag_(uid_bytes);
+            }
+
             this->tags_this_scan_.insert(this->current_uid_);
 
             // HALT: send [0x50, 0x00] + CRC; tag has no response. Don't use
@@ -504,8 +830,10 @@ void ST25R::process_state_() {
                   this->anticol_resume_ = true;
               this->write_command(ST25R_CMD_TRANSMIT_WUPA);
             } else {
-              // No prior collision: single tag or no remaining branches
-              this->write_command(ST25R_CMD_TRANSMIT_WUPA);
+              // No prior collision: this was the only tag — scan complete
+              this->state_ = STATE_IDLE;
+              this->finalize_scan_();
+              return;
             }
             this->state_ = STATE_WUPA;
             this->last_state_change_ = millis();
@@ -550,6 +878,7 @@ void ST25R::finalize_scan_() {
     for (auto *trigger : this->on_tag_removed_triggers_) {
       trigger->trigger(uid);
     }
+    this->tags_data_.erase(uid);
     this->present_tags_.erase(uid);
   }
 
@@ -559,6 +888,12 @@ void ST25R::finalize_scan_() {
       this->present_tags_[uid] = 0;
       for (auto *trigger : this->on_tag_triggers_) {
         trigger->trigger(uid);
+      }
+      // Fire tag_on for NFC listeners (e.g. ndef_write action)
+      if (this->tags_data_.count(uid) && this->tags_data_[uid]) {
+        for (auto *listener : this->tag_listeners_) {
+          listener->tag_on(*this->tags_data_[uid]);
+        }
       }
     }
   }
@@ -608,7 +943,7 @@ bool ST25R::reset_() {
   this->write_register(MODE, 0x08); 
   this->write_register(BIT_RATE, 0x00); 
   this->write_register(RX_CONF1, 0x00); 
-  this->write_register(RX_CONF2, 0x6C); // Enable AGC during complete receive period
+  this->write_register(RX_CONF2, 0x6C); // AGC enabled during complete receive period
   this->write_register(RX_CONF3, 0x00); // 0 dB (Full gain), no boost
   this->write_register(MASK_MAIN, 0x00); // Enable all interrupts
   this->write_register(ISO14443A_CONF, 0x00); 

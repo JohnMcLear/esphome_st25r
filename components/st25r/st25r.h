@@ -6,6 +6,7 @@
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/nfc/nfc.h"
+#include "crypto1.h"
 #include <map>
 #include <set>
 #include <vector>
@@ -55,6 +56,7 @@ enum ST25RCommand : uint8_t {
   ST25R_CMD_FIELD_ON = 0xC8,
   ST25R_CMD_FIELD_OFF = 0xC9,
   ST25R_CMD_MEASURE_AMPLITUDE = 0xD3,
+  ST25R_CMD_RESET_RX_GAIN = 0xD5,
   ST25R_CMD_ADJUST_REGULATORS = 0xD6,
 };
 
@@ -114,6 +116,8 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   void set_rf_field_enabled(bool enabled) { this->rf_field_enabled_ = enabled; }
   void set_rf_power(uint8_t power) { this->rf_power_ = power; }
   void set_supply_3v3(bool supply_3v3) { this->supply_3v3_ = supply_3v3; }
+  void set_mifare_key_a(uint64_t key) { this->mifare_key_a_ = key; }
+  void set_mifare_key_b(uint64_t key) { this->mifare_key_b_ = key; }
 
   void register_on_tag_trigger(ST25RTagTrigger *trig) { this->on_tag_triggers_.push_back(trig); }
   void register_on_tag_removed_trigger(ST25RTagRemovedTrigger *trig) {
@@ -142,6 +146,15 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   bool transceive_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, uint32_t timeout_ms = 150);
   bool transceive_no_crc_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, uint32_t timeout_ms = 150);
   bool transceive_ex_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, bool with_crc, uint32_t timeout_ms = 150);
+  // Mifare Classic — raw transceive with manual parity (no chip CRC/parity).
+  // Adapted from mf1.c (MIT, github.com/suut/rfal-mifare-classic)
+  bool transceive_mifare_(const uint8_t *data, const uint8_t *parity, uint8_t len,
+                          uint8_t *resp, uint8_t *resp_parity, uint8_t &resp_len,
+                          uint32_t timeout_ms = 15);
+  bool mifare_authenticate_(uint8_t block, bool key_b, uint64_t key,
+                            const uint8_t *uid, uint8_t uid_len,
+                            struct Crypto1State *cs);
+  bool mifare_read_block_(uint8_t block, uint8_t *data, struct Crypto1State *cs);
   std::unique_ptr<nfc::NfcTag> read_tag_(std::vector<uint8_t> &uid);
   static void isr(ST25R *arg);
   
@@ -151,6 +164,8 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   bool rf_field_enabled_{true};
   uint8_t rf_power_{15};
   bool supply_3v3_{true};
+  uint64_t mifare_key_a_{0xFFFFFFFFFFFFULL};
+  uint64_t mifare_key_b_{0xFFFFFFFFFFFFULL};
   uint8_t health_check_failures_{0};
   uint8_t reinitialization_attempts_{0};
   volatile bool irq_triggered_{false};
@@ -160,6 +175,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   // present_tags_: UID → consecutive miss count (0 = seen this or prior scan)
   std::map<std::string, uint8_t> present_tags_;
   std::set<std::string> tags_this_scan_;  // UIDs found in current scan cycle
+  std::map<std::string, std::unique_ptr<nfc::NfcTag>> tags_data_;  // UID → last read NfcTag
 
   // IRQ_MAIN (0x1A) bit definitions per Table 62
   static const uint8_t IRQ_OSC     = 0x80;  // bit7: oscillator stable
