@@ -28,10 +28,13 @@ memory/
   multitag_anticol.md   Multi-tag anticollision algorithm — bugs found, fixes applied
   datasheet_notes.md    Register map and SPI/I2C protocol details
 .github/workflows/
-  compile.yml        Compiles ci-test-spi.yaml and ci-test-i2c.yaml via ESPHome
-ci-test-spi.yaml     CI firmware config for SPI
-ci-test-i2c.yaml     CI firmware config for I2C
-local-test.yaml      Local dev firmware config (ESP32-C6 + Elechouse ST25R3916 module)
+  compile.yml        Compiles tests/ci-test-spi.yaml and tests/ci-test-i2c.yaml via ESPHome
+tests/
+  ci-test-spi.yaml   CI firmware config for SPI (Arduino, esp32dev, compile-only)
+  ci-test-i2c.yaml   CI firmware config for I2C (Arduino, esp32dev, compile-only)
+  local-test.yaml    Local dev firmware config (ESP32-C6 + Elechouse ST25R3916 module, SPI)
+  test-vicino-i2c-c6.yaml  Local dev I2C config (ESP32-C6, SDA=GPIO10, SCL=GPIO19)
+  test-*.yaml        Other local hardware test configs
 ```
 
 ---
@@ -83,8 +86,8 @@ The `memory/` folder contains **hard-won technical knowledge** that is not deriv
 ### Compile check (CI)
 
 ```bash
-esphome compile ci-test-spi.yaml
-esphome compile ci-test-i2c.yaml
+esphome compile tests/ci-test-spi.yaml
+esphome compile tests/ci-test-i2c.yaml
 ```
 
 Both must compile without errors before merging.
@@ -92,8 +95,8 @@ Both must compile without errors before merging.
 ### Flash and monitor local hardware
 
 ```bash
-esphome run local-test.yaml
-esphome logs local-test.yaml
+esphome run tests/local-test.yaml
+esphome logs tests/local-test.yaml
 ```
 
 ### Python lint

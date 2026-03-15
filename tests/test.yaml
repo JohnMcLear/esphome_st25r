@@ -15,7 +15,7 @@ spi:
 external_components:
   - source:
       type: local
-      path: components
+      path: ../components
 
 output:
   - platform: gpio

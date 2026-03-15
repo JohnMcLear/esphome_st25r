@@ -18,7 +18,7 @@ logger:
 external_components:
   - source:
       type: local
-      path: components
+      path: ../components
     components: [st25r, st25r_spi]
 
 spi:

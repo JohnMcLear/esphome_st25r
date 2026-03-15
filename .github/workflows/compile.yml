@@ -18,8 +18,8 @@ jobs:
       fail-fast: false
       matrix:
         config:
-          - ci-test-spi.yaml
-          - ci-test-i2c.yaml
+          - tests/ci-test-spi.yaml
+          - tests/ci-test-i2c.yaml
 
     steps:
       - name: Checkout repository
@@ -57,11 +57,15 @@ jobs:
         run: |
           sudo chown -R $USER:$USER .esphome ~/.platformio 2>/dev/null || true
 
+      - name: Set artifact name
+        id: artifact_name
+        run: echo "name=firmware-$(basename ${{ matrix.config }} .yaml)" >> $GITHUB_OUTPUT
+
       - name: Upload build artifacts
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: firmware-${{ matrix.config }}
+          name: ${{ steps.artifact_name.outputs.name }}
           path: |
             .esphome/build/*/firmware.bin
           if-no-files-found: ignore

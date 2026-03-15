@@ -1,6 +1,6 @@
 esphome:
-  name: st25r-i2c-ci-test
-  friendly_name: ST25R I2C CI Test
+  name: st25r-spi-ci-test
+  friendly_name: ST25R SPI CI Test
 
 esp32:
   board: esp32dev
@@ -17,25 +17,24 @@ wifi:
 external_components:
   - source:
       type: local
-      path: components
+      path: ../components
     components: [st25r, st25r_i2c, st25r_spi]
     refresh: 0s
 
-i2c:
-  sda: GPIO21
-  scl: GPIO22
-  scan: false
-  frequency: 100kHz
+spi:
+  clk_pin: GPIO18
+  miso_pin: GPIO19
+  mosi_pin: GPIO23
 
-st25r_i2c:
+st25r_spi:
   id: st25r_board
-  address: 0x50
-  irq_pin: GPIO4
+  cs_pin: GPIO5
   update_interval: 1s
+  rf_field_enabled: true
   status:
-    name: "ST25R I2C Health"
+    name: "ST25R SPI Health"
   field_strength:
-    name: "ST25R I2C Field Strength"
+    name: "ST25R SPI Field Strength"
   on_tag:
     then:
       - logger.log:
@@ -50,5 +49,5 @@ st25r_i2c:
 binary_sensor:
   - platform: st25r
     st25r_id: st25r_board
-    name: "Test Badge I2C"
+    name: "Test Badge SPI"
     uid: "01-02-03-04"

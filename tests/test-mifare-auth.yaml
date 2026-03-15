@@ -1,0 +1,64 @@
+esphome:
+  name: st25r-mifare-test
+  friendly_name: ST25R Mifare Auth Test
+
+esp32:
+  board: esp32-c6-devkitc-1
+  variant: esp32c6
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG: "y"
+      CONFIG_ESP_CONSOLE_UART_DEFAULT: "n"
+      CONFIG_ESP_CONSOLE_SECONDARY_NONE: "y"
+
+logger:
+  level: VERBOSE
+  hardware_uart: USB_SERIAL_JTAG
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [st25r, st25r_spi]
+
+spi:
+  clk_pin: GPIO19
+  miso_pin: GPIO10
+  mosi_pin: GPIO18
+
+st25r_spi:
+  id: my_st25r
+  cs_pin: GPIO6
+  irq_pin: GPIO7
+  rf_power: 15
+  update_interval: 2s
+  
+  # Test with default key A (0xFFFFFFFFFFFF)
+  # Most virgin Mifare Classic cards use this key
+  on_tag:
+    then:
+      - logger.log:
+          format: "=== TAG DETECTED: %s ==="
+          args: ['x.c_str()']
+      - if:
+          condition:
+            lambda: |-
+              // Check if this looks like a Mifare Classic UID (4 bytes = 8 hex chars)
+              return x.length() == 8;
+          then:
+            - logger.log: "Mifare Classic detected - attempting authentication with default key A"
+          else:
+            - logger.log: "Non-Mifare tag detected"
+
+  on_tag_removed:
+    then:
+      - logger.log:
+          format: "=== TAG REMOVED: %s ==="
+          args: ['x.c_str()']
+
+binary_sensor:
+  - platform: st25r
+    st25r_id: my_st25r
+    name: "Mifare Card Present"
+    uid: "DE-A3-0D-00"  # Common test UID, adjust to your card

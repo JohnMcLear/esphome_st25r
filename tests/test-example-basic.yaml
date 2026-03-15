@@ -1,5 +1,5 @@
 esphome:
-  name: st25r-ring-test
+  name: st25r-example-basic
 
 esp32:
   board: esp32-c6-devkitc-1
@@ -18,8 +18,8 @@ logger:
 external_components:
   - source:
       type: local
-      path: components
-    components: [st25r, st25r_spi, st25r_i2c]
+      path: ../components
+    components: [st25r, st25r_spi]
 
 spi:
   clk_pin: GPIO19
@@ -30,27 +30,14 @@ st25r_spi:
   id: my_st25r
   cs_pin: GPIO6
   irq_pin: GPIO7
-  rf_power: 15
-  update_interval: 500ms
+  update_interval: 1s
   on_tag:
     then:
-      - output.turn_on: out_2
-      - output.turn_on: out_15
       - logger.log:
           format: "Tag detected: %s"
           args: ['x.c_str()']
   on_tag_removed:
     then:
-      - output.turn_off: out_2
-      - output.turn_off: out_15
       - logger.log:
           format: "Tag removed: %s"
           args: ['x.c_str()']
-
-output:
-  - platform: gpio
-    pin: GPIO2
-    id: out_2
-  - platform: gpio
-    pin: GPIO15
-    id: out_15

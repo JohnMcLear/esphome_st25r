@@ -18,19 +18,22 @@ logger:
 external_components:
   - source:
       type: local
-      path: components
+      path: ../components
     components: [st25r, st25r_i2c]
 
+#miso was 10
+#sclk was 19
+
 i2c:
-  sda: 21
-  scl: 22
+  sda: 10
+  scl: 19
   scan: true
   frequency: 50khz
 
 st25r_i2c:
   id: my_st25r
-  address: 0x50
-  irq_pin: 5
+#  address: 0x50
+  irq_pin: 7
   update_interval: 1s
   on_tag:
     then:

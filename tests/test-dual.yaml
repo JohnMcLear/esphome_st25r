@@ -1,0 +1,55 @@
+esphome:
+  name: st25r-dual-test
+
+esp32:
+  board: esp32-c6-devkitc-1
+  variant: esp32c6
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG: "y"
+      CONFIG_ESP_CONSOLE_UART_DEFAULT: "n"
+      CONFIG_ESP_CONSOLE_SECONDARY_NONE: "y"
+
+logger:
+  level: VERY_VERBOSE
+  hardware_uart: USB_SERIAL_JTAG
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [st25r, st25r_spi, st25r_i2c]
+
+spi:
+  clk_pin: GPIO19
+  miso_pin: GPIO10
+  mosi_pin: GPIO18
+
+i2c:
+  sda: 21
+  scl: 22
+  scan: true
+  frequency: 100khz
+
+st25r_spi:
+  id: st25r_spi_board
+  cs_pin: GPIO6
+  irq_pin: GPIO7
+  update_interval: 1s
+  on_tag:
+    then:
+      - logger.log:
+          format: "SPI Tag detected: %s"
+          args: ['x.c_str()']
+
+st25r_i2c:
+  id: st25r_i2c_board
+  address: 0x50
+  irq_pin: 5
+  update_interval: 1s
+  on_tag:
+    then:
+      - logger.log:
+          format: "I2C Tag detected: %s"
+          args: ['x.c_str()']
