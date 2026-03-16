@@ -1,0 +1,24 @@
+esphome:
+  name: st25r-sim
+
+host:
+
+logger:
+  level: DEBUG
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [st25r, st25r_sim]
+
+st25r_sim:
+  - id: sim_reader
+    socket_path: /tmp/st25r_sim.sock
+    update_interval: 1s
+    on_tag:
+      - lambda: |-
+          ESP_LOGI("emulation_test", "SIM_ON_TAG %s", x.c_str());
+    on_tag_removed:
+      - lambda: |-
+          ESP_LOGI("emulation_test", "SIM_ON_TAG_REMOVED %s", x.c_str());
