@@ -155,12 +155,29 @@ st25r_i2c:
 
 ## Supported Hardware
 
-| Chip | Status | Notes |
-|------|--------|-------|
-| ST25R3916 / ST25R3916B | ✅ Fully tested | Primary target; Elechouse module verified |
-| ST25R3917 / ST25R3917B | ✅ Should work | Register-compatible with ST25R3916 |
-| ST25R3919B / ST25R3920B | ✅ Should work | Register-compatible |
-| ST25R300 | ⚠️ Compiles, untested | X-NUCLEO-NFC12A1; hardware validation pending |
+### `st25r` / `st25r_spi` / `st25r_i2c` — ST25R39xx family
+
+| Chip | Status | Variant notes |
+|------|--------|---------------|
+| ST25R3916 | ✅ Verified | Primary target; Elechouse module tested (SPI + I2C) |
+| ST25R3916B | ✅ Verified | B-variant detected via IC identity; lf_en routing handled |
+| ST25R3917 / ST25R3917B | ⚠️ Untested | Register-compatible; no EMVCo, no AAT |
+| ST25R3918 | ⚠️ Untested | Register-compatible; appears alongside 3916 family in ST app notes |
+| ST25R3919B | ⚠️ Untested | EMVCo 3.2a compliant variant |
+| ST25R3920 / ST25R3920B | ⚠️ Untested | High-power variant; register-compatible |
+| ST25R3914 | ⚠️ Untested | Automotive; 96-byte FIFO (vs 512) — FIFO handling may need adjustment |
+| ST25R3915 | ⚠️ Untested | Automotive; 96-byte FIFO, no AAT |
+
+### `st25r300` / `st25r300_spi` — ST25R300 family
+
+All four chips share the same register map (per ST application notes AN6279, AN6298, AN6313).
+
+| Chip | Status | Variant notes |
+|------|--------|---------------|
+| ST25R300 | ⚠️ Compiles, untested | X-NUCLEO-NFC12A1; consumer/industrial payment, EMVCo PCD 3.2a |
+| ST25R500 | ⚠️ Compiles, untested | Automotive CCC Digital Key |
+| ST25R501 | ⚠️ Compiles, untested | Compact automotive (QFN24), reader-only |
+| ST25R210 | ⚠️ Compiles, untested | Automotive variant |
 
 ---
 
