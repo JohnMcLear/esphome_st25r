@@ -27,6 +27,11 @@ spi:
   miso_pin: GPIO10
   mosi_pin: GPIO18
 
+output:
+  - platform: gpio
+    pin: GPIO2
+    id: led
+
 st25r_spi:
   id: my_st25r
   cs_pin: GPIO6
@@ -47,12 +52,14 @@ st25r_spi:
 
   on_tag:
     then:
+      - output.turn_on: led
       - logger.log:
           format: "TAG DETECTED: %s"
           args: ['x.c_str()']
 
   on_tag_removed:
     then:
+      - output.turn_off: led
       - logger.log:
           format: "TAG REMOVED: %s"
           args: ['x.c_str()']

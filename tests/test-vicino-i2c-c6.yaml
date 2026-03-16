@@ -30,6 +30,11 @@ i2c:
   scan: true
   frequency: 50khz
 
+output:
+  - platform: gpio
+    pin: GPIO2
+    id: led
+
 st25r_i2c:
   id: my_st25r
 #  address: 0x50
@@ -37,11 +42,13 @@ st25r_i2c:
   update_interval: 1s
   on_tag:
     then:
+      - output.turn_on: led
       - logger.log:
           format: "Tag detected (I2C): %s"
           args: ['x.c_str()']
   on_tag_removed:
     then:
+      - output.turn_off: led
       - logger.log:
           format: "Tag removed (I2C): %s"
           args: ['x.c_str()']
