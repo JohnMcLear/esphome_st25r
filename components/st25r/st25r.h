@@ -117,6 +117,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   void set_rf_field_enabled(bool enabled) { this->rf_field_enabled_ = enabled; }
   void set_rf_power(uint8_t power) { this->rf_power_ = power; }
   void set_supply_3v3(bool supply_3v3) { this->supply_3v3_ = supply_3v3; }
+  void set_rx_gain_boost(bool boost) { this->rx_gain_boost_ = boost; }
   void set_mifare_key_a(uint64_t key) { this->mifare_key_a_ = key; }
   void set_mifare_key_b(uint64_t key) { this->mifare_key_b_ = key; }
 
@@ -165,6 +166,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   bool rf_field_enabled_{true};
   uint8_t rf_power_{15};
   bool supply_3v3_{true};
+  bool rx_gain_boost_{false};
   uint64_t mifare_key_a_{0xFFFFFFFFFFFFULL};
   uint64_t mifare_key_b_{0xFFFFFFFFFFFFULL};
   bool is_b_version_{false};

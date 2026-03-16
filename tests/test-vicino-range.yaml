@@ -1,0 +1,58 @@
+esphome:
+  name: st25r-range-test
+
+esp32:
+  board: esp32-c6-devkitc-1
+  variant: esp32c6
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG: "y"
+      CONFIG_ESP_CONSOLE_UART_DEFAULT: "n"
+      CONFIG_ESP_CONSOLE_SECONDARY_NONE: "y"
+      CONFIG_ESP_TASK_WDT_TIMEOUT_S: "30"
+
+logger:
+  level: DEBUG
+  hardware_uart: USB_SERIAL_JTAG
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [st25r, st25r_spi]
+
+spi:
+  clk_pin: GPIO19
+  miso_pin: GPIO10
+  mosi_pin: GPIO18
+
+st25r_spi:
+  id: my_st25r
+  cs_pin: GPIO6
+  irq_pin: GPIO7
+  rf_power: 15           # max TX power
+  rx_gain_boost: true    # boosts PM channel +5.5dB on top of existing AM boost
+  update_interval: 200ms # fast polling — ring may only couple briefly
+
+  # Field strength sensor: watch this value change as ring approaches.
+  # Baseline (no tag): note the value.
+  # Ring at 15mm perpendicular: if the value changes at ALL, there is some coupling.
+  # If value is identical: near-zero coupling — software cannot help.
+  field_strength:
+    name: "RF Field Strength"
+    on_value:
+      - lambda: |-
+          ESP_LOGI("range_test", "AMP=%.0f", x);
+
+  on_tag:
+    then:
+      - logger.log:
+          format: "TAG DETECTED: %s"
+          args: ['x.c_str()']
+
+  on_tag_removed:
+    then:
+      - logger.log:
+          format: "TAG REMOVED: %s"
+          args: ['x.c_str()']

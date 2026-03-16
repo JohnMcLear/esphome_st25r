@@ -156,9 +156,16 @@ void ST25R::update() {
     this->field_strength_sensor_->publish_state(amplitude);
   }
 
-  // RX_CONF3: 0xE2 sets lf_en=1 (LF receiver path) + rg1_am=7 (+5.5dB boost) — needed for non-B Elechouse module
+  // RX_CONF3: 0xE2 = rg1_am=7 (+5.5dB AM boost) + lf_en=1 — needed for non-B Elechouse module
+  //           0xFE = rg1_am=7 + rg1_pm=7 (+5.5dB PM boost too) + lf_en=1 — maximum sensitivity, for weak coupling
   // B-version (ST25R3916B): lf_en=1 routes receiver away from HF 13.56MHz NFC path → use 0x00 instead
-  this->write_register(RX_CONF3, this->is_b_version_ ? 0x00 : 0xE2);
+  uint8_t rx_conf3;
+  if (this->is_b_version_) {
+    rx_conf3 = 0x00;
+  } else {
+    rx_conf3 = this->rx_gain_boost_ ? 0xFE : 0xE2;
+  }
+  this->write_register(RX_CONF3, rx_conf3);
 
   this->saved_anticol_valid_ = false;
   this->anticol_resume_ = false;

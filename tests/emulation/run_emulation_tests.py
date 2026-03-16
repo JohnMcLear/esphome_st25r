@@ -583,9 +583,11 @@ class TestNtagMultiPage:
 
 class TestRxConf3Selection:
     """
-    RX_CONF3 is written differently depending on IC identity:
-      IC=0x28 (non-B)  → 0xE2  (lf_en=1 + gain boost, needed for Elechouse module)
-      IC=0x30 (B-ver)  → 0x00  (HF path, full gain, needed for STEVAL board)
+    RX_CONF3 depends on IC identity and rx_gain_boost:
+      IC=0x28 (non-B), boost=false → 0xE2  (AM +5.5dB + lf_en=1)
+      IC=0x28 (non-B), boost=true  → 0xFE  (AM +5.5dB + PM +5.5dB + lf_en=1)
+      IC=0x30 (B-version)          → 0x00  (HF path, full gain)
+    test-emulation.yaml does not set rx_gain_boost, so default (false) → 0xE2.
     """
 
     def test_non_b_rx_conf3(self, sim):
@@ -594,4 +596,4 @@ class TestRxConf3Selection:
         proc.wait_for(r"Sent WUPA", timeout=5)
         time.sleep(0.6)  # one more update interval
         val = ctrl1.get_reg("0D")
-        assert val == 0xE2, f"Expected RX_CONF3=0xE2 for non-B sim, got 0x{val:02X}"
+        assert val == 0xE2, f"Expected RX_CONF3=0xE2 for non-B sim (boost=false), got 0x{val:02X}"

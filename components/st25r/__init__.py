@@ -32,6 +32,7 @@ CONF_ST25R_ID = "st25r_id"
 CONF_RF_FIELD_ENABLED = "rf_field_enabled"
 CONF_RF_POWER = "rf_power"
 CONF_SUPPLY_3V3 = "supply_3v3"
+CONF_RX_GAIN_BOOST = "rx_gain_boost"
 CONF_FIELD_STRENGTH = "field_strength"
 CONF_MIFARE_KEY_A = "mifare_key_a"
 CONF_MIFARE_KEY_B = "mifare_key_b"
@@ -57,6 +58,7 @@ ST25R_SCHEMA = cv.Schema(
         cv.Optional(CONF_RF_FIELD_ENABLED, default=True): cv.boolean,
         cv.Optional(CONF_RF_POWER, default=15): cv.int_range(min=0, max=15),
         cv.Optional(CONF_SUPPLY_3V3, default=True): cv.boolean,
+        cv.Optional(CONF_RX_GAIN_BOOST, default=False): cv.boolean,
         cv.Optional(CONF_MIFARE_KEY_A, default="FFFFFFFFFFFF"): _validate_mifare_key,
         cv.Optional(CONF_MIFARE_KEY_B, default="FFFFFFFFFFFF"): _validate_mifare_key,
         cv.Optional(CONF_STATUS): binary_sensor_.binary_sensor_schema(),
@@ -89,6 +91,7 @@ async def setup_st25r(var, config):
     cg.add(var.set_rf_field_enabled(config[CONF_RF_FIELD_ENABLED]))
     cg.add(var.set_rf_power(config[CONF_RF_POWER]))
     cg.add(var.set_supply_3v3(config[CONF_SUPPLY_3V3]))
+    cg.add(var.set_rx_gain_boost(config[CONF_RX_GAIN_BOOST]))
     cg.add(var.set_mifare_key_a(int(config[CONF_MIFARE_KEY_A], 16)))
     cg.add(var.set_mifare_key_b(int(config[CONF_MIFARE_KEY_B], 16)))
 
