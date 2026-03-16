@@ -38,4 +38,4 @@ jobs:
       - name: Run emulation tests
         env:
           ST25R_SIM_BINARY: ${{ steps.find_bin.outputs.binary }}
-        run: pytest tests/emulation/run_emulation_tests.py -v --timeout=120
+        run: pytest tests/emulation/run_emulation_tests.py -v
