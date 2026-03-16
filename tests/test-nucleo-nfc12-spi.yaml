@@ -1,0 +1,64 @@
+esphome:
+  name: st25r300-nucleo-test
+
+# X-NUCLEO-NFC12A1 shield on ESP32-C6 dev board
+# Wiring (X-NUCLEO Arduino connector → ESP32-C6 dev board):
+#   D13 (SCLK)  → GPIO19
+#   D12 (MISO)  → GPIO10
+#   D11 (MOSI)  → GPIO18
+#   D10 (CS)    → GPIO6
+#   D7  (IRQ)   → GPIO7
+#   RESET       → GPIO5  (ST25R300 reset pin; active high = in reset, keep low for normal operation)
+#   GND + 3.3V  → power rails
+
+esp32:
+  board: esp32-c6-devkitc-1
+  variant: esp32c6
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG: "y"
+      CONFIG_ESP_CONSOLE_UART_DEFAULT: "n"
+      CONFIG_ESP_CONSOLE_SECONDARY_NONE: "y"
+
+logger:
+  level: DEBUG
+  hardware_uart: USB_SERIAL_JTAG
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [st25r300, st25r300_spi]
+
+spi:
+  clk_pin: GPIO19
+  miso_pin: GPIO10
+  mosi_pin: GPIO18
+
+output:
+  - platform: gpio
+    pin: GPIO2
+    id: led
+
+st25r300_spi:
+  id: my_st25r300
+  cs_pin: GPIO6
+  irq_pin: GPIO7
+  reset_pin: GPIO5
+  rf_power: 15
+  update_interval: 1s
+
+  on_tag:
+    then:
+      - output.turn_on: led
+      - logger.log:
+          format: "Tag detected: %s"
+          args: ['x.c_str()']
+
+  on_tag_removed:
+    then:
+      - output.turn_off: led
+      - logger.log:
+          format: "Tag removed: %s"
+          args: ['x.c_str()']
