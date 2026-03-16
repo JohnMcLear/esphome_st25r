@@ -1,0 +1,41 @@
+name: Emulation Tests
+
+on:
+  push:
+    branches: [main, claude, feature/emulation-tests]
+  pull_request:
+    branches: [main, claude]
+
+jobs:
+  emulation:
+    name: Emulation tests (host platform)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install esphome pytest
+
+      - name: Compile host firmware
+        run: esphome compile tests/emulation/test-emulation.yaml
+
+      - name: Find compiled binary
+        id: find_bin
+        run: |
+          BIN=$(find .esphome/build/st25r-sim -type f -executable -name 'program' 2>/dev/null | head -1)
+          if [ -z "$BIN" ]; then
+            BIN=$(find .esphome/build/st25r-sim -type f -executable 2>/dev/null | head -1)
+          fi
+          echo "binary=$BIN" >> "$GITHUB_OUTPUT"
+          echo "Found binary: $BIN"
+
+      - name: Run emulation tests
+        env:
+          ST25R_SIM_BINARY: ${{ steps.find_bin.outputs.binary }}
+        run: pytest tests/emulation/run_emulation_tests.py -v

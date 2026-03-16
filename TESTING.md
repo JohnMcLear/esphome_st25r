@@ -42,6 +42,45 @@ Both test suites run automatically on every push/PR via `.github/workflows/unit-
 
 ---
 
+## Emulation Tests (no hardware required)
+
+Tests the full ISO 14443-A state machine — tag detection, removal, multi-tag collision, and flap prevention — against an in-process software simulation of the ST25R3916 IC.
+
+The simulator (`components/st25r_sim/`) responds to every register read/write and FIFO command exactly as real hardware would: WUPA → ATQA, anticollision frames → UID bytes, SELECT → SAK, Mifare auth → timeout (graceful fail), NTAG page reads → terminator byte.
+
+A Unix socket (`/tmp/st25r_sim.sock`) lets the test runner inject and remove virtual NFC tags at runtime.
+
+### Build and run
+
+```bash
+# 1. Compile the ESPHome host binary (requires: pip install esphome)
+esphome compile tests/emulation/test-emulation.yaml
+
+# 2. Run the pytest suite (launches binary, controls via socket, checks logs)
+pytest tests/emulation/run_emulation_tests.py -v
+```
+
+Expected: `8 passed`
+
+### Test cases
+
+| Test | Scenario |
+|---|---|
+| `test_no_tags_at_startup` | No tags in field → no `on_tag` within 3 s |
+| `test_4byte_tag_detected` | Add 4-byte UID → `on_tag` fires |
+| `test_4byte_tag_removed` | Remove tag → `on_tag_removed` fires within 3 scan misses |
+| `test_7byte_tag_detected` | Add 7-byte (cascade) UID → `on_tag` fires after CL1+CL2 SELECT |
+| `test_7byte_tag_removed` | Remove 7-byte tag → `on_tag_removed` fires |
+| `test_two_tags_both_detected` | Two tags → collision → both UIDs resolved and detected |
+| `test_two_tags_both_removed` | Remove both → both removals detected |
+| `test_no_duplicate_on_tag` | Tag stays present 5 s → `on_tag` fires exactly once |
+
+### CI
+
+Emulation tests run automatically on every push/PR via `.github/workflows/emulation-tests.yml`.
+
+---
+
 ## Compile Tests (CI)
 
 Verifies the component compiles cleanly for both transports:
