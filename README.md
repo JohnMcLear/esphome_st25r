@@ -7,11 +7,64 @@ An ESPHome component for the STMicroelectronics ST25R family of NFC reader ICs.
 
 ## Supported Hardware
 
-- **ST25R3916 / ST25R3916B**: High-performance NFC universal device (primary target)
-- **ST25R3917 / ST25R3917B**: Reduced feature set version
-- **ST25R3919 / ST25R3920**: Automotive grade versions
+### ✅ Fully Supported
 
-Verified module: **Elechouse ST25R3916** (SPI and I2C modes both supported).
+| Variant | Package | Notes |
+|---------|---------|-------|
+| **ST25R3916 / ST25R3916B** | QFN32/WLCSP | Primary target, fully tested |
+| **ST25R3917 / ST25R3917B** | QFN32/WLCSP | Reduced feature set, register-compatible |
+| **ST25R3919B** | QFN32/WLCSP | EMVCo 3.2a compliant variant |
+| **ST25R3920 / ST25R3920B** | QFN32/WLCSP | High-power variant, register-compatible |
+
+**Verified module:** Elechouse ST25R3916 (SPI and I2C modes both supported).
+
+### ⚠️ Partially Supported (Untested)
+
+| Variant | Package | Notes |
+|---------|---------|-------|
+| **ST25R3914 / ST25R3915** | QFN32 | Automotive grade, smaller FIFO (96 bytes), AAT on 3914 only |
+| **ST25R500 / ST25R300** | QFN32 | Automotive CCC Digital Key, different pinout, NFC-V up to 212 kbps |
+| **ST25R501** | QFN24 | Compact automotive, reader-only (no card emulation) |
+
+> **Note:** These variants use the same register map but have different pinouts. Hardware redesign required.
+
+### ❌ Not Supported
+
+| Variant | Reason |
+|---------|--------|
+| **ST25RN300** | Uses **NCI protocol** instead of direct register access. Requires complete driver rewrite with NCI stack. |
+| **ST25R200** | Different register map, smaller FIFO (256 bytes), no I²C. Future support possible. |
+| **ST25R100** | Cost-reduced variant, no AWS, slower SPI. Future support possible. |
+| **ST25R95** | Legacy device, different command set. Migrate to ST25R200 or ST25R39xxB for new designs. |
+
+### Why ST25RN300 is Not Supported
+
+The **ST25RN300** uses the **NCI (NFC Controller Interface)** protocol, which is fundamentally different from the direct register access used by other ST25R variants:
+
+| Feature | ST25R39xx/500 | ST25RN300 |
+|---------|---------------|-----------|
+| **Interface** | Direct SPI register access | NCI over I²C/SPI |
+| **Driver Architecture** | Register reads/writes | NCI command/response packets |
+| **Configuration** | Write registers directly | NCI RF Discovery configuration |
+| **Firmware** | Fixed in hardware | 100% re-flashable firmware |
+| **Driver Complexity** | ~2000 lines | Would require ~5000+ lines (NCI stack) |
+
+**NCI Protocol Overview:**
+- Host sends NCI commands (e.g., `RF_DISCOVER_CMD`, `RF_CONFLICT_RESOLV_CMD`)
+- Controller responds with NCI responses and notifications
+- Requires state machine for NCI connection management
+- Different packet format: `[Header: 3 bytes] [Payload Length] [Payload]`
+
+**What would be needed for ST25RN300 support:**
+1. Complete NCI protocol stack implementation
+2. NCI RF Discovery configuration engine
+3. Firmware update mechanism (ST25RN300 is firmware-based)
+4. Different power management (battery-optimized)
+5. New ESPHome component (`st25rn300_nci`) — cannot reuse existing driver
+
+For mobile/battery applications, consider using the **ST25R200** or **ST25R3916B** with low-power wake-up modes instead.
+
+See `memory/st25r_variant_comparison.md` for comprehensive variant details.
 
 ## Features
 
