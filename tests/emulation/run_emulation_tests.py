@@ -581,6 +581,83 @@ class TestNtagMultiPage:
         proc.wait_for(r"READER1_ON_TAG_REMOVED 04AABBCCDDEEFF", timeout=10)
 
 
+def _make_text_ndef(text: str) -> str:
+    """
+    Build an NFC Forum Well-Known Text NDEF record (UTF-8, lang=en) as a hex string.
+    Uses Short Record format when payload fits in 1 byte, non-SR otherwise.
+    """
+    lang = b"en"
+    payload = bytes([0x02]) + lang + text.encode("utf-8")  # 0x02 = UTF-8 + lang_len=2
+    plen = len(payload)
+    if plen <= 255:
+        hdr = bytes([0xD1, 0x01, plen, 0x54])
+    else:
+        hdr = bytes([0xC1, 0x01,
+                     (plen >> 24) & 0xFF, (plen >> 16) & 0xFF,
+                     (plen >> 8) & 0xFF, plen & 0xFF,
+                     0x54])
+    return (hdr + payload).hex().upper()
+
+
+class TestLargeNdefSingleByteTlv:
+    """
+    NDEF payload ~100 bytes: TLV length fits in one byte (0x62), but the message
+    spans many pages, exercising the multi-page fetch loop thoroughly.
+    Uses NTAG213 (128 bytes of user memory available from page 4).
+    """
+
+    UID = "04112233445566"
+    NDEF = _make_text_ndef("A" * 91)  # payload=94, record=98 bytes, TLV len=0x62
+
+    def test_large_ndef_single_byte_tlv_detected(self, sim):
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        ctrl1.add_tag(self.UID, tag_type="NTAG213", ndef=self.NDEF)
+        proc.wait_for(r"READER1_ON_TAG 04112233445566", timeout=12)
+
+    def test_large_ndef_single_byte_tlv_message_read(self, sim):
+        proc, ctrl1, ctrl2 = sim
+        proc.wait_for(r"Successfully read NDEF message of 98 bytes", timeout=5)
+
+    def test_large_ndef_single_byte_tlv_removed(self, sim):
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        ctrl1.remove_tag(self.UID)
+        proc.wait_for(r"READER1_ON_TAG_REMOVED 04112233445566", timeout=10)
+
+
+class TestLargeNdefThreeByteTlv:
+    """
+    NDEF payload ~283 bytes: TLV length requires 3-byte encoding (0xFF 0x01 0x1B).
+    Exercises the extended TLV length path added to read_tag_() in both the
+    firmware and the simulator.
+    Uses NTAG216 (908 bytes of user memory available from page 4).
+    """
+
+    UID = "04AABBCCDDEEFF"
+    NDEF = _make_text_ndef("B" * 273)  # payload=278, record=286 bytes, TLV 3-byte len
+
+    def test_large_ndef_three_byte_tlv_detected(self, sim):
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        ctrl1.add_tag(self.UID, tag_type="NTAG216", ndef=self.NDEF)
+        proc.wait_for(r"READER1_ON_TAG 04AABBCCDDEEFF", timeout=12)
+
+    def test_large_ndef_three_byte_tlv_message_read(self, sim):
+        proc, ctrl1, ctrl2 = sim
+        proc.wait_for(r"Successfully read NDEF message of 286 bytes", timeout=8)
+
+    def test_large_ndef_three_byte_tlv_removed(self, sim):
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        ctrl1.remove_tag(self.UID)
+        proc.wait_for(r"READER1_ON_TAG_REMOVED 04AABBCCDDEEFF", timeout=10)
+
+
 class TestRxConf3Selection:
     """
     RX_CONF3 depends on IC identity and rx_gain_boost:

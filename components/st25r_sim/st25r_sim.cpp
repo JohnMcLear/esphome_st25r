@@ -167,9 +167,16 @@ static void init_ntag_pages_(VirtualTag &tag) {
   // Pages 4+: NDEF TLV if ndef_data is set
   if (!tag.ndef_data.empty()) {
     size_t pos = 16;  // page 4, byte 0
-    size_t nd_len = std::min(tag.ndef_data.size(), (size_t)253);
+    size_t nd_len = tag.ndef_data.size();
     if (pos < tag.page_mem_.size()) tag.page_mem_[pos++] = 0x03;
-    if (pos < tag.page_mem_.size()) tag.page_mem_[pos++] = (uint8_t)nd_len;
+    // 3-byte TLV length for payloads ≥255 bytes (ISO 7816-4 BER-TLV)
+    if (nd_len < 255) {
+      if (pos < tag.page_mem_.size()) tag.page_mem_[pos++] = (uint8_t)nd_len;
+    } else {
+      if (pos < tag.page_mem_.size()) tag.page_mem_[pos++] = 0xFF;
+      if (pos < tag.page_mem_.size()) tag.page_mem_[pos++] = (uint8_t)((nd_len >> 8) & 0xFF);
+      if (pos < tag.page_mem_.size()) tag.page_mem_[pos++] = (uint8_t)(nd_len & 0xFF);
+    }
     for (size_t i = 0; i < nd_len && pos < tag.page_mem_.size(); i++)
       tag.page_mem_[pos++] = tag.ndef_data[i];
     if (pos < tag.page_mem_.size())

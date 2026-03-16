@@ -538,21 +538,30 @@ std::unique_ptr<nfc::NfcTag> ST25R::read_tag_(std::vector<uint8_t> &uid) {
       }
 
       if (found) {
-        if (tlv_index + 1 >= data.size()) {
-           delay(10);
-           read_cmd[1] = data.size() / 4;
-           if (this->transceive_(read_cmd, 2, buffer, len) && len >= 16) {
-             data.insert(data.end(), buffer, buffer + 16);
-           }
+        // Ensure we have enough bytes to read the full TLV length field
+        // (3-byte length needs tlv_index + 3 to be valid)
+        while (data.size() <= tlv_index + 3) {
+          read_cmd[1] = (uint8_t)(data.size() / 4);
+          delay(10);
+          if (!this->transceive_(read_cmd, 2, buffer, len) || len < 16) break;
+          data.insert(data.end(), buffer, buffer + 16);
         }
 
         if (tlv_index + 1 < data.size()) {
-          uint8_t msg_len = data[tlv_index + 1];
-          size_t msg_start_idx = tlv_index + 2;
-          ESP_LOGD(TAG, "  NDEF message length: %d", msg_len);
-          
-          while (data.size() < (size_t)(msg_start_idx + msg_len)) {
-            uint8_t next_page = data.size() / 4;
+          size_t msg_len;
+          size_t msg_start_idx;
+          if (data[tlv_index + 1] == 0xFF && tlv_index + 3 < data.size()) {
+            // 3-byte TLV length (BER-TLV extended form) for payloads ≥255 bytes
+            msg_len = ((size_t) data[tlv_index + 2] << 8) | data[tlv_index + 3];
+            msg_start_idx = tlv_index + 4;
+          } else {
+            msg_len = data[tlv_index + 1];
+            msg_start_idx = tlv_index + 2;
+          }
+          ESP_LOGD(TAG, "  NDEF message length: %zu", msg_len);
+
+          while (data.size() < msg_start_idx + msg_len) {
+            uint8_t next_page = (uint8_t)(data.size() / 4);
             read_cmd[1] = next_page;
             delay(10);
             if (!this->transceive_(read_cmd, 2, buffer, len) || len < 16) {
@@ -561,10 +570,11 @@ std::unique_ptr<nfc::NfcTag> ST25R::read_tag_(std::vector<uint8_t> &uid) {
             }
             data.insert(data.end(), buffer, buffer + 16);
           }
-          
-          if (data.size() >= (size_t)(msg_start_idx + msg_len)) {
-            std::vector<uint8_t> ndef_data(data.begin() + msg_start_idx, data.begin() + msg_start_idx + msg_len);
-            ESP_LOGI(TAG, "  Successfully read NDEF message of %d bytes", msg_len);
+
+          if (data.size() >= msg_start_idx + msg_len) {
+            std::vector<uint8_t> ndef_data(data.begin() + (int) msg_start_idx,
+                                           data.begin() + (int) msg_start_idx + (int) msg_len);
+            ESP_LOGI(TAG, "  Successfully read NDEF message of %zu bytes", msg_len);
             nfc::NfcTagUid nfc_uid(uid.begin(), uid.end());
             if (msg_len > 0) {
               return make_unique<nfc::NfcTag>(nfc_uid, nfc::NFC_FORUM_TYPE_2, ndef_data);

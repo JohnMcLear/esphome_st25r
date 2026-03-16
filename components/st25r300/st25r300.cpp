@@ -244,24 +244,39 @@ std::unique_ptr<nfc::NfcTag> ST25R300::read_tag_(std::vector<uint8_t> &uid) {
         }
       }
 
-      if (found && tlv_index + 1 < data.size()) {
-        uint8_t msg_len = data[tlv_index + 1];
-        size_t msg_start = tlv_index + 2;
-        while (data.size() < msg_start + msg_len) {
-          uint8_t next_page = (uint8_t)(data.size() / 4);
-          read_cmd[1] = next_page;
+      if (found) {
+        // Ensure we have enough bytes to read the full TLV length field
+        while (data.size() <= tlv_index + 3) {
+          read_cmd[1] = (uint8_t)(data.size() / 4);
           delay(10);
           if (!this->transceive_(read_cmd, 2, buffer, len) || len < 16) break;
           data.insert(data.end(), buffer, buffer + 16);
         }
-        if (data.size() >= msg_start + msg_len) {
-          std::vector<uint8_t> ndef_data(data.begin() + (int) msg_start,
-                                         data.begin() + (int) msg_start + msg_len);
-          nfc::NfcTagUid nfc_uid(uid.begin(), uid.end());
-          if (msg_len > 0) {
-            return make_unique<nfc::NfcTag>(nfc_uid, nfc::NFC_FORUM_TYPE_2, ndef_data);
+        if (tlv_index + 1 < data.size()) {
+          size_t msg_len;
+          size_t msg_start;
+          if (data[tlv_index + 1] == 0xFF && tlv_index + 3 < data.size()) {
+            msg_len = ((size_t) data[tlv_index + 2] << 8) | data[tlv_index + 3];
+            msg_start = tlv_index + 4;
+          } else {
+            msg_len = data[tlv_index + 1];
+            msg_start = tlv_index + 2;
           }
-          return make_unique<nfc::NfcTag>(nfc_uid, nfc::NFC_FORUM_TYPE_2);
+          while (data.size() < msg_start + msg_len) {
+            read_cmd[1] = (uint8_t)(data.size() / 4);
+            delay(10);
+            if (!this->transceive_(read_cmd, 2, buffer, len) || len < 16) break;
+            data.insert(data.end(), buffer, buffer + 16);
+          }
+          if (data.size() >= msg_start + msg_len) {
+            std::vector<uint8_t> ndef_data(data.begin() + (int) msg_start,
+                                           data.begin() + (int) msg_start + (int) msg_len);
+            nfc::NfcTagUid nfc_uid(uid.begin(), uid.end());
+            if (msg_len > 0) {
+              return make_unique<nfc::NfcTag>(nfc_uid, nfc::NFC_FORUM_TYPE_2, ndef_data);
+            }
+            return make_unique<nfc::NfcTag>(nfc_uid, nfc::NFC_FORUM_TYPE_2);
+          }
         }
       }
     } else {
