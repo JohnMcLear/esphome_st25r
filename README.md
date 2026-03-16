@@ -9,21 +9,6 @@ ESPHome external component for STMicroelectronics ST25R family NFC readers. Dete
 
 ## Quick Start
 
-### 1. Wire up (ESP32-C6 + Elechouse ST25R3916, SPI mode)
-
-| ST25R3916 pin | ESP32-C6 pin | Notes |
-|---------------|-------------|-------|
-| VDD | 3.3V | |
-| GND | GND | |
-| MOSI | GPIO18 | |
-| MISO | GPIO10 | |
-| SCK | GPIO19 | |
-| CS | GPIO6 | Avoid GPIO9 (strapping pin) |
-| IRQ | GPIO7 | |
-| I2C_EN | GND | Selects SPI mode |
-
-### 2. Minimal config
-
 ```yaml
 esphome:
   name: nfc-reader
