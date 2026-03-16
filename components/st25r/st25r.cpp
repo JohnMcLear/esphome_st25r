@@ -156,7 +156,9 @@ void ST25R::update() {
     this->field_strength_sensor_->publish_state(amplitude);
   }
 
-  this->write_register(RX_CONF3, 0xE2);  // required for anticol/tag reception on this hardware
+  // RX_CONF3: 0xE2 sets lf_en=1 (LF receiver path) + rg1_am=7 (+5.5dB boost) — needed for non-B Elechouse module
+  // B-version (ST25R3916B): lf_en=1 routes receiver away from HF 13.56MHz NFC path → use 0x00 instead
+  this->write_register(RX_CONF3, this->is_b_version_ ? 0x00 : 0xE2);
 
   this->saved_anticol_valid_ = false;
   this->anticol_resume_ = false;
@@ -621,8 +623,11 @@ void ST25R::process_state_() {
       } else if (millis() - this->last_state_change_ > 100) {
           uint8_t irq_t = this->read_register(IRQ_TIMER);
           uint8_t irq_e = this->read_register(IRQ_ERROR);
-          ESP_LOGD(TAG, "WUPA timeout: IRQ_MAIN=0x%02X IRQ_TIMER=0x%02X IRQ_ERR=0x%02X FIFO=%u",
-                   this->irq_status_, irq_t, irq_e, this->read_register(FIFO_STATUS1));
+          this->write_command(ST25R_CMD_MEASURE_AMPLITUDE);
+          uint8_t amp = this->read_register(AD_CONV_RESULT);
+          uint8_t op = this->read_register(OP_CONTROL);
+          ESP_LOGD(TAG, "WUPA timeout: IRQ_MAIN=0x%02X IRQ_TIMER=0x%02X IRQ_ERR=0x%02X FIFO=%u AMP=%u OP=0x%02X",
+                   this->irq_status_, irq_t, irq_e, this->read_register(FIFO_STATUS1), amp, op);
           this->state_ = STATE_IDLE;
           this->finalize_scan_();
       }
@@ -930,6 +935,7 @@ bool ST25R::reset_() {
     return false;
   }
   bool is_b_version = (chip_type == 0x30);
+  this->is_b_version_ = is_b_version;
   ESP_LOGI(TAG, "IC identity match: 0x%02X (ST25R3916%s)", ic_identity, is_b_version ? "B" : "");
 
   ESP_LOGV(TAG, "  reset_: Enabling Ready mode");
@@ -944,8 +950,9 @@ bool ST25R::reset_() {
   this->write_register(RX_CONF1, 0x00); 
   this->write_register(RX_CONF2, 0x6C); // AGC enabled during complete receive period
   this->write_register(RX_CONF3, 0x00); // 0 dB (Full gain), no boost
-  this->write_register(MASK_MAIN, 0x00); // Enable all interrupts
-  this->write_register(ISO14443A_CONF, 0x00); 
+  this->write_register(MASK_MAIN, 0x00);   // unmask all main IRQs
+  this->write_register(MASK_TIMER, 0x00);  // unmask all timer IRQs (NRE etc)
+  this->write_register(ISO14443A_CONF, 0x00);
 
   uint8_t d_res = (15 - this->rf_power_) & 0x0F;
   this->write_register(TX_DRIVER_CONF, 0x70 | d_res);  // am_mod=7 (12% AM mod, ISO14443 min 10%) + d_res

@@ -30,6 +30,7 @@ enum ST25RRegister : uint8_t {
   RX_CONF4 = 0x0E,
   ISO14443A_CONF = 0x05,
   MASK_MAIN = 0x16,
+  MASK_TIMER = 0x17,
   IRQ_MAIN = 0x1A,
   IRQ_TIMER = 0x1B,
   IRQ_ERROR = 0x1C,
@@ -166,6 +167,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   bool supply_3v3_{true};
   uint64_t mifare_key_a_{0xFFFFFFFFFFFFULL};
   uint64_t mifare_key_b_{0xFFFFFFFFFFFFULL};
+  bool is_b_version_{false};
   uint8_t health_check_failures_{0};
   uint8_t reinitialization_attempts_{0};
   volatile bool irq_triggered_{false};
