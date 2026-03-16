@@ -138,6 +138,37 @@ All ST25R devices use two register spaces:
 
 ## Variant-Specific Register Differences
 
+### ST25R39xx vs ST25R39xxB - RX_CONF3 (0x0D)
+
+**⚠️ This difference caused a complete reception failure on the STEVAL-MB17149B.**
+
+RX_CONF3 bit layout (same address both variants):
+
+| Bits | Name | Description |
+|------|------|-------------|
+| 7-5 | rg1_am[2:0] | AM channel gain: 0=full, 1-6=−2.5dB/step, **7=+5.5dB boost** |
+| 4-2 | rg1_pm[2:0] | PM channel gain (same encoding) |
+| 1 | lf_en | **1 = "LF signal on receiver input"** — routes receiver off the HF 13.56 MHz path |
+| 0 | lf_op | LF operation mode |
+
+**`lf_en=1` (bit1) disables HF NFC reception.** Any value with bit1 set (0xE2, 0xE3, etc.) will prevent the chip from receiving ATQA/ANTICOL responses on any properly matched 13.56 MHz antenna.
+
+**Value `0xE2` = `0b11100010`:**
+- `rg1_am=7` (+5.5 dB boost) — may help compensate for a weak, untuned antenna
+- `lf_en=1` — disables HF receive path
+
+This value happened to work on the non-B Elechouse module (small ferrite, unmatched antenna) but **silently kills tag detection on the B-version STEVAL board** (well-tuned 66×66 mm PCB antenna).
+
+**Correct values:**
+- ST25R3916 (non-B, Elechouse module): `0xE2` — gain boost compensates for weak antenna
+- ST25R3916B (STEVAL, tuned PCB antenna): `0x00` — HF path, full gain
+
+The driver uses `is_b_version_` (set from IC_IDENTITY in `reset_()`) to select the right value.
+
+**Symptom of wrong value:** `WUPA timeout: IRQ_MAIN=0x00 IRQ_TIMER=0x00 AMP=64` — field is on (AMP>0), WUPA sent, but zero IRQ ever fires. Tag is invisible.
+
+---
+
 ### ST25R39xx vs ST25R39xxB - TX_DRIVER_CONF (0x28)
 
 This is the **most critical difference** for migration.
@@ -444,7 +475,7 @@ bool underflow = (s2 & 0x20) != 0;
 **IC Type Values:**
 ```
 ST25R3916:   (ic_type & 0xF8) == 0x28
-ST25R3916B:  (ic_type & 0xF8) == 0x28 (same, check version)
+ST25R3916B:  (ic_type & 0xF8) == 0x30   ← different from non-B!
 ST25R200:    Different value
 ST25R500:    Different value
 ```
@@ -452,9 +483,10 @@ ST25R500:    Different value
 **Driver Detection:**
 ```cpp
 uint8_t id = read_register(0x3F);
-if ((id & 0xF8) == 0x28) {
-    // ST25R3916 or ST25R3916B
-    // Check version bits or other registers to differentiate
+uint8_t chip_type = id & 0xF8;
+bool is_b_version = (chip_type == 0x30);
+if (chip_type != 0x28 && chip_type != 0x30) {
+    // unknown chip
 }
 ```
 
@@ -536,12 +568,13 @@ if ((id & 0xF8) == 0x28) {
 
 ### From ST25R39xx to ST25R39xxB
 
-- [ ] Update TX_DRIVER_CONF (0x28) calculation
+- [ ] Update IC detection: `(id & 0xF8) == 0x28` → also accept `0x30`; set `is_b_version_` flag
+- [ ] **Update RX_CONF3: use `0x00` for B-version** (not `0xE2` — `lf_en=1` kills HF reception on tuned antennas)
+- [ ] Update TX_DRIVER_CONF (0x28) calculation (am_mod mapping differs)
 - [ ] Remove capacitive sensing code
 - [ ] Add enhanced AWS configuration (optional)
 - [ ] Update EMVCo EMD handling for 3.1a/3.2a
 - [ ] Change VDD_AM capacitor (2.2µF → 10–50nF if using AWS)
-- [ ] Update IC detection logic
 
 ### From ST25R39xx to ST25R200
 

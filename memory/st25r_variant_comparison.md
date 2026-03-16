@@ -692,15 +692,17 @@ All variants support two independent single-ended antennas. For more than two an
 ## Common Pitfalls
 
 1. **Assuming pin compatibility:** Only ST25R39xx ↔ ST25R39xxB is pin-compatible
-2. **Capacitive sensing code on B variants:** Feature removed, will not work
-3. **VDD_AM capacitor value:** Wrong value causes AWS instability
-4. **TX_DRIVER register values:** Cannot copy between 39xx and 39xxB
-5. **FIFO size assumptions:** 96/256/512/528 bytes depending on variant
-6. **SPI speed assumptions:** 2/6/10 Mbps depending on variant
-7. **Temperature range:** 85°C/105°C/125°C depending on variant
-8. **NFC-V bit rate:** 53 kbps vs 212 kbps on automotive variants
-9. **Card emulation:** Not available on ST25R501, ST25R200, ST25R100
-10. **I²C support:** Only on ST25R39xx, ST25R39xxB, ST25RN300 (NCI)
+2. **RX_CONF3 `lf_en` bit on B-version:** `0xE2` sets `lf_en=1` which routes the receiver to LF mode, silently disabling 13.56 MHz NFC reception. Non-B Elechouse modules tolerated it due to a weak/untuned antenna; B-version STEVAL with a tuned PCB antenna cannot receive any tag. Use `0x00` for B-version. Symptom: `WUPA timeout AMP>0 IRQ=0x00`.
+3. **IC_IDENTITY differs between non-B and B-version:** non-B = `(id & 0xF8) == 0x28`; B-version = `(id & 0xF8) == 0x30`. Both must be accepted.
+4. **Capacitive sensing code on B variants:** Feature removed, will not work
+5. **VDD_AM capacitor value:** Wrong value causes AWS instability
+6. **TX_DRIVER register values:** Cannot copy between 39xx and 39xxB
+7. **FIFO size assumptions:** 96/256/512/528 bytes depending on variant
+8. **SPI speed assumptions:** 2/6/10 Mbps depending on variant
+9. **Temperature range:** 85°C/105°C/125°C depending on variant
+10. **NFC-V bit rate:** 53 kbps vs 212 kbps on automotive variants
+11. **Card emulation:** Not available on ST25R501, ST25R200, ST25R100
+12. **I²C support:** Only on ST25R39xx, ST25R39xxB, ST25RN300 (NCI)
 
 ---
 

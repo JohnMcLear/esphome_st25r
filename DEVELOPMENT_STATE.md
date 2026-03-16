@@ -54,7 +54,17 @@ STATE_ANTICOL → IRQ(COL): narrow prefix → stay STATE_ANTICOL
 2. **COLLISION_DISPLAY is absolute frame position** — subtract 16 (2 TX bytes) to get UID-relative position
 3. **WUPA not REQA after HALT** — Mifare Classic returns to HALT state; REQA only wakes IDLE tags
 4. **CL1 state must be saved before CL2** — CL2 anticollision overwrites `anticol_col_pos_` / `prefix_val_`
-5. **RX_CONF3 must be 0xE2 in update()** — setting it in `reset_()` breaks the first scan cycle
+5. **RX_CONF3 is chip-version dependent** — non-B (Elechouse) uses `0xE2`; B-version (STEVAL) uses `0x00`. See below.
+
+#### RX_CONF3 (0x0D) Detail
+
+`RX_CONF3 = 0xE2` decodes as:
+- bits[7:5] `rg1_am=7`: +5.5 dB receiver gain boost
+- bit1 `lf_en=1`: **"LF signal on receiver input"** — routes receiver away from the 13.56 MHz HF path
+
+On the non-B Elechouse module (small ferrite antenna, untuned) `lf_en=1` still worked. On the B-version STEVAL board (well-tuned 66×66 mm PCB antenna) `lf_en=1` completely blocked ATQA responses.
+
+**The rule:** `lf_en` must be `0` for any board where the antenna is properly matched to 13.56 MHz. Use `is_b_version_` to select: `0x00` for B-version, `0xE2` for non-B Elechouse hardware. If you ever see `WUPA timeout: IRQ_MAIN=0x00 AMP≥64` (field on, no response), suspect `lf_en=1`.
 
 ### Mifare Classic / Crypto1
 6. **`crypto1_bit` not `crypto1_filter` for parity** — `crypto1_filter` reads the output filter without advancing the LFSR; parity bytes must advance state, so `crypto1_bit(cs, 0, 0)` is required everywhere a parity byte is consumed or produced
@@ -67,9 +77,15 @@ STATE_ANTICOL → IRQ(COL): narrow prefix → stay STATE_ANTICOL
 
 ## Test Hardware
 
-- ESP32-C6 dev board (Elechouse ST25R3916 module)
-- SPI: CLK=GPIO19, MISO=GPIO10, MOSI=GPIO18, CS=GPIO6, IRQ=GPIO7
+### Elechouse ST25R3916 module (non-B, `ic & 0xF8 == 0x28`)
+- ESP32-C6 dev board, SPI: CLK=GPIO19, MISO=GPIO10, MOSI=GPIO18, CS=GPIO6, IRQ=GPIO7
 - Tags verified: NTAG/Ultralight 7-byte UID `041AA7675F6180`, Mifare Classic clone `DEA30D00`
+- Uses RX_CONF3=0xE2 (lf_en=1 + gain boost)
+
+### STEVAL-MB17149B (ST25R3916**B**, `ic & 0xF8 == 0x30`)
+- ESP32-C6 dev board, same SPI pinout, STEVAL expansion board via SPI header
+- Tags verified: UID `8281A441` (4-byte)
+- Uses RX_CONF3=0x00 (HF path, full gain)
 
 ---
 
