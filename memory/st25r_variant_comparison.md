@@ -229,11 +229,47 @@ This document provides a comprehensive comparison of all ST25R NFC reader varian
 
 **Package:** VFQFPN32 (5x5mm)
 
-**Specifications:** Similar to ST25R500
+**Datasheet:** DS14655 (**NOT in collection** — only application notes available)
 
-**Differences from ST25R500:**
-- Feature-reduced variant
-- Consult datasheet for specific feature set
+**Specifications:** Based on AN6313, ST25R300 is a **feature-reduced derivative of ST25R500**.
+
+**Known characteristics:**
+- Same package as ST25R500 (QFN32)
+- Same register map as ST25R500
+- Likely reduced feature set (exact differences unknown without datasheet)
+- AEC-Q100 qualified (automotive)
+- Temperature Range: -40°C to +125°C (automotive grade)
+
+**Available documentation:**
+- AN6313: Migrating from ST25R39xx to ST25R500 and ST25R300
+- AN6279: Layout recommendations (ST25R300/500/501/210)
+- AN6298: Wake-up mode (ST25R300/500/501/210)
+- AN6092: Antenna design (ST25R210/300/500/501)
+- AN6463: Thermal design (ST25R210/300/500/501)
+
+**Note:** Exact feature differences from ST25R500 unknown without DS14655 datasheet.
+
+---
+
+### ST25R210 (Automotive)
+
+**Package:** QFN32 (exact dimensions in AN6279)
+
+**Datasheet:** **NOT in collection** — only application notes available
+
+**Known characteristics:**
+- Automotive variant in ST25R500 family
+- Same register map as ST25R500
+- AEC-Q100 qualified
+- Temperature Range: -40°C to +125°C
+
+**Available documentation:**
+- AN6092: Antenna design (ST25R210/300/500/501)
+- AN6279: Layout recommendations (ST25R300/500/501/210)
+- AN6298: Wake-up mode (ST25R300/500/501/210)
+- AN6463: Thermal design (ST25R210/300/500/501)
+
+**Note:** Exact specifications unknown without dedicated datasheet.
 
 ---
 

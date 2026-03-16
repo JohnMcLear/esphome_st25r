@@ -176,14 +176,10 @@ This document provides a comprehensive feature-by-feature comparison across all 
 
 ## Physical Characteristics
 
-| Feature | ST25R3916/17 | ST25R39xxB | ST25R3914/15 | ST25R200 | ST25R100 | ST25R500 | ST25R501 | ST25R95 | ST25RN300 |
-|---------|--------------|------------|--------------|----------|----------|----------|----------|---------|-----------|
-| **Package** | QFN32/WLCSP | QFN32/WLCSP | QFN32 | QFN24 | QFN24 | QFN32 | QFN24 | QFN32 | WLCSP49 |
-| **Package Size** | 5x5mm / 3x3mm | 5x5mm / 3x3mm | 5x5mm | 4x4mm | 4x4mm | 5x5mm | 4x4mm | 5x5mm | 2.56x2.58mm |
-| **Pin Count** | 32 / 36 | 32 / 36 | 32 | 24 | 24 | 32 | 24 | 32 | 49 |
-| **Exposed Pad** | GND | GND | GND | GND | GND | **GND (req)** | **GND (req)** | GND | N/A |
-| **Wettable Flanks** | ✗ | ✗ | ✓ (3914) | ✗ | ✗ | ✗ | ✓ | ✗ | ✗ |
-| **ECOPACK** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Feature | ST25R3916/17 | ST25R39xxB | ST25R3914/15 | ST25R200 | ST25R100 | ST25R500 | ST25R300 | ST25R501 | ST25R210 | ST25R95 | ST25RN300 |
+|---------|--------------|------------|--------------|----------|----------|----------|--------|----------|--------|---------|-----------|
+| **Wettable Flanks** | ✗ | ✗ | ✓ (3914) | ✗ | ✗ | ✗ | ✗ | ✓ | ? | ✗ | ✗ |
+| **ECOPACK** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 ---
 
