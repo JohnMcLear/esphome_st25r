@@ -2,8 +2,31 @@
 
 This document provides technical reference for the ST25R component API, register map, SPI protocol, and supported protocol flows.
 
+## Variant Support Overview
+
+This component is primarily designed for **ST25R3916/ST25R3916B** but supports multiple ST25R variants. Key differences:
+
+| Variant | FIFO | SPI Max | NFC-A/B Max | NFC-V Max | Card Emulation | AAT | Wake-up | Temp Range |
+|---------|------|---------|-------------|-----------|----------------|-----|---------|------------|
+| **ST25R3916/17** | 512 | 10 Mbps | 848 kbps | 53 kbps | ✓ | ✓ | Capacitive+Inductive | -40°C to +105°C |
+| **ST25R3916B/17B/19B** | 512 | 10 Mbps | 848 kbps | 53 kbps | ✓ | ✓ | Inductive only | -40°C to +105°C |
+| **ST25R3914/15** | 96 | 6 Mbps | 848 kbps | 53 kbps | ? | ✓ (3914) | Capacitive+Inductive | -40°C to +125°C |
+| **ST25R200** | 256 | 10 Mbps | 106 kbps | 53 kbps | ✗ | ✗ | Inductive only | -40°C to +85°C |
+| **ST25R100** | 256 | 6 Mbps | 106 kbps | 53 kbps | ✗ | ✗ | Inductive only | -25°C to +85°C |
+| **ST25R500/300** | 512 | 10 Mbps | 848 kbps | **212 kbps** | ✓ | ✗ | Inductive only | -40°C to +125°C |
+| **ST25R501** | 512 | 10 Mbps | 848 kbps | **212 kbps** | ✗ | ✗ | Inductive only | -40°C to +125°C |
+
+**Critical Migration Notes:**
+- **ST25R39xx → ST25R39xxB:** TX_DRIVER register (0x28) has different bit mapping; capacitive sensing removed
+- **ST25R39xx → ST25R200/100:** Not pin-compatible; FIFO halved; no I²C; no high bit rates
+- **ST25R39xx → ST25R500:** Not pin-compatible; GPIO multiplexing changed; NFC-V up to 212 kbps
+- **Space B registers (0x40–0x7F):** Current driver masks `addr & 0x3F`, preventing writes without modification
+
+See `memory/st25r_variant_comparison.md` for comprehensive variant details and `memory/st25r_register_differences.md` for register-level differences.
+
 ## Table of Contents
 
+- [Variant Support Overview](#variant-support-overview)
 - [Component API](#component-api)
 - [YAML Configuration](#yaml-configuration)
 - [ISO14443A Protocol](#iso14443a-protocol)
@@ -285,15 +308,40 @@ TX FIFO layout for N bytes:
 
 ## Register Map
 
-Verified against DS12484 Rev 8. All addresses are Space A (0x00–0x3F).
+Verified against DS12484 Rev 8 (ST25R3916). All addresses are Space A (0x00–0x3F).
+
+### Variant-Specific Register Notes
+
+**TX_DRIVER_CONF (0x28) - Critical Difference:**
+
+| Variant | am_mod (bits 7-4) | d_res (bits 3-0) |
+|---------|-------------------|------------------|
+| ST25R3916/17 | 5–40% (0x0=~5%, 0x7=~12%, 0xF=~40%) | 4-bit range |
+| ST25R3916B/17B/19B | **0–82%** (0x0=0%, 0x7=~10%, 0xF=82%) | **Extended range, finer steps** |
+| ST25R200/100 | Similar to 3916 | Similar to 3916 |
+| ST25R500 | Similar to 3916B | Similar to 3916B |
+
+> **Migration Warning:** Cannot directly copy TX_DRIVER_CONF values between ST25R39xx and ST25R39xxB. Recalculate based on desired modulation index.
+
+**FIFO Capacity by Variant:**
+- ST25R3914/15: **96 bytes**
+- ST25R200/100: **256 bytes**
+- ST25R39xx/39xxB/500/501: **512 bytes**
+- ST25R95: **528 bytes**
+
+**BIT_RATE (0x04) - NFC-V Differences:**
+- ST25R39xx/39xxB/200/100: NFC-V max 53 kbps (fc/128)
+- ST25R500/501: NFC-V max **212 kbps** (fc/64)
+
+### Register Table
 
 | Address | Name | Key bits / usage |
 |---------|------|-----------------|
 | 0x00 | IO_CONF1 | bit6=single (0=differential, full power) |
 | 0x01 | IO_CONF2 | bit0=sup3V (1 for 3.3V supply) |
 | 0x02 | OP_CONTROL | bit7=en, bit6=rx_en, bit3=tx_en |
-| 0x03 | MODE | 0x08 = ISO14443A initiator |
-| 0x04 | BIT_RATE | 0x00 = fc/128 (NFC-A 106 kbps) |
+| 0x03 | MODE | 0x08 = ISO14443A initiator; see variant notes for CE support |
+| 0x04 | BIT_RATE | 0x00 = fc/128 (NFC-A 106 kbps); NFC-V max varies by variant |
 | 0x05 | ISO14443A_CONF | bit0=antcl (anticollision enable); 0xC0=no_tx_par+no_rx_par (Mifare mode) |
 | 0x0B | RX_CONF1 | Receiver config (Table 40) |
 | 0x0C | RX_CONF2 | Receiver config (Table 41) |
@@ -308,10 +356,20 @@ Verified against DS12484 Rev 8. All addresses are Space A (0x00–0x3F).
 | 0x22 | NUM_TX_BYTES1 | ntx[12:5] |
 | 0x23 | NUM_TX_BYTES2 | ntx[4:0] in bits[7:3], nbtx[2:0] in bits[2:0] |
 | 0x25 | AD_CONV_RESULT | Amplitude measurement output |
-| 0x28 | TX_DRIVER_CONF | bits[7:4]=am_mod (7=12%), bits[3:0]=d_res (0=max power) |
-| 0x3F | IC_IDENTITY | (ic & 0xF8) == 0x28 for ST25R3916 |
+| 0x28 | TX_DRIVER_CONF | **Variant-dependent:** see table above |
+| 0x3F | IC_IDENTITY | (ic & 0xF8) == 0x28 for ST25R3916/3916B |
 
-> **Space B (0x40–0x7F):** The SPI `write_register()` masks `addr & 0x3F`, so Space B registers cannot be written without fixing the driver. Leave CORR_CONF1/2 at factory defaults.
+### Space B Registers (0x40–0x7F)
+
+> **Critical:** The SPI `write_register()` masks `addr & 0x3F`, so Space B registers **cannot be written** without fixing the driver.
+
+**Space B by Variant:**
+- **ST25R39xx:** Capacitive sensing (0x40–0x4F), CORR_CONF (0x60–0x6F)
+- **ST25R39xxB:** AWS registers (0x50–0x5F), EMD registers (0x60–0x6F), TAD (0x40–0x4F)
+- **ST25R500:** GPIO multiplexing (0x60–0x6F)
+- **ST25R200/100:** Minimal Space B support
+
+**Leave Space B registers at factory defaults** unless driver is updated to support Space B writes.
 
 ---
 
@@ -367,7 +425,9 @@ ESPHome: `CLOCK_PHASE_TRAILING`.
 
 ## Command Set
 
-Verified from DS12484 Table 13 (p.59).
+Verified from DS12484 Table 13 (p.59). Commands are universal across variants unless noted.
+
+### Universal Commands (All Variants)
 
 | Command | Hex | Description |
 |---------|-----|-------------|
@@ -387,6 +447,19 @@ Verified from DS12484 Table 13 (p.59).
 | RESET_RX_GAIN | 0xD5 | Reset AGC/squelch — **call before each transceive** |
 | ADJUST_REGULATORS | 0xD6 | Calibrate internal regulators |
 
+### ST25R39xxB - New Commands
+
+| Command | Hex | Description |
+|---------|-----|-------------|
+| AWS_ENABLE | 0xD8 | Enable enhanced Active Wave Shaping |
+| EMD_CONFIGURE | 0xD9 | Configure EMVCo 3.1a/3.2a EMD handling |
+
+### ST25R500 - New Commands
+
+| Command | Hex | Description |
+|---------|-----|-------------|
+| GPIO_MUX_CONFIG | 0xDA | Configure GPIO multiplexing for passive load modulation |
+
 > **There is no dedicated Clear FIFO command.** Use STOP_ALL (0xC3) to clear FIFO state.
 > **0xDB is NOT a valid command** — earlier documentation was wrong.
 
@@ -394,8 +467,15 @@ Verified from DS12484 Table 13 (p.59).
 
 ## FIFO Operations
 
-### Capacity
-512 bytes, shared TX/RX.
+### Capacity by Variant
+
+| Variant | FIFO Size | Notes |
+|---------|-----------|-------|
+| ST25R3914/15 | 96 bytes | Smallest FIFO, limits frame size |
+| ST25R200/100 | 256 bytes | Half of ST25R39xx |
+| ST25R39xx/39xxB | 512 bytes | Standard |
+| ST25R500/501 | 512 bytes | Standard |
+| ST25R95 | 528 bytes | Largest FIFO |
 
 ### FIFO_STATUS decoding
 
@@ -428,20 +508,74 @@ Issue `STOP_ALL` (0xC3). There is no separate clear command.
 
 ## Protocol Support Status
 
-| Protocol | Status |
-|----------|--------|
-| ISO14443A (NFC-A) | **Working** |
-| Mifare Classic auth + block read | **Working** |
-| NDEF read (Type 2 / NTAG) | **Working** |
-| ISO14443B (NFC-B) | Not implemented |
-| ISO15693 (NFC-V) | Not implemented |
-| FeliCa (NFC-F) | Not implemented |
-| Mifare Classic NDEF | Not implemented |
+### Current Component Implementation
+
+| Protocol | Status | Notes |
+|----------|--------|-------|
+| ISO14443A (NFC-A) | **Working** | Full multi-tag anticollision |
+| Mifare Classic auth + block read | **Working** | 9-bit parity handled in software |
+| NDEF read (Type 2 / NTAG) | **Working** | Type 2 tags only |
+| ISO14443B (NFC-B) | Not implemented | Hardware supports up to 848 kbps |
+| ISO15693 (NFC-V) | Not implemented | 53 kbps (212 kbps on ST25R500/501) |
+| FeliCa (NFC-F) | Not implemented | Hardware supports up to 424 kbps |
+| Mifare Classic NDEF | Not implemented | Requires Mifare Classic support |
+| Card Emulation | Not implemented | ST25R39xx/39xxB/500 only; not on R200/R100/R501 |
+| P2P (Active/Passive) | Not implemented | ST25R39xx/39xxB/500 only |
+
+### Protocol Support by Variant
+
+| Protocol | ST25R3916/17 | ST25R39xxB | ST25R200/100 | ST25R500 | ST25R501 |
+|----------|--------------|------------|--------------|----------|----------|
+| NFC-A (848 kbps) | ✓ | ✓ | 106 kbps only | ✓ | ✓ |
+| NFC-B (848 kbps) | ✓ | ✓ | 106 kbps only | ✓ | ✓ |
+| NFC-F (424 kbps) | ✓ | ✓ | ✗ | ✓ | ✓ |
+| NFC-V (53/212 kbps) | 53 kbps | 53 kbps | 53 kbps | **212 kbps** | **212 kbps** |
+| Card Emulation | ✓ | ✓ | ✗ | ✓ | ✗ |
+| P2P Active | ✓ | ✓ | ✗ | ✓ | ✓ |
+| P2P Passive | ✓ | ✓ | ✗ | ✓ | ✓ |
+| Mifare Classic | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 ---
 
 ## References
 
-- ST25R3916 datasheet: `docs/st25r3916.pdf` (DS12484 Rev 8)
+### Datasheets
+- ST25R3916/17: DS12484 Rev 8 (docs/st25r3916.pdf)
+- ST25R3916B/17B/19B: DS13541 Rev 10
+- ST25R200: DS13658 Rev 2
+- ST25R100: DS14139 Rev 5
+- ST25R500: DS14593 Rev 1
+- ST25R501: DS14983 Rev 1
+- ST25R3914/15: DS11837 Rev 9
+- ST25R95: DS12807 Rev 4
+- ST25RN300: DB5606 Rev 3
+
+### Application Notes
+- **AN5768:** Migrating from ST25R39xx to ST25R39xxB
+- **AN5965:** Migrating from ST25R39xx to ST25R200
+- **AN6313:** Migrating from ST25R39xx to ST25R500/300
+- **AN6143:** Migrating from ST25R95 to ST25R200
+- **AN5320:** Wake-up mode (ST25R3916/16B/17/17B/18/19B/20/20B)
+- **AN5993:** Wake-up mode (ST25R200/100)
+- **AN6298:** Wake-up mode (ST25R300/500/501/210)
+- **AN5322:** Automatic Antenna Tuning (AAT)
+- **AN6121:** NFC coil multiplexer for multi-antenna switching
+- **AN5584:** Thermal design (ST25R39xx)
+- **AN6463:** Thermal design (ST25R210/300/500/501)
+- **AN5592:** Single-ended antenna matching
+- **AN6134:** Crystal oscillator design
+
+### Internal Documentation
+- `memory/st25r_variant_comparison.md` - Comprehensive variant comparison
+- `memory/st25r_register_differences.md` - Register-level differences
+- `memory/multitag_anticol.md` - Multi-tag anticollision implementation
+
+### Standards
 - ISO/IEC 14443-3:2018 — Initialization and anticollision
+- ISO/IEC 14443-4:2018 — Transmission protocol
+- ISO/IEC 15693-3:2019 — Air interface and initialization
+- EMVCo 3.2a — Contactless specifications
+- NFC Forum Technical Specifications
+
+### Algorithms
 - Crypto1 algorithm: Courtois, Nohl et al. (2008) — public academic specification
