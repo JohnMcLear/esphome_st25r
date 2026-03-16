@@ -225,29 +225,58 @@ This document provides a comprehensive comparison of all ST25R NFC reader varian
 
 ---
 
-### ST25R300 (Automotive)
+### ST25R300 (Consumer/Industrial Payment)
 
-**Package:** VFQFPN32 (5x5mm)
+**Package:** UQFPN32 / UFQFPN32 (5x5mm)
 
-**Datasheet:** DS14655 (**NOT in collection** — only application notes available)
+**Datasheet:** DS14655 Rev 2 - June 2025
 
-**Specifications:** Based on AN6313, ST25R300 is a **feature-reduced derivative of ST25R500**.
+**Supply Voltage:** 2.7–6.0V (higher than ST25R500)
 
-**Known characteristics:**
-- Same package as ST25R500 (QFN32)
-- Same register map as ST25R500
-- Likely reduced feature set (exact differences unknown without datasheet)
-- AEC-Q100 qualified (automotive)
-- Temperature Range: -40°C to +125°C (automotive grade)
+**IO Voltage:** 1.65–5.5V
 
-**Available documentation:**
-- AN6313: Migrating from ST25R39xx to ST25R500 and ST25R300
-- AN6279: Layout recommendations (ST25R300/500/501/210)
-- AN6298: Wake-up mode (ST25R300/500/501/210)
-- AN6092: Antenna design (ST25R210/300/500/501)
-- AN6463: Thermal design (ST25R210/300/500/501)
+**Supported Protocols:**
+- NFC-A / ISO14443A up to 848 kbit/s
+- NFC-B / ISO14443B up to 848 kbit/s
+- NFC-V / ISO15693 up to **212 kbit/s**
+- NFC-F / FeliCa up to 424 kbit/s
+- **Card emulation:** NFC-A 106 kbit/s, NFC-F 212/424 kbit/s
+- **Passive P2P mode**
+- **TruST25 Link** (patented offline NFC tag identification)
 
-**Note:** Exact feature differences from ST25R500 unknown without DS14655 datasheet.
+**Key Features:**
+- **EMVCo PCD 3.2a compliant** (payment terminal optimized)
+- **256-byte FIFO** (half of ST25R500!)
+- **NFC Forum universal device**
+- **USI WLC reader device** (wireless charging)
+- SPI up to 10 Mbit/s
+- **No I²C** (SPI only)
+- Inductive wake-up (LPCD)
+- I/Q demodulator with channel summation
+- Dynamic Power Output (DPO)
+- Active Wave Shaping (AWS)
+- Noise Suppression Receiver (NSR)
+- One differential or two single-ended antennas
+- **CE load modulation** support
+
+**Temperature Range:** -40°C to **+105°C** (not 125°C like automotive)
+
+**Key Differences from ST25R500:**
+- **FIFO: 256 bytes** (vs 512 bytes on ST25R500)
+- **Supply voltage: 2.7–6.0V** (vs 2.7–5.5V on ST25R500)
+- **Temperature: -40°C to +105°C** (vs -40°C to +125°C automotive)
+- **Not AEC-Q100 qualified** (consumer/industrial, not automotive)
+- **TruST25 Link** feature (offline tag identification)
+- Optimized for POS terminals, payment applications
+- **No CCC Digital Key** (consumer focus)
+
+**Applications:**
+- EMVCo PCD 3.2a contactless payment terminals
+- Access control
+- NFC Forum universal devices
+- WPC Qi out-of-band communication
+- NFC wireless charging (WLC) poller
+- WPC Ki power transmitter (PTx) communications
 
 ---
 

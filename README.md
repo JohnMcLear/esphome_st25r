@@ -24,12 +24,12 @@ An ESPHome component for the STMicroelectronics ST25R family of NFC reader ICs.
 |---------|---------|-------|
 | **ST25R3914 / ST25R3915** | QFN32 | Automotive grade, smaller FIFO (96 bytes), AAT on 3914 only |
 | **ST25R500** | QFN32 | Automotive CCC Digital Key, different pinout, NFC-V up to 212 kbps |
-| **ST25R300** | QFN32 | Feature-reduced ST25R500 derivative (datasheet DS14655 not in collection) |
+| **ST25R300** | QFN32 | **256-byte FIFO**, 2.7–6.0V supply, EMVCo PCD 3.2a, TruST25 Link, consumer/industrial payment |
 | **ST25R210** | QFN32 | Automotive variant (datasheet not in collection, see AN6092/AN6279) |
 | **ST25R501** | QFN24 | Compact automotive, reader-only (no card emulation) |
 
 > **Note:** ST25R300/210/500/501 use the same register map but have different pinouts. Hardware redesign required.
-> **Missing datasheets:** DS14655 (ST25R300), ST25R210 datasheet — only application notes available.
+> **Missing datasheets:** ST25R210 datasheet — only application notes available.
 
 ### ❌ Not Supported
 
