@@ -23,15 +23,28 @@ components/
   st25r_spi/         SPI transport (st25r_spi.h/cpp, __init__.py)
   st25r_i2c/         I2C transport (st25r_i2c.h/cpp, __init__.py)
 docs/
-  fetch_datasheets.sh  Script to download all ST25R product datasheets into docs/
-  st25r3911b.pdf       ST25R3911B datasheet, 1.6 W (download via fetch_datasheets.sh)
-  st25r3916.pdf        ST25R3916 datasheet DS12484 Rev 8, 1.6 W (primary reference)
-  st25r3916b.pdf       ST25R3916B datasheet, 1.6 W (download via fetch_datasheets.sh)
-  st25r3917b.pdf       ST25R3917B datasheet, 1.6 W (download via fetch_datasheets.sh)
-  st25r3919.pdf        ST25R3919 datasheet, 1.6 W automotive (download via fetch_datasheets.sh)
-  st25r3918.pdf        ST25R3918 datasheet, 2.2 W (download via fetch_datasheets.sh)
-  st25r3918b.pdf       ST25R3918B datasheet, 2.2 W (download via fetch_datasheets.sh)
-  st25r3920.pdf        ST25R3920 datasheet, 2.2 W automotive (download via fetch_datasheets.sh)
+  fetch_datasheets.sh    Script: downloads all IC datasheets + board briefs from st.com
+  st25r95.pdf            ST25R95 datasheet, legacy reader          (fetch_datasheets.sh)
+  st25r3911b.pdf         ST25R3911B datasheet, 1.6 W               (fetch_datasheets.sh)
+  st25r3916.pdf          ST25R3916 datasheet DS12484 Rev 8, 1.6 W  (primary reference)
+  st25r3916b.pdf         ST25R3916B datasheet, 1.6 W               (fetch_datasheets.sh)
+  st25r3917b.pdf         ST25R3917B datasheet, 1.6 W reduced       (fetch_datasheets.sh)
+  st25r3919.pdf          ST25R3919 datasheet, 1.6 W automotive     (fetch_datasheets.sh)
+  st25r3918.pdf          ST25R3918 datasheet, 2.2 W                (fetch_datasheets.sh)
+  st25r3918b.pdf         ST25R3918B datasheet, 2.2 W               (fetch_datasheets.sh)
+  st25r3920.pdf          ST25R3920 datasheet, 2.2 W automotive     (fetch_datasheets.sh)
+  st25r100.pdf           ST25R100 datasheet, low-power reader      (fetch_datasheets.sh)
+  st25r200.pdf           ST25R200 datasheet, low-power reader      (fetch_datasheets.sh)
+  st25r300.pdf           ST25R300 datasheet, high-perf reader      (fetch_datasheets.sh)
+  st25rn300.pdf          ST25RN300 datasheet, NFC-only variant     (fetch_datasheets.sh)
+  st25r500.pdf           ST25R500 datasheet, high-perf reader      (fetch_datasheets.sh)
+  boards/
+    x-nucleo-nfc03a1.pdf   Data brief: ST25R95 eval shield         (fetch_datasheets.sh)
+    x-nucleo-nfc05a1.pdf   Data brief: ST25R3911B eval shield      (fetch_datasheets.sh)
+    x-nucleo-nfc06a1.pdf   Data brief: ST25R3916 eval shield       (fetch_datasheets.sh)
+    x-nucleo-nfc08a1.pdf   Data brief: ST25R3916B/ST25R3918 shield (fetch_datasheets.sh)
+    x-nucleo-nfc09a1.pdf   Data brief: ST25R3918 2.2 W shield      (fetch_datasheets.sh)
+    x-nucleo-nfc12a1.pdf   Data brief: ST25R500/ST25R300 shield    (fetch_datasheets.sh)
 memory/
   multitag_anticol.md   Multi-tag anticollision algorithm — bugs found, fixes applied
   datasheet_notes.md    Register map and SPI/I2C protocol details
@@ -204,7 +217,11 @@ Send `ST25R_CMD_RESET_RX_GAIN` (0xD5) before each transceive (both `transceive_e
 
 - [ESPHome external components guide](https://esphome.io/components/external_components.html)
 - [ESPHome contributing guide](https://esphome.io/guides/contributing.html)
-- ST25R datasheets (see `docs/` — run `docs/fetch_datasheets.sh` to download all):
-  - **1.6 W**: ST25R3911B · ST25R3916 (`docs/st25r3916.pdf`, DS12484 Rev 8) · ST25R3916B · ST25R3917B · ST25R3919
-  - **2.2 W**: ST25R3918 · ST25R3918B · ST25R3920
+- ST25R datasheets — run `docs/fetch_datasheets.sh` to download all into `docs/`:
+  - **Legacy**: ST25R95
+  - **ST25R39xx 1.6 W**: ST25R3911B · ST25R3916 (`docs/st25r3916.pdf`, DS12484 Rev 8) · ST25R3916B · ST25R3917B · ST25R3919
+  - **ST25R39xx 2.2 W**: ST25R3918 · ST25R3918B · ST25R3920
+  - **ST25Rxxx low-power**: ST25R100 · ST25R200
+  - **ST25Rxxx high-perf**: ST25R300 · ST25RN300 · ST25R500
+  - **X-NUCLEO eval boards** (`docs/boards/`): NFC03A1 · NFC05A1 · NFC06A1 · NFC08A1 · NFC09A1 · NFC12A1
 - Architecture pattern reference: [esphome_pn532](https://github.com/JohnMcLear/esphome_pn532)

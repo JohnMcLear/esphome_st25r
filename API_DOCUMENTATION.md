@@ -442,8 +442,12 @@ Issue `STOP_ALL` (0xC3). There is no separate clear command.
 
 ## References
 
-- ST25R datasheets (run `docs/fetch_datasheets.sh` to download all):
-  - **1.6 W**: `docs/st25r3916.pdf` (DS12484 Rev 8, primary reference) · ST25R3911B · ST25R3916B · ST25R3917B · ST25R3919
-  - **2.2 W**: ST25R3918 · ST25R3918B · ST25R3920
+- ST25R datasheets — run `docs/fetch_datasheets.sh` to download all into `docs/`:
+  - **Legacy**: ST25R95
+  - **ST25R39xx 1.6 W**: ST25R3911B · ST25R3916 (`docs/st25r3916.pdf`, DS12484 Rev 8, primary reference) · ST25R3916B · ST25R3917B · ST25R3919
+  - **ST25R39xx 2.2 W**: ST25R3918 · ST25R3918B · ST25R3920
+  - **ST25Rxxx low-power**: ST25R100 · ST25R200
+  - **ST25Rxxx high-perf**: ST25R300 · ST25RN300 · ST25R500
+  - **X-NUCLEO eval boards** (`docs/boards/`): NFC03A1 · NFC05A1 · NFC06A1 · NFC08A1 · NFC09A1 · NFC12A1
 - ISO/IEC 14443-3:2018 — Initialization and anticollision
 - Crypto1 algorithm: Courtois, Nohl et al. (2008) — public academic specification

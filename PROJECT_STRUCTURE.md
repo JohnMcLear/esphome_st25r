@@ -38,15 +38,28 @@ esphome_st25r/
 │   └── datasheet_notes.md             Register map, SPI protocol, IRQ bit definitions
 │
 ├── docs/
-│   ├── fetch_datasheets.sh            Script: downloads all ST25R datasheets from st.com
-│   ├── st25r3916.pdf                  Datasheet DS12484 Rev 8, 1.6 W (primary reference)
-│   ├── st25r3911b.pdf                 Datasheet, 1.6 W          (fetch_datasheets.sh)
-│   ├── st25r3916b.pdf                 Datasheet, 1.6 W enhanced (fetch_datasheets.sh)
-│   ├── st25r3917b.pdf                 Datasheet, 1.6 W reduced  (fetch_datasheets.sh)
-│   ├── st25r3919.pdf                  Datasheet, 1.6 W auto     (fetch_datasheets.sh)
-│   ├── st25r3918.pdf                  Datasheet, 2.2 W          (fetch_datasheets.sh)
-│   ├── st25r3918b.pdf                 Datasheet, 2.2 W enhanced (fetch_datasheets.sh)
-│   └── st25r3920.pdf                  Datasheet, 2.2 W auto     (fetch_datasheets.sh)
+│   ├── fetch_datasheets.sh            Script: downloads all IC datasheets + board briefs
+│   ├── st25r95.pdf                    ST25R95 datasheet, legacy reader   (fetch_datasheets.sh)
+│   ├── st25r3911b.pdf                 Datasheet, 1.6 W                   (fetch_datasheets.sh)
+│   ├── st25r3916.pdf                  Datasheet DS12484 Rev 8, 1.6 W     (primary reference)
+│   ├── st25r3916b.pdf                 Datasheet, 1.6 W enhanced          (fetch_datasheets.sh)
+│   ├── st25r3917b.pdf                 Datasheet, 1.6 W reduced           (fetch_datasheets.sh)
+│   ├── st25r3919.pdf                  Datasheet, 1.6 W automotive        (fetch_datasheets.sh)
+│   ├── st25r3918.pdf                  Datasheet, 2.2 W                   (fetch_datasheets.sh)
+│   ├── st25r3918b.pdf                 Datasheet, 2.2 W enhanced          (fetch_datasheets.sh)
+│   ├── st25r3920.pdf                  Datasheet, 2.2 W automotive        (fetch_datasheets.sh)
+│   ├── st25r100.pdf                   Datasheet, low-power reader        (fetch_datasheets.sh)
+│   ├── st25r200.pdf                   Datasheet, low-power reader        (fetch_datasheets.sh)
+│   ├── st25r300.pdf                   Datasheet, high-perf reader        (fetch_datasheets.sh)
+│   ├── st25rn300.pdf                  Datasheet, NFC-only variant        (fetch_datasheets.sh)
+│   ├── st25r500.pdf                   Datasheet, high-perf reader        (fetch_datasheets.sh)
+│   └── boards/
+│       ├── x-nucleo-nfc03a1.pdf       Data brief: ST25R95 eval shield    (fetch_datasheets.sh)
+│       ├── x-nucleo-nfc05a1.pdf       Data brief: ST25R3911B shield      (fetch_datasheets.sh)
+│       ├── x-nucleo-nfc06a1.pdf       Data brief: ST25R3916 shield       (fetch_datasheets.sh)
+│       ├── x-nucleo-nfc08a1.pdf       Data brief: ST25R3916B/3918 shield (fetch_datasheets.sh)
+│       ├── x-nucleo-nfc09a1.pdf       Data brief: ST25R3918 2.2 W shield (fetch_datasheets.sh)
+│       └── x-nucleo-nfc12a1.pdf       Data brief: ST25R500/300 shield    (fetch_datasheets.sh)
 │
 ├── .github/workflows/
 │   └── compile.yml                    CI: compiles tests/ci-test-spi.yaml + ci-test-i2c.yaml
