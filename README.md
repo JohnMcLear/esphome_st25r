@@ -201,7 +201,6 @@ st25r300_spi:
 | ST25R3917 / ST25R3917B | ✅ Should work | Register-compatible with ST25R3916 |
 | ST25R3919B / ST25R3920B | ✅ Should work | Register-compatible |
 | ST25R300 | ⚠️ Compiles, untested | X-NUCLEO-NFC12A1; hardware validation pending |
-| ST25RN300 | ❌ Not supported | Uses NCI protocol — requires a full NCI stack rewrite |
 
 ---
 
