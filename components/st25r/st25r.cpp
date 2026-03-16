@@ -106,17 +106,14 @@ void ST25R::setup() {
     this->irq_pin_->attach_interrupt(ST25R::isr, this, gpio::INTERRUPT_RISING_EDGE);
   }
 
+  if (this->status_binary_sensor_ != nullptr) {
+    this->status_binary_sensor_->publish_initial_state(false);
+  }
   ESP_LOGI(TAG, "Starting reset_()...");
   if (!this->reset_()) {
     ESP_LOGE(TAG, "Failed to reset chip");
-    if (this->status_binary_sensor_ != nullptr) {
-      this->status_binary_sensor_->publish_initial_state(false);
-    }
     this->mark_failed();
     return;
-  }
-  if (this->status_binary_sensor_ != nullptr) {
-    this->status_binary_sensor_->publish_initial_state(true);
   }
   ESP_LOGI(TAG, "ST25R initialized successfully.");
 }

@@ -229,6 +229,28 @@ UID4 = "DEA30D00"   # 4-byte (Mifare Classic)
 UID7 = "041AA7675F6180"  # 7-byte (NTAG)
 
 
+class TestStatusAndFieldStrength:
+    """
+    Reader status binary sensor publishes true on init, field strength sensor
+    publishes amplitude (0x80=128 from the sim) on every update cycle.
+    """
+
+    def test_status_sensor_true(self, sim):
+        proc, ctrl1, ctrl2 = sim
+        # READER1_STATUS 1 fires at startup — check entire log since start
+        with proc._lock:
+            for line in proc.log_lines:
+                if re.search(r"READER1_STATUS 1", line):
+                    return
+        # Not yet in log — wait for it
+        proc.wait_for(r"READER1_STATUS 1", timeout=10)
+
+    def test_field_strength_reported(self, sim):
+        proc, ctrl1, ctrl2 = sim
+        # Field strength is published every update interval; should appear quickly
+        proc.wait_for(r"READER1_FIELD_STRENGTH", timeout=5)
+
+
 class TestBasicTagDetection:
     """on_tag fires when a virtual tag is added; on_tag_removed when removed."""
 
@@ -461,3 +483,89 @@ class TestMultipleReaders:
         ctrl2.remove_tag(self.UID_R2)
         proc.wait_for(r"READER1_ON_TAG_REMOVED AA112233", timeout=10)
         proc.wait_for(r"READER2_ON_TAG_REMOVED BB445566", timeout=10)
+
+
+# ── NDEF record helpers ────────────────────────────────────────────────────
+# 9-byte Text record "Hi" (en) — fits in one page read
+NDEF_TEXT_HI = "D10105540265 6E4869".replace(" ", "")
+# 20-byte Text record "Hello World!!" (en) — spans multiple NTAG pages
+NDEF_TEXT_LONG = "D1011154" + "0265" + "6E48656C6C6F20576F726C642121"
+
+
+class TestBinarySensor:
+    """
+    ST25R binary sensor publishes true when the matching UID is in field,
+    false when absent. The YAML on_state lambda logs BINARY_SENSOR_STATE.
+    """
+
+    UID_BS = "FF112233"
+
+    def test_binary_sensor_true_when_present(self, sim):
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        ctrl1.add_tag(self.UID_BS)
+        # Wait for on_tag then binary sensor state=1
+        proc.wait_for(r"READER1_ON_TAG FF112233", timeout=10)
+        proc.wait_for(r"BINARY_SENSOR_STATE 1", timeout=5)
+
+    def test_binary_sensor_false_when_absent(self, sim):
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        ctrl1.remove_tag(self.UID_BS)
+        proc.wait_for(r"READER1_ON_TAG_REMOVED FF112233", timeout=10)
+        proc.wait_for(r"BINARY_SENSOR_STATE 0", timeout=5)
+
+
+class TestNdefWrite:
+    """
+    NTAG tag that triggers clean_tag() in the on_tag YAML lambda.
+    The simulator handles the 0xA2 WRITE commands and returns ACK.
+    """
+
+    UID_WRITE = "CCDDEE11223344"  # 7-byte NTAG; triggers clean_tag in on_tag
+
+    def test_ndef_write_succeeds(self, sim):
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        ctrl1.add_tag(self.UID_WRITE, tag_type="NTAG213")
+        proc.wait_for(r"READER1_ON_TAG CCDDEE11223344", timeout=12)
+        proc.wait_for(r"READER1_CLEAN_TAG_OK", timeout=5)
+
+    def test_ndef_write_tag_removed(self, sim):
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        ctrl1.remove_tag(self.UID_WRITE)
+        proc.wait_for(r"READER1_ON_TAG_REMOVED CCDDEE11223344", timeout=10)
+
+
+class TestNtagMultiPage:
+    """
+    NTAG with a 20-byte NDEF record that spans more than one page read.
+    The simulator initialises page_mem_ with CC at page 3, NDEF TLV at page 4,
+    and overflow at page 8. The firmware must issue three reads (pages 0, 4, 8)
+    to collect the complete message.
+    """
+
+    UID_MULTI = "04AABBCCDDEEFF"
+
+    def test_multi_page_ndef_detected(self, sim):
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        ctrl1.add_tag(self.UID_MULTI, tag_type="NTAG213", ndef=NDEF_TEXT_LONG)
+        proc.wait_for(r"READER1_ON_TAG 04AABBCCDDEEFF", timeout=12)
+
+    def test_multi_page_ndef_message_read(self, sim):
+        proc, ctrl1, ctrl2 = sim
+        proc.wait_for(r"Successfully read NDEF message", timeout=5)
+
+    def test_multi_page_tag_removed(self, sim):
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        ctrl1.remove_tag(self.UID_MULTI)
+        proc.wait_for(r"READER1_ON_TAG_REMOVED 04AABBCCDDEEFF", timeout=10)

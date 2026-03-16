@@ -32,6 +32,9 @@ struct VirtualTag {
   // Raw NDEF record bytes (not wrapped in TLV); used when building block data
   // or NTAG page responses. Empty = no NDEF.
   std::vector<uint8_t> ndef_data;
+  // Flat page memory for NTAG / Ultralight (4 bytes per page).
+  // Initialized by init_ntag_pages_(). Empty for Mifare Classic.
+  std::vector<uint8_t> page_mem_;
 };
 
 // ── Mifare Classic auth state ─────────────────────────────────────────────────

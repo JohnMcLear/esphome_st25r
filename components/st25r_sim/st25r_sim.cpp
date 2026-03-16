@@ -142,6 +142,44 @@ static TagType parse_type(const std::string &name,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// NTAG page memory initialisation
+// ─────────────────────────────────────────────────────────────────────────────
+// Builds a flat page_mem_ for NTAG / Ultralight tags: UID bytes at pages 0-1,
+// Capability Container at page 3, NDEF TLV (if any) starting at page 4.
+// This enables proper multi-page reads and WRITE (0xA2) support.
+static void init_ntag_pages_(VirtualTag &tag) {
+  if (tag.type != TAG_NTAG213 && tag.type != TAG_NTAG215 &&
+      tag.type != TAG_NTAG216 && tag.type != TAG_MIFARE_ULTRALIGHT)
+    return;
+
+  size_t num_pages = (tag.type == TAG_NTAG216) ? 231 :
+                     (tag.type == TAG_NTAG215) ? 135 : 45;  // NTAG213 / UL
+  tag.page_mem_.assign(num_pages * 4, 0);
+
+  // Pages 0-1: UID / serial bytes
+  for (size_t i = 0; i < tag.uid.size() && i < 8; i++)
+    tag.page_mem_[i] = tag.uid[i];
+
+  // Page 3 (bytes 12-15): Capability Container
+  tag.page_mem_[12] = 0xE1;  // NDEF magic
+  tag.page_mem_[13] = 0x10;  // version 1.0
+  tag.page_mem_[14] = 0x6D;  // size (NTAG213 max)
+  tag.page_mem_[15] = 0x00;  // read/write access
+
+  // Pages 4+: NDEF TLV if ndef_data is set
+  if (!tag.ndef_data.empty()) {
+    size_t pos = 16;  // page 4, byte 0
+    size_t nd_len = std::min(tag.ndef_data.size(), (size_t)253);
+    if (pos < tag.page_mem_.size()) tag.page_mem_[pos++] = 0x03;
+    if (pos < tag.page_mem_.size()) tag.page_mem_[pos++] = (uint8_t)nd_len;
+    for (size_t i = 0; i < nd_len && pos < tag.page_mem_.size(); i++)
+      tag.page_mem_[pos++] = tag.ndef_data[i];
+    if (pos < tag.page_mem_.size())
+      tag.page_mem_[pos] = 0xFE;  // Terminator TLV
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Lifecycle
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -165,7 +203,11 @@ void ST25RSim::add_tag(const std::vector<uint8_t> &uid, TagType type) {
   for (auto &t : virtual_tags_) {
     if (t.uid == uid) { t.halted = false; return; }
   }
-  virtual_tags_.push_back({uid, type, false});
+  VirtualTag t;
+  t.uid = uid;
+  t.type = type;
+  init_ntag_pages_(t);
+  virtual_tags_.push_back(std::move(t));
   ESP_LOGI(TAG, "SIM add_tag uid_len=%u type=%u", (unsigned)uid.size(), type);
 }
 
@@ -741,30 +783,50 @@ void ST25RSim::on_transmit_crc_() {
     return;
   }
 
+  // ── NTAG WRITE (A2 <page> <4 bytes>) — responds with ACK ─────────────────
+  if (cmd == 0xA2 && frame.size() >= 6) {
+    uint8_t page = frame[1];
+    {
+      std::lock_guard<std::mutex> lk(tags_mutex_);
+      for (auto &t : virtual_tags_) {
+        if (t.uid == last_selected_full_uid_) {
+          size_t start = (size_t)page * 4;
+          if (!t.page_mem_.empty() && start + 4 <= t.page_mem_.size()) {
+            t.page_mem_[start + 0] = frame[2];
+            t.page_mem_[start + 1] = frame[3];
+            t.page_mem_[start + 2] = frame[4];
+            t.page_mem_[start + 3] = frame[5];
+          }
+          break;
+        }
+      }
+    }
+    // ACK nibble: firmware checks (buffer[0] & 0x0F) == 0x0A
+    fifo_out_ = {0x0A};
+    pending_irq_main_ = IRQ_TXE | IRQ_RXE;
+    ESP_LOGV(TAG, "SIM WRITE page=%u data=%02X%02X%02X%02X",
+             page, frame[2], frame[3], frame[4], frame[5]);
+    return;
+  }
+
   // ── NTAG / Type-2 page read (30 <page>) ──────────────────────────────────
   if (cmd == 0x30 && frame.size() >= 2) {
-    // Return 16 bytes starting at the requested page.
-    // If the tag has NDEF data, embed it; otherwise return terminator.
     uint8_t page = frame[1];
     uint8_t response[16] = {};
-    bool found_tag = false;
 
     {
       std::lock_guard<std::mutex> lk(tags_mutex_);
       for (const auto &t : virtual_tags_) {
         if (t.uid == last_selected_full_uid_) {
-          found_tag = true;
-          if (!t.ndef_data.empty() && page == 0) {
-            // Return NDEF TLV starting at byte 0 of page 0
-            // (simplified: real NTAG has CC at page 3; firmware scans for 0x03)
-            const auto &nd = t.ndef_data;
-            uint8_t len = (uint8_t)std::min(nd.size(), (size_t)13u);
-            response[0] = 0x03;
-            response[1] = len;
-            for (uint8_t i = 0; i < len; i++) response[2 + i] = nd[i];
-            if (2u + len < 16u) response[2 + len] = 0xFE;
+          if (!t.page_mem_.empty()) {
+            // Proper page memory (NTAG/Ultralight): return 4 pages from offset
+            size_t start = (size_t)page * 4;
+            for (int i = 0; i < 16; i++) {
+              size_t idx = start + (size_t)i;
+              response[i] = (idx < t.page_mem_.size()) ? t.page_mem_[idx] : 0;
+            }
           } else {
-            // Terminator only — NDEF parsing stops
+            // Fallback for tags without page_mem_ (shouldn't happen for NTAG)
             response[0] = 0xFE;
           }
           break;
@@ -772,10 +834,6 @@ void ST25RSim::on_transmit_crc_() {
       }
     }
 
-    if (!found_tag) {
-      // No matching tag found — default terminator
-      response[0] = 0xFE;
-    }
     fifo_out_.assign(response, response + 16);
     pending_irq_main_ = IRQ_TXE | IRQ_RXE;
     ESP_LOGV(TAG, "SIM PAGE READ page=%u", page);
@@ -856,8 +914,14 @@ void ST25RSim::handle_client_(int fd) {
           break;
         }
       }
-      if (!found)
-        virtual_tags_.push_back({uid, type, false, key_a, key_b, ndef_data});
+      if (!found) {
+        VirtualTag nt;
+        nt.uid = uid; nt.type = type;
+        nt.key_a = key_a; nt.key_b = key_b;
+        nt.ndef_data = ndef_data;
+        init_ntag_pages_(nt);
+        virtual_tags_.push_back(std::move(nt));
+      }
     }
     ESP_LOGI(TAG, "SIM socket: ADD_TAG uid_len=%u type=%u ndef=%u",
              (unsigned)uid.size(), type, (unsigned)ndef_data.size());
@@ -887,7 +951,11 @@ void ST25RSim::handle_client_(int fd) {
     auto ndef_data = hex_to_bytes(tok[2]);
     std::lock_guard<std::mutex> lk(tags_mutex_);
     for (auto &t : virtual_tags_) {
-      if (t.uid == uid) { t.ndef_data = ndef_data; break; }
+      if (t.uid == uid) {
+        t.ndef_data = ndef_data;
+        init_ntag_pages_(t);
+        break;
+      }
     }
 
   // LIST

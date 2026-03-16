@@ -12,15 +12,40 @@ external_components:
       path: ../../components
     components: [st25r, st25r_sim]
 
+# Binary sensor — fires when UID FF112233 is in the field
+binary_sensor:
+  - platform: st25r
+    st25r_id: reader1
+    name: "NFC Tag FF112233"
+    uid: "FF-11-22-33"
+    on_state:
+      - lambda: |-
+          ESP_LOGI("emulation_test", "BINARY_SENSOR_STATE %d", (int)x);
+
 # Reader 1 — primary reader exercised by most tests
 st25r_sim:
   - id: reader1
     socket_path: /tmp/st25r_sim1.sock
     update_interval: 500ms
     mifare_key_a: FFFFFFFFFFFF
+    status:
+      name: "Reader1 Status"
+      on_state:
+        - lambda: |-
+            ESP_LOGI("emulation_test", "READER1_STATUS %d", (int)x);
+    field_strength:
+      name: "Reader1 Field Strength"
+      on_value:
+        - lambda: |-
+            ESP_LOGI("emulation_test", "READER1_FIELD_STRENGTH %.0f", x);
     on_tag:
       - lambda: |-
           ESP_LOGI("emulation_test", "READER1_ON_TAG %s", x.c_str());
+          if (x == "CCDDEE11223344") {
+            bool ok = id(reader1).clean_tag();
+            if (ok) { ESP_LOGI("emulation_test", "READER1_CLEAN_TAG_OK"); }
+            else    { ESP_LOGW("emulation_test", "READER1_CLEAN_TAG_FAIL"); }
+          }
     on_tag_removed:
       - lambda: |-
           ESP_LOGI("emulation_test", "READER1_ON_TAG_REMOVED %s", x.c_str());
