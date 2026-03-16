@@ -12,3 +12,4 @@ debug.yaml
 *.txt
 *.txt
 tests/unit/test_crypto1
+tests/.esphome
