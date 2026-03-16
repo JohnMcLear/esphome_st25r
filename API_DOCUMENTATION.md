@@ -442,6 +442,8 @@ Issue `STOP_ALL` (0xC3). There is no separate clear command.
 
 ## References
 
-- ST25R3916 datasheet: `docs/st25r3916.pdf` (DS12484 Rev 8)
+- ST25R datasheets (run `docs/fetch_datasheets.sh` to download all):
+  - **1.6 W**: `docs/st25r3916.pdf` (DS12484 Rev 8, primary reference) · ST25R3911B · ST25R3916B · ST25R3917B · ST25R3919
+  - **2.2 W**: ST25R3918 · ST25R3918B · ST25R3920
 - ISO/IEC 14443-3:2018 — Initialization and anticollision
 - Crypto1 algorithm: Courtois, Nohl et al. (2008) — public academic specification

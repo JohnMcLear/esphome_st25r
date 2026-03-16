@@ -7,9 +7,15 @@ An ESPHome component for the STMicroelectronics ST25R family of NFC reader ICs.
 
 ## Supported Hardware
 
-- **ST25R3916 / ST25R3916B**: High-performance NFC universal device (primary target)
-- **ST25R3917 / ST25R3917B**: Reduced feature set version
-- **ST25R3919 / ST25R3920**: Automotive grade versions
+**1.6 W output power**
+- **ST25R3911B**: High-performance NFC/HF card reader (first-generation)
+- **ST25R3916 / ST25R3916B**: High-performance multiprotocol NFC transceiver (primary target)
+- **ST25R3917B**: Reduced-feature variant (no NFC-V / card emulation)
+- **ST25R3919**: Automotive-grade ST25R3916 (AEC-Q100)
+
+**2.2 W output power**
+- **ST25R3918 / ST25R3918B**: High-performance multiprotocol NFC transceiver, higher TX power
+- **ST25R3920**: Automotive-grade ST25R3918 (AEC-Q100)
 
 Verified module: **Elechouse ST25R3916** (SPI and I2C modes both supported).
 

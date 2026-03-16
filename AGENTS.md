@@ -23,7 +23,15 @@ components/
   st25r_spi/         SPI transport (st25r_spi.h/cpp, __init__.py)
   st25r_i2c/         I2C transport (st25r_i2c.h/cpp, __init__.py)
 docs/
-  st25r3916.pdf      Datasheet DS12484 Rev 8 (primary reference)
+  fetch_datasheets.sh  Script to download all ST25R product datasheets into docs/
+  st25r3911b.pdf       ST25R3911B datasheet, 1.6 W (download via fetch_datasheets.sh)
+  st25r3916.pdf        ST25R3916 datasheet DS12484 Rev 8, 1.6 W (primary reference)
+  st25r3916b.pdf       ST25R3916B datasheet, 1.6 W (download via fetch_datasheets.sh)
+  st25r3917b.pdf       ST25R3917B datasheet, 1.6 W (download via fetch_datasheets.sh)
+  st25r3919.pdf        ST25R3919 datasheet, 1.6 W automotive (download via fetch_datasheets.sh)
+  st25r3918.pdf        ST25R3918 datasheet, 2.2 W (download via fetch_datasheets.sh)
+  st25r3918b.pdf       ST25R3918B datasheet, 2.2 W (download via fetch_datasheets.sh)
+  st25r3920.pdf        ST25R3920 datasheet, 2.2 W automotive (download via fetch_datasheets.sh)
 memory/
   multitag_anticol.md   Multi-tag anticollision algorithm — bugs found, fixes applied
   datasheet_notes.md    Register map and SPI/I2C protocol details
@@ -196,5 +204,7 @@ Send `ST25R_CMD_RESET_RX_GAIN` (0xD5) before each transceive (both `transceive_e
 
 - [ESPHome external components guide](https://esphome.io/components/external_components.html)
 - [ESPHome contributing guide](https://esphome.io/guides/contributing.html)
-- ST25R3916 datasheet: `docs/st25r3916.pdf` (DS12484 Rev 8)
+- ST25R datasheets (see `docs/` — run `docs/fetch_datasheets.sh` to download all):
+  - **1.6 W**: ST25R3911B · ST25R3916 (`docs/st25r3916.pdf`, DS12484 Rev 8) · ST25R3916B · ST25R3917B · ST25R3919
+  - **2.2 W**: ST25R3918 · ST25R3918B · ST25R3920
 - Architecture pattern reference: [esphome_pn532](https://github.com/JohnMcLear/esphome_pn532)

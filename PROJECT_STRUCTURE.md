@@ -38,7 +38,15 @@ esphome_st25r/
 │   └── datasheet_notes.md             Register map, SPI protocol, IRQ bit definitions
 │
 ├── docs/
-│   └── st25r3916.pdf                  Datasheet DS12484 Rev 8 (primary reference)
+│   ├── fetch_datasheets.sh            Script: downloads all ST25R datasheets from st.com
+│   ├── st25r3916.pdf                  Datasheet DS12484 Rev 8, 1.6 W (primary reference)
+│   ├── st25r3911b.pdf                 Datasheet, 1.6 W          (fetch_datasheets.sh)
+│   ├── st25r3916b.pdf                 Datasheet, 1.6 W enhanced (fetch_datasheets.sh)
+│   ├── st25r3917b.pdf                 Datasheet, 1.6 W reduced  (fetch_datasheets.sh)
+│   ├── st25r3919.pdf                  Datasheet, 1.6 W auto     (fetch_datasheets.sh)
+│   ├── st25r3918.pdf                  Datasheet, 2.2 W          (fetch_datasheets.sh)
+│   ├── st25r3918b.pdf                 Datasheet, 2.2 W enhanced (fetch_datasheets.sh)
+│   └── st25r3920.pdf                  Datasheet, 2.2 W auto     (fetch_datasheets.sh)
 │
 ├── .github/workflows/
 │   └── compile.yml                    CI: compiles tests/ci-test-spi.yaml + ci-test-i2c.yaml
