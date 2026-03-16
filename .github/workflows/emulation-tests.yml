@@ -22,10 +22,13 @@ jobs:
       - name: Install dependencies
         run: pip install esphome pytest
 
-      - name: Compile host firmware
+      - name: Compile non-B host firmware (IC identity 0x28)
         run: esphome compile tests/emulation/test-emulation.yaml
 
-      - name: Find compiled binary
+      - name: Compile B-version host firmware (IC identity 0x30)
+        run: esphome compile tests/emulation/test-emulation-b.yaml
+
+      - name: Find non-B binary
         id: find_bin
         run: |
           BIN=$(find .esphome/build/st25r-sim -type f -executable -name 'program' 2>/dev/null | head -1)
@@ -33,9 +36,24 @@ jobs:
             BIN=$(find .esphome/build/st25r-sim -type f -executable 2>/dev/null | head -1)
           fi
           echo "binary=$BIN" >> "$GITHUB_OUTPUT"
-          echo "Found binary: $BIN"
+          echo "Found non-B binary: $BIN"
 
-      - name: Run emulation tests
+      - name: Find B-version binary
+        id: find_bin_b
+        run: |
+          BIN=$(find .esphome/build/st25r-sim-b -type f -executable -name 'program' 2>/dev/null | head -1)
+          if [ -z "$BIN" ]; then
+            BIN=$(find .esphome/build/st25r-sim-b -type f -executable 2>/dev/null | head -1)
+          fi
+          echo "binary=$BIN" >> "$GITHUB_OUTPUT"
+          echo "Found B-version binary: $BIN"
+
+      - name: Run non-B emulation tests
         env:
           ST25R_SIM_BINARY: ${{ steps.find_bin.outputs.binary }}
         run: pytest tests/emulation/run_emulation_tests.py -v
+
+      - name: Run B-version emulation tests
+        env:
+          ST25R_SIM_B_BINARY: ${{ steps.find_bin_b.outputs.binary }}
+        run: pytest tests/emulation/run_emulation_tests_b.py -v

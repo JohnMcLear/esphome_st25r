@@ -51,8 +51,6 @@ static constexpr uint8_t REG_FIFO_STATUS2      = 0x1F;
 static constexpr uint8_t REG_COLLISION_DISPLAY = 0x20;
 static constexpr uint8_t REG_AD_CONV_RESULT    = 0x25;
 
-static constexpr uint8_t IC_IDENTITY_VALUE = 0x28;
-
 // ── Odd-parity lookup (identical to st25r.cpp) ────────────────────────────────
 static const uint8_t ODD_PARITY[256] = {
   1,0,0,1,0,1,1,0,0,1,1,0,1,0,0,1,0,1,1,0,1,0,0,1,1,0,0,1,0,1,1,0,
@@ -227,7 +225,7 @@ void ST25RSim::remove_tag(const std::vector<uint8_t> &uid) {
 
 uint8_t ST25RSim::read_register(uint8_t reg) {
   switch (reg) {
-    case REG_IC_IDENTITY:   return IC_IDENTITY_VALUE;
+    case REG_IC_IDENTITY:   return ic_identity_;
     case REG_IRQ_MAIN:      { uint8_t v = pending_irq_main_;  pending_irq_main_  = 0; return v; }
     case REG_IRQ_TIMER:     { uint8_t v = pending_irq_timer_; pending_irq_timer_ = 0; return v; }
     case REG_IRQ_ERROR:     return 0;
@@ -975,6 +973,20 @@ void ST25RSim::handle_client_(int fd) {
     }
     out += "END\n";
     send(fd, out.c_str(), out.size(), 0);
+    return;
+
+  } else if (tok[0] == "SET_IC_IDENTITY" && tok.size() >= 2) {
+    char *end;
+    unsigned long val = strtoul(tok[1].c_str(), &end, 16);
+    ic_identity_ = (uint8_t)val;
+    ESP_LOGI(TAG, "SIM socket: SET_IC_IDENTITY 0x%02X", ic_identity_);
+
+  } else if (tok[0] == "GET_REG" && tok.size() >= 2) {
+    char *end;
+    unsigned long addr = strtoul(tok[1].c_str(), &end, 16);
+    char out[16];
+    snprintf(out, sizeof(out), "0x%02X\n", regs_[addr & 0x3F]);
+    send(fd, out, strlen(out), 0);
     return;
 
   } else {

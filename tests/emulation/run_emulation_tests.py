@@ -185,6 +185,16 @@ class SimController:
     def list_tags(self):
         return self._send("LIST")
 
+    def get_reg(self, addr_hex):
+        """Read a register value from the sim (hex addr string like '0D')."""
+        resp = self._send(f"GET_REG {addr_hex}")
+        return int(resp.strip(), 16)
+
+    def set_ic_identity(self, value_hex):
+        """Change the IC identity the sim reports (hex string like '30')."""
+        resp = self._send(f"SET_IC_IDENTITY {value_hex}")
+        assert "OK" in resp, f"set_ic_identity failed: {resp}"
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Module-scoped fixture — starts binary once for the whole test session
@@ -569,3 +579,19 @@ class TestNtagMultiPage:
             proc.log_lines.clear()
         ctrl1.remove_tag(self.UID_MULTI)
         proc.wait_for(r"READER1_ON_TAG_REMOVED 04AABBCCDDEEFF", timeout=10)
+
+
+class TestRxConf3Selection:
+    """
+    RX_CONF3 is written differently depending on IC identity:
+      IC=0x28 (non-B)  → 0xE2  (lf_en=1 + gain boost, needed for Elechouse module)
+      IC=0x30 (B-ver)  → 0x00  (HF path, full gain, needed for STEVAL board)
+    """
+
+    def test_non_b_rx_conf3(self, sim):
+        proc, ctrl1, ctrl2 = sim
+        # Wait for at least one full update cycle to have written RX_CONF3
+        proc.wait_for(r"Sent WUPA", timeout=5)
+        time.sleep(0.6)  # one more update interval
+        val = ctrl1.get_reg("0D")
+        assert val == 0xE2, f"Expected RX_CONF3=0xE2 for non-B sim, got 0x{val:02X}"

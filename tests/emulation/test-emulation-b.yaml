@@ -1,0 +1,61 @@
+esphome:
+  name: st25r-sim-b
+
+host:
+
+logger:
+  level: DEBUG
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [st25r, st25r_sim]
+
+binary_sensor:
+  - platform: st25r
+    st25r_id: reader1b
+    name: "NFC Tag FF112233 B"
+    uid: "FF-11-22-33"
+    on_state:
+      - lambda: |-
+          ESP_LOGI("emulation_test", "BINARY_SENSOR_B_STATE %d", (int)x);
+
+st25r_sim:
+  - id: reader1b
+    socket_path: /tmp/st25r_sim3.sock
+    ic_identity: 0x30
+    update_interval: 500ms
+    mifare_key_a: FFFFFFFFFFFF
+    status:
+      name: "Reader1B Status"
+      on_state:
+        - lambda: |-
+            ESP_LOGI("emulation_test", "READER1_B_STATUS %d", (int)x);
+    field_strength:
+      name: "Reader1B Field Strength"
+      on_value:
+        - lambda: |-
+            ESP_LOGI("emulation_test", "READER1_B_FIELD_STRENGTH %.0f", x);
+    on_tag:
+      - lambda: |-
+          ESP_LOGI("emulation_test", "READER1_B_ON_TAG %s", x.c_str());
+          if (x == "CCDDEE11223344") {
+            bool ok = id(reader1b).clean_tag();
+            if (ok) { ESP_LOGI("emulation_test", "READER1_B_CLEAN_TAG_OK"); }
+            else    { ESP_LOGW("emulation_test", "READER1_B_CLEAN_TAG_FAIL"); }
+          }
+    on_tag_removed:
+      - lambda: |-
+          ESP_LOGI("emulation_test", "READER1_B_ON_TAG_REMOVED %s", x.c_str());
+
+  - id: reader2b
+    socket_path: /tmp/st25r_sim4.sock
+    ic_identity: 0x30
+    update_interval: 500ms
+    on_tag:
+      - lambda: |-
+          ESP_LOGI("emulation_test", "READER2_B_ON_TAG %s", x.c_str());
+    on_tag_removed:
+      - lambda: |-
+          ESP_LOGI("emulation_test", "READER2_B_ON_TAG_REMOVED %s", x.c_str());

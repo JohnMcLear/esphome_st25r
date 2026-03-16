@@ -26,6 +26,7 @@ binary_sensor:
 st25r_sim:
   - id: reader1
     socket_path: /tmp/st25r_sim1.sock
+    ic_identity: 0x28
     update_interval: 500ms
     mifare_key_a: FFFFFFFFFFFF
     status:
@@ -53,6 +54,7 @@ st25r_sim:
   # Reader 2 — separate socket path; used to test multiple-reader scenarios
   - id: reader2
     socket_path: /tmp/st25r_sim2.sock
+    ic_identity: 0x28
     update_interval: 500ms
     on_tag:
       - lambda: |-

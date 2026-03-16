@@ -60,6 +60,8 @@ struct AuthState {
 //   SET_KEY <uid_hex> A|B <key_hex>
 //   SET_NDEF <uid_hex> <ndef_hex>
 //   LIST
+//   SET_IC_IDENTITY <hex>
+//   GET_REG <addr_hex>
 //
 // Tag type names: MIFARE_1K, MIFARE_4K, NTAG213, NTAG215, NTAG216, ULTRALIGHT
 // (default: MIFARE_1K for 4-byte UIDs, NTAG213 for 7-byte UIDs)
@@ -70,6 +72,7 @@ class ST25RSim : public st25r::ST25R {
   void dump_config() override;
 
   void set_socket_path(const std::string &path) { socket_path_ = path; }
+  void set_ic_identity(uint8_t id) { ic_identity_ = id; }
 
   // Inline API (same-process).
   void add_tag(const std::vector<uint8_t> &uid,
@@ -131,6 +134,8 @@ class ST25RSim : public st25r::ST25R {
   // ── Virtual RF field ──────────────────────────────────────────────────────
   std::vector<VirtualTag> virtual_tags_;
   std::mutex tags_mutex_;
+
+  uint8_t ic_identity_{0x28};
 
   // ── Control socket ────────────────────────────────────────────────────────
   std::string socket_path_{"/tmp/st25r_sim.sock"};
