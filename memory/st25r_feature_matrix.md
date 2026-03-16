@@ -96,29 +96,29 @@ This document provides a comprehensive feature-by-feature comparison across all 
 
 ## Hardware Interfaces
 
-| Feature | ST25R3916/17 | ST25R39xxB | ST25R3914/15 | ST25R200 | ST25R100 | ST25R500 | ST25R501 | ST25R95 | ST25RN300 |
-|---------|--------------|------------|--------------|----------|----------|----------|----------|---------|-----------|
-| **SPI** | ✓ 10 Mbps | ✓ 10 Mbps | ✓ 6 Mbps | ✓ 10 Mbps | ✓ 6 Mbps | ✓ 10 Mbps | ✓ 10 Mbps | ✓ 2 Mbps | ✗ |
-| **I²C** | ✓ 3.4 Mbps | ✓ 3.4 Mbps | ? | ✗ | ✗ | ✗ | ✗ | ? | ✓ (NCI) |
-| **NCI** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
-| **GPIO Count** | Multiple | Multiple | Multiple | Multiple | Multiple | Multiple | Multiple | ? | Multiple |
-| **IRQ Pin** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **RESET Pin** | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ (opt) | ✓ (opt) | ✗ | ✗ |
-| **Clock Output** | ✓ | ✓ | ? | ✗ | ✗ | ✗ | ✗ | ? | ✗ |
+| Feature | ST25R3916/17 | ST25R39xxB | ST25R3914/15 | ST25R200 | ST25R100 | ST25R500 | ST25R300 | ST25R501 | ST25R210 | ST25R95 | ST25RN300 |
+|---------|--------------|------------|--------------|----------|----------|----------|--------|----------|--------|---------|-----------|
+| **SPI** | ✓ 10 Mbps | ✓ 10 Mbps | ✓ 6 Mbps | ✓ 10 Mbps | ✓ 6 Mbps | ✓ 10 Mbps | ✓ 10 Mbps | ✓ 10 Mbps | ✓ 10 Mbps | ✓ 2 Mbps | ✗ |
+| **I²C** | ✓ 3.4 Mbps | ✓ 3.4 Mbps | ? | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ? | ✓ (NCI) |
+| **NCI** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
+| **GPIO Count** | Multiple | Multiple | Multiple | Multiple | Multiple | Multiple | Multiple | Multiple | Multiple | ? | Multiple |
+| **IRQ Pin** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **RESET Pin** | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ (opt) | ✓ (opt) | ✓ (opt) | ✓ (opt) | ✗ | ✗ |
+| **Clock Output** | ✓ | ✓ | ? | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ? | ✗ |
 
 ---
 
 ## Power Management
 
-| Feature | ST25R3916/17 | ST25R39xxB | ST25R3914/15 | ST25R200 | ST25R100 | ST25R500 | ST25R501 | ST25R95 | ST25RN300 |
-|---------|--------------|------------|--------------|----------|----------|----------|----------|---------|-----------|
-| **Supply Voltage** | 2.4–5.5V | 2.4–5.5V | 2.4–5.5V | 2.7–5.5V | 2.7–5.5V | 2.7–5.5V | 2.7–5.5V | ? | 2.4–5.1V |
-| **IO Voltage** | 1.65–5.5V | 1.65–5.5V | 1.65–5.5V | 2.7–5.5V | 2.7–5.5V | 1.65–5.5V | 1.65–5.5V | ? | 1.2/1.8V |
-| **Integrated Regulators** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **Power-Down Mode** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **Hibernate Mode** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
-| **Battery Monitoring** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
-| **External DC-DC Support** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ (5.5V) |
+| Feature | ST25R3916/17 | ST25R39xxB | ST25R3914/15 | ST25R200 | ST25R100 | ST25R500 | ST25R300 | ST25R501 | ST25R210 | ST25R95 | ST25RN300 |
+|---------|--------------|------------|--------------|----------|----------|----------|--------|----------|--------|---------|-----------|
+| **Supply Voltage** | 2.4–5.5V | 2.4–5.5V | 2.4–5.5V | 2.7–5.5V | 2.7–5.5V | 2.7–5.5V | **2.7–6.0V** | 2.7–5.5V | 2.7–5.5V | ? | 2.4–5.1V |
+| **IO Voltage** | 1.65–5.5V | 1.65–5.5V | 1.65–5.5V | 2.7–5.5V | 2.7–5.5V | 1.65–5.5V | 1.65–5.5V | 1.65–5.5V | 1.65–5.5V | ? | 1.2/1.8V |
+| **Integrated Regulators** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Power-Down Mode** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Hibernate Mode** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
+| **Battery Monitoring** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
+| **External DC-DC Support** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ (5.5V) |
 
 ---
 
@@ -176,27 +176,28 @@ This document provides a comprehensive feature-by-feature comparison across all 
 
 ## Physical Characteristics
 
-| Feature | ST25R3916/17 | ST25R39xxB | ST25R3914/15 | ST25R200 | ST25R100 | ST25R500 | ST25R501 | ST25R95 | ST25RN300 |
-|---------|--------------|------------|--------------|----------|----------|----------|----------|---------|-----------|
-| **Package** | QFN32/WLCSP | QFN32/WLCSP | QFN32 | QFN24 | QFN24 | QFN32 | QFN24 | QFN32 | WLCSP49 |
-| **Package Size** | 5x5mm / 3x3mm | 5x5mm / 3x3mm | 5x5mm | 4x4mm | 4x4mm | 5x5mm | 4x4mm | 5x5mm | 2.56x2.58mm |
-| **Pin Count** | 32 / 36 | 32 / 36 | 32 | 24 | 24 | 32 | 24 | 32 | 49 |
-| **Exposed Pad** | GND | GND | GND | GND | GND | **GND (req)** | **GND (req)** | GND | N/A |
-| **Wettable Flanks** | ✗ | ✗ | ✓ (3914) | ✗ | ✗ | ✗ | ✓ | ✗ | ✗ |
-| **ECOPACK** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Feature | ST25R3916/17 | ST25R39xxB | ST25R3914/15 | ST25R200 | ST25R100 | ST25R500 | ST25R300 | ST25R501 | ST25R210 | ST25R95 | ST25RN300 |
+|---------|--------------|------------|--------------|----------|----------|----------|--------|----------|--------|---------|-----------|
+| **Package** | QFN32/WLCSP | QFN32/WLCSP | QFN32 | QFN24 | QFN24 | QFN32 | QFN32 | QFN24 | QFN32 | QFN32 | WLCSP49 |
+| **Package Size** | 5x5mm / 3x3mm | 5x5mm / 3x3mm | 5x5mm | 4x4mm | 4x4mm | 5x5mm | 5x5mm | 4x4mm | ? | 5x5mm | 2.56x2.58mm |
+| **Pin Count** | 32 / 36 | 32 / 36 | 32 | 24 | 24 | 32 | 32 | 24 | ? | 32 | 49 |
+| **Datasheet** | DS12484 | DS13541 | DS11837 | DS13658 | DS14139 | DS14593 | **DS14655** | DS14983 | **(missing)** | DS12807 | DB5606 |
+| **Exposed Pad** | GND | GND | GND | GND | GND | **GND (req)** | **GND (req)** | **GND (req)** | **GND (req)** | GND | N/A |
+| **Wettable Flanks** | ✗ | ✗ | ✓ (3914) | ✗ | ✗ | ✗ | ✗ | ✓ | ? | ✗ | ✗ |
+| **ECOPACK** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 ---
 
 ## Environmental
 
-| Feature | ST25R3916/17 | ST25R39xxB | ST25R3914/15 | ST25R200 | ST25R100 | ST25R500 | ST25R501 | ST25R95 | ST25RN300 |
-|---------|--------------|------------|--------------|----------|----------|----------|----------|---------|-----------|
-| **Operating Temp Min** | -40°C | -40°C | -40°C | -40°C | -25°C | -40°C | -40°C | ? | -40°C |
-| **Operating Temp Max** | +105°C | +105°C | **+125°C** | +85°C | +85°C | **+125°C** | **+125°C** | ? | +85°C |
-| **Storage Temp Min** | -65°C | -65°C | -65°C | -65°C | -65°C | -65°C | -65°C | ? | -65°C |
-| **Storage Temp Max** | +150°C | +150°C | +150°C | +150°C | +150°C | +150°C | +150°C | ? | +150°C |
-| **AEC-Q100** | ✗ | ✗ | ✓ Grade 1 | ✗ | ✗ | ✓ Grade 1 | ✓ Grade 1 | ✗ | ✗ |
-| **ESD Protection** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Feature | ST25R3916/17 | ST25R39xxB | ST25R3914/15 | ST25R200 | ST25R100 | ST25R500 | ST25R300 | ST25R501 | ST25R210 | ST25R95 | ST25RN300 |
+|---------|--------------|------------|--------------|----------|----------|----------|--------|----------|--------|---------|-----------|
+| **Operating Temp Min** | -40°C | -40°C | -40°C | -40°C | -25°C | -40°C | -40°C | -40°C | -40°C | ? | -40°C |
+| **Operating Temp Max** | +105°C | +105°C | **+125°C** | +85°C | +85°C | **+125°C** | +105°C | **+125°C** | **+125°C** | ? | +85°C |
+| **Storage Temp Min** | -65°C | -65°C | -65°C | -65°C | -65°C | -65°C | -65°C | -65°C | -65°C | ? | -65°C |
+| **Storage Temp Max** | +150°C | +150°C | +150°C | +150°C | +150°C | +150°C | +150°C | +150°C | +150°C | ? | +150°C |
+| **AEC-Q100** | ✗ | ✗ | ✓ Grade 1 | ✗ | ✗ | ✓ Grade 1 | ✗ | ✓ Grade 1 | ✓ Grade 1 | ✗ | ✗ |
+| **ESD Protection** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 ---
 
@@ -243,6 +244,11 @@ This document provides a comprehensive feature-by-feature comparison across all 
 - **Best for:** Automotive digital key, center console
 - **Avoid if:** Need card emulation in smallest package
 
+### ST25R300 (Consumer/Industrial Payment)
+- **Unique:** **256-byte FIFO** (smaller than ST25R500), **2.7–6.0V supply**, TruST25 Link
+- **Best for:** Payment terminals, POS systems, EMVCo PCD 3.2a applications
+- **Avoid if:** Need automotive grade (not AEC-Q100), large FIFO, or 125°C operation
+
 ### ST25R501 (Automotive Compact)
 - **Unique:** Smallest automotive variant
 - **Best for:** Door handles, space-constrained automotive
@@ -268,7 +274,7 @@ Start
 │  └─ No → Mobile/Battery powered?
 │           ├─ Yes → ST25RN300 (NCI, lowest power)
 │           └─ No → Payment/EMVCo 3.2a required?
-│                    ├─ Yes → ST25R39xxB
+│                    ├─ Yes → ST25R300 (consumer/industrial) or ST25R39xxB
 │                    └─ No → Capacitive wake-up required?
 │                             ├─ Yes → ST25R3916/17 (non-B)
 │                             └─ No → Space constrained?
@@ -295,6 +301,7 @@ All information extracted from official STMicroelectronics datasheets and applic
 - DS13658 (ST25R200)
 - DS14139 (ST25R100)
 - DS14593 (ST25R500)
+- **DS14655 (ST25R300)**
 - DS14983 (ST25R501)
 - DS12807 (ST25R95)
 - DB5606 (ST25RN300)
