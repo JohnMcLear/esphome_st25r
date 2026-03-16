@@ -122,7 +122,8 @@ void ST25R::update() {
   if (this->is_failed() || this->state_ != STATE_IDLE) return;
 
   uint8_t ic_identity = this->read_register(IC_IDENTITY);
-  if ((ic_identity >> 3) != 0x05) {
+  uint8_t chip_type_upd = ic_identity & 0xF8;
+  if (chip_type_upd != 0x28 && chip_type_upd != 0x30) {
     ESP_LOGW(TAG, "IC identity check failed: 0x%02X", ic_identity);
     this->health_check_failures_++;
     if (this->status_binary_sensor_ != nullptr) {
@@ -923,11 +924,13 @@ bool ST25R::reset_() {
 
   uint8_t ic_identity = this->read_register(IC_IDENTITY);
   ESP_LOGD(TAG, "  reset_: IC identity read: 0x%02X", ic_identity);
-  if ((ic_identity >> 3) != 0x05) {
-    ESP_LOGE(TAG, "  reset_: IC identity mismatch! Expected 0x28 (shifted), got 0x%02X", ic_identity >> 3);
+  uint8_t chip_type = ic_identity & 0xF8;
+  if (chip_type != 0x28 && chip_type != 0x30) {
+    ESP_LOGE(TAG, "  reset_: IC identity mismatch! Expected 0x28/0x30, got 0x%02X", chip_type);
     return false;
   }
-  ESP_LOGI(TAG, "IC identity match: 0x%02X", ic_identity);
+  bool is_b_version = (chip_type == 0x30);
+  ESP_LOGI(TAG, "IC identity match: 0x%02X (ST25R3916%s)", ic_identity, is_b_version ? "B" : "");
 
   ESP_LOGV(TAG, "  reset_: Enabling Ready mode");
   this->write_register(OP_CONTROL, 0x80); // en=1: Ready mode (enable oscillator and regulators)
@@ -944,8 +947,8 @@ bool ST25R::reset_() {
   this->write_register(MASK_MAIN, 0x00); // Enable all interrupts
   this->write_register(ISO14443A_CONF, 0x00); 
 
-  uint8_t d_res = (15 - this->rf_power_) & 0x0F; 
-  this->write_register(TX_DRIVER_CONF, d_res); 
+  uint8_t d_res = (15 - this->rf_power_) & 0x0F;
+  this->write_register(TX_DRIVER_CONF, 0x70 | d_res);  // am_mod=7 (12% AM mod, ISO14443 min 10%) + d_res
 
   if (this->rf_field_enabled_) {
     ESP_LOGV(TAG, "  reset_: Enabling RF field");
@@ -1125,6 +1128,8 @@ void ST25R::dump_config() {
   ESP_LOGCONFIG(TAG, "  RF Power: %u", this->rf_power_);
   ESP_LOGCONFIG(TAG, "  RF Field Enabled: %s", YESNO(this->rf_field_enabled_));
   LOG_UPDATE_INTERVAL(this);
+  uint8_t ic_id = this->read_register(IC_IDENTITY);
+  ESP_LOGCONFIG(TAG, "  IC Identity (live read): 0x%02X (chip_type=0x%02X)", ic_id, ic_id & 0xF8);
 }
 
 bool ST25RBinarySensor::process(const std::string &uid) {
