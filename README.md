@@ -53,7 +53,7 @@ Flash, open logs — you should see `ST25R initialized successfully` and then a 
 |-----|---------|-------------|
 | `cs_pin` | required | SPI chip select |
 | `irq_pin` | — | IRQ GPIO (recommended; falls back to polling without it) |
-| `reset_pin` | — | Hardware reset GPIO (optional, improves recovery) |
+| `reset_pin` | — | Hardware reset GPIO (optional, improves recovery; required on ST25R300) |
 | `update_interval` | `1s` | Tag polling rate |
 | `rf_power` | `15` | TX driver strength 0–15 (15 = max range) |
 | `rf_field_enabled` | `true` | Keep RF field on between scans |
@@ -135,46 +135,6 @@ st25r_i2c:
           format: "Tag: %s"
           args: ['x.c_str()']
 ```
-
----
-
-## ST25R300 (X-NUCLEO-NFC12A1)
-
-The ST25R300 uses a different SPI protocol and register map, so it has its own component pair.
-
-**Wiring (X-NUCLEO-NFC12A1 Arduino header → ESP32-C6):**
-
-| X-NUCLEO pin | ESP32-C6 | Notes |
-|-------------|---------|-------|
-| D13 (SCLK) | GPIO19 | |
-| D12 (MISO) | GPIO10 | |
-| D11 (MOSI) | GPIO18 | |
-| D10 (CS) | GPIO6 | |
-| D7 (IRQ) | GPIO7 | |
-| RESET | GPIO5 | Active high; keep low for normal operation |
-
-```yaml
-external_components:
-  - source: github://JohnMcLear/esphome_st25r
-    components: [st25r300, st25r300_spi]
-
-spi:
-  clk_pin: GPIO19
-  miso_pin: GPIO10
-  mosi_pin: GPIO18
-
-st25r300_spi:
-  cs_pin: GPIO6
-  irq_pin: GPIO7
-  reset_pin: GPIO5
-  on_tag:
-    then:
-      - logger.log:
-          format: "Tag: %s"
-          args: ['x.c_str()']
-```
-
-> ST25R300 support is new — tested on compile only. Hardware validation pending.
 
 ---
 
