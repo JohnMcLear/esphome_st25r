@@ -12,13 +12,26 @@ external_components:
       path: ../../components
     components: [st25r, st25r_sim]
 
+# Reader 1 — primary reader exercised by most tests
 st25r_sim:
-  - id: sim_reader
-    socket_path: /tmp/st25r_sim.sock
-    update_interval: 1s
+  - id: reader1
+    socket_path: /tmp/st25r_sim1.sock
+    update_interval: 500ms
+    mifare_key_a: FFFFFFFFFFFF
     on_tag:
       - lambda: |-
-          ESP_LOGI("emulation_test", "SIM_ON_TAG %s", x.c_str());
+          ESP_LOGI("emulation_test", "READER1_ON_TAG %s", x.c_str());
     on_tag_removed:
       - lambda: |-
-          ESP_LOGI("emulation_test", "SIM_ON_TAG_REMOVED %s", x.c_str());
+          ESP_LOGI("emulation_test", "READER1_ON_TAG_REMOVED %s", x.c_str());
+
+  # Reader 2 — separate socket path; used to test multiple-reader scenarios
+  - id: reader2
+    socket_path: /tmp/st25r_sim2.sock
+    update_interval: 500ms
+    on_tag:
+      - lambda: |-
+          ESP_LOGI("emulation_test", "READER2_ON_TAG %s", x.c_str());
+    on_tag_removed:
+      - lambda: |-
+          ESP_LOGI("emulation_test", "READER2_ON_TAG_REMOVED %s", x.c_str());
