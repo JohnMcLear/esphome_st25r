@@ -422,8 +422,7 @@ bool ST25R::mifare_read_block_(uint8_t block, uint8_t *data,
 
 std::unique_ptr<nfc::NfcTag> ST25R::read_tag_(std::vector<uint8_t> &uid) {
   uint8_t type = nfc::guess_tag_type(uid.size());
-  ESP_LOGI(TAG, "read_tag_: UID length=%d, guessed type=%d", uid.size(), type);
-  ESP_LOG_BUFFER_HEX_LEVEL(TAG, uid.data(), uid.size(), ESP_LOG_INFO);
+  ESP_LOGI(TAG, "read_tag_: UID length=%zu, guessed type=%d", uid.size(), type);
 
   if (type == nfc::TAG_TYPE_MIFARE_CLASSIC) {
     ESP_LOGI(TAG, "Mifare Classic detected - attempting authentication");
@@ -498,7 +497,7 @@ std::unique_ptr<nfc::NfcTag> ST25R::read_tag_(std::vector<uint8_t> &uid) {
         if (data[i] == 0x03) {
           tlv_index = i;
           found = true;
-          ESP_LOGD(TAG, "  Found NDEF TLV at index %d", i);
+          ESP_LOGD(TAG, "  Found NDEF TLV at index %zu", i);
           break;
         }
         if (data[i] == 0xFE) {
@@ -517,12 +516,12 @@ std::unique_ptr<nfc::NfcTag> ST25R::read_tag_(std::vector<uint8_t> &uid) {
               if (data[i] == 0x03) {
                 tlv_index = i;
                 found = true;
-                ESP_LOGD(TAG, "  Found NDEF TLV at index %d", i);
+                ESP_LOGD(TAG, "  Found NDEF TLV at index %zu", i);
                 break;
               }
               if (data[i] == 0xFE) {
                 terminator_found = true;
-                ESP_LOGD(TAG, "  Found Terminator TLV (0xFE) at index %d", i);
+                ESP_LOGD(TAG, "  Found Terminator TLV (0xFE) at index %zu", i);
                 break;
               }
             }
@@ -752,7 +751,7 @@ void ST25R::process_state_() {
             // Tag fully selected — validate UID length (must be 4 or 7 bytes; 3-byte = CL1 glitch)
             size_t uid_bytes_len = this->current_uid_.length() / 2;
             if (uid_bytes_len != 4 && uid_bytes_len != 7) {
-              ESP_LOGW(TAG, "Discarding invalid UID len=%u (%s)", uid_bytes_len, this->current_uid_.c_str());
+              ESP_LOGW(TAG, "Discarding invalid UID len=%zu (%s)", uid_bytes_len, this->current_uid_.c_str());
               this->state_ = STATE_IDLE;
               this->finalize_scan_();
               return;
@@ -1093,7 +1092,7 @@ bool ST25R::ndef_write(nfc::NdefMessage *message, bool format) {
   // Pad to 4-byte pages
   while (payload.size() % 4 != 0) payload.push_back(0);
 
-  ESP_LOGD(TAG, "Writing NDEF message, total size with TLVs: %d", payload.size());
+  ESP_LOGD(TAG, "Writing NDEF message, total size with TLVs: %zu", payload.size());
 
   for (size_t i = 0; i < payload.size(); i += 4) {
     uint8_t page = 4 + (i / 4);
