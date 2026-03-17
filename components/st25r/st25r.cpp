@@ -974,7 +974,9 @@ bool ST25R::reset_() {
   this->write_register(ISO14443A_CONF, 0x00);
 
   uint8_t d_res = (15 - this->rf_power_) & 0x0F;
-  this->write_register(TX_DRIVER_CONF, d_res);  // am_mod=0 = 100% ASK (OOK) for ISO14443A; d_res controls driver resistance
+  // am_mod (bits[7:4]) MUST be 0 for ISO14443A — 100% ASK (OOK) required; tags cannot demodulate REQA/WUPA with partial AM.
+  // Do NOT set am_mod=7 (0x70|d_res): that is for ISO14443B (type B uses ~10% ASK). Applies equally to non-B and B chip variants.
+  this->write_register(TX_DRIVER_CONF, d_res);
 
   if (this->rf_field_enabled_) {
     ESP_LOGV(TAG, "  reset_: Enabling RF field");
