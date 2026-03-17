@@ -974,7 +974,7 @@ bool ST25R::reset_() {
   this->write_register(ISO14443A_CONF, 0x00);
 
   uint8_t d_res = (15 - this->rf_power_) & 0x0F;
-  this->write_register(TX_DRIVER_CONF, 0x70 | d_res);  // am_mod=7 (12% AM mod, ISO14443 min 10%) + d_res
+  this->write_register(TX_DRIVER_CONF, d_res);  // am_mod=0 = 100% ASK (OOK) for ISO14443A; d_res controls driver resistance
 
   if (this->rf_field_enabled_) {
     ESP_LOGV(TAG, "  reset_: Enabling RF field");
