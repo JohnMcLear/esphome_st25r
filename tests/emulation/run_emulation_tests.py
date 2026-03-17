@@ -688,6 +688,45 @@ class TestOnTagActionChain:
         proc.wait_for(r"READER1_ON_TAG_REMOVED_ACTION DEADBEEF", timeout=5)
 
 
+class TestMissThreshold:
+    """
+    on_tag_removed must not fire until miss_threshold consecutive missed scans.
+
+    test-emulation.yaml sets miss_threshold=3, update_interval=500ms.
+    After removing the tag from the sim, removal should fire between
+    3 and 4 scan cycles (1500ms–2000ms).  It must NOT fire within the
+    first 2 scan cycles (~1000ms), confirming the threshold is respected.
+    """
+
+    UID = "CAFEF00D"
+    UPDATE_MS = 500
+    THRESHOLD = 3
+
+    def test_removal_requires_threshold_misses(self, sim):
+        proc, ctrl1, ctrl2 = sim
+        # Ensure tag is present first
+        with proc._lock:
+            proc.log_lines.clear()
+        ctrl1.add_tag(self.UID)
+        proc.wait_for(rf"READER1_ON_TAG {self.UID}", timeout=5)
+
+        # Remove the tag — removal must NOT fire before threshold misses
+        with proc._lock:
+            proc.log_lines.clear()
+        ctrl1.remove_tag(self.UID)
+
+        too_soon_ms = (self.THRESHOLD - 1) * self.UPDATE_MS  # 1000ms
+        time.sleep(too_soon_ms / 1000)
+        with proc._lock:
+            for line in proc.log_lines:
+                assert rf"READER1_ON_TAG_REMOVED {self.UID}" not in line, (
+                    f"on_tag_removed fired before {self.THRESHOLD} missed scans"
+                )
+
+        # Now it must fire within the next 2 scan cycles
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.UID}", timeout=2.0)
+
+
 class TestDetectionLatency:
     """
     Tag detection and removal must complete within UX-acceptable time bounds.

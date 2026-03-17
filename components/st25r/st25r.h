@@ -120,6 +120,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   void set_rx_gain_boost(bool boost) { this->rx_gain_boost_ = boost; }
   void set_mifare_key_a(uint64_t key) { this->mifare_key_a_ = key; }
   void set_mifare_key_b(uint64_t key) { this->mifare_key_b_ = key; }
+  void set_miss_threshold(uint8_t t) { this->miss_threshold_ = t; }
 
   void register_on_tag_trigger(ST25RTagTrigger *trig) { this->on_tag_triggers_.push_back(trig); }
   void register_on_tag_removed_trigger(ST25RTagRemovedTrigger *trig) {
@@ -169,6 +170,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   bool rx_gain_boost_{false};
   uint64_t mifare_key_a_{0xFFFFFFFFFFFFULL};
   uint64_t mifare_key_b_{0xFFFFFFFFFFFFULL};
+  uint8_t miss_threshold_{3};
   bool is_b_version_{false};
   uint8_t health_check_failures_{0};
   uint8_t reinitialization_attempts_{0};

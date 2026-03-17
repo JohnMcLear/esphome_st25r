@@ -28,6 +28,7 @@ st25r_sim:
     socket_path: /tmp/st25r_sim1.sock
     ic_identity: 0x28
     update_interval: 500ms
+    miss_threshold: 3
     mifare_key_a: FFFFFFFFFFFF
     status:
       name: "Reader1 Status"

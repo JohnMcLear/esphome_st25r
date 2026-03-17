@@ -878,7 +878,7 @@ void ST25R::finalize_scan_() {
       kv.second = 0;  // seen this scan — reset miss counter
     } else {
       kv.second++;
-      if (kv.second >= 3) {
+      if (kv.second >= this->miss_threshold_) {
         to_remove.push_back(kv.first);
       }
     }

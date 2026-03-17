@@ -36,7 +36,8 @@ st25r_i2c:
   id: st25r_i2c_board
   address: 0x50
   irq_pin: 5
-  update_interval: 1s
+  update_interval: 500ms
+  miss_threshold: 5
   on_tag:
     then:
       - output.turn_on: led
