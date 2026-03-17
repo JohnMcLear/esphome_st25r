@@ -19,7 +19,12 @@ external_components:
   - source:
       type: local
       path: ../components
-    components: [st25r, st25r_i2c]
+    components: [st25r, st25r_spi, st25r_i2c]
+
+spi:
+  clk_pin: GPIO19
+  miso_pin: GPIO10
+  mosi_pin: GPIO18
 
 output:
   - platform: gpio
@@ -32,12 +37,33 @@ i2c:
   scan: true
   frequency: 100khz
 
+st25r_spi:
+  id: st25r_spi_board
+  cs_pin: GPIO6
+  irq_pin: GPIO7
+  update_interval: 500ms
+  miss_threshold: 5
+  supply_3v3: false
+  on_tag:
+    then:
+      - output.turn_on: led
+      - logger.log:
+          format: "SPI Tag detected: %s"
+          args: ['x.c_str()']
+  on_tag_removed:
+    then:
+      - output.turn_off: led
+      - logger.log:
+          format: "SPI Tag removed: %s"
+          args: ['x.c_str()']
+
 st25r_i2c:
   id: st25r_i2c_board
   address: 0x50
   irq_pin: 5
   update_interval: 500ms
   miss_threshold: 5
+  supply_3v3: false
   on_tag:
     then:
       - output.turn_on: led
@@ -50,22 +76,3 @@ st25r_i2c:
       - logger.log:
           format: "I2C Tag removed: %s"
           args: ['x.c_str()']
-
-# SPI reader disabled — testing I2C reader isolation
-# st25r_spi:
-#   id: st25r_spi_board
-#   cs_pin: GPIO6
-#   irq_pin: GPIO7
-#   update_interval: 1s
-#   on_tag:
-#     then:
-#       - output.turn_on: led
-#       - logger.log:
-#           format: "SPI Tag detected: %s"
-#           args: ['x.c_str()']
-#   on_tag_removed:
-#     then:
-#       - output.turn_off: led
-#       - logger.log:
-#           format: "SPI Tag removed: %s"
-#           args: ['x.c_str()']
