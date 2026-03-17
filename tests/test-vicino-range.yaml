@@ -36,9 +36,12 @@ st25r_spi:
   id: my_st25r
   cs_pin: GPIO6
   irq_pin: GPIO7
+  supply_3v3: false
   rf_power: 15           # max TX power
   rx_gain_boost: true    # boosts PM channel +5.5dB on top of existing AM boost
   update_interval: 200ms # fast polling — ring may only couple briefly
+  ant_tune_a: 128        # AAT DAC A (0-255): tunes external varicap on AAT_A pin; 128=chip default mid-range
+  ant_tune_b: 128        # AAT DAC B (0-255): tunes external varicap on AAT_B pin; 128=chip default mid-range
 
   # Field strength sensor: watch this value change as ring approaches.
   # Baseline (no tag): note the value.

@@ -19,6 +19,9 @@ void ST25RSpi::dump_config() {
 
 uint8_t ST25RSpi::read_register(uint8_t reg) {
   this->enable();
+  if (reg & 0x40) {
+    this->write_byte(0xFB);  // Space B prefix (DS12484 p.52)
+  }
   this->write_byte(0x40 | (reg & 0x3F));
   uint8_t value = this->read_byte();
   this->disable();
@@ -27,6 +30,9 @@ uint8_t ST25RSpi::read_register(uint8_t reg) {
 
 void ST25RSpi::write_register(uint8_t reg, uint8_t value) {
   this->enable();
+  if (reg & 0x40) {
+    this->write_byte(0xFB);  // Space B prefix (DS12484 p.52)
+  }
   this->write_byte(0x00 | (reg & 0x3F));
   this->write_byte(value);
   this->disable();

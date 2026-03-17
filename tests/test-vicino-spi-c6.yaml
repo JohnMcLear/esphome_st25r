@@ -35,6 +35,7 @@ st25r_spi:
   id: my_st25r
   cs_pin: GPIO6
   irq_pin: GPIO7
+  supply_3v3: false
   update_interval: 1s
   on_tag:
     then:

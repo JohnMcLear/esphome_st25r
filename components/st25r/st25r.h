@@ -39,6 +39,8 @@ enum ST25RRegister : uint8_t {
   NUM_TX_BYTES1 = 0x22,
   NUM_TX_BYTES2 = 0x23,
   COLLISION_DISPLAY = 0x20,
+  ANT_TUNE_A = 0x26,   // Antenna tuning DAC A (Space A): V = (0.044 + 0.868 * val/255) * VDD_A; default 0x80
+  ANT_TUNE_B = 0x27,   // Antenna tuning DAC B (Space A): same formula; default 0x80
   TX_DRIVER_CONF = 0x28,
   AD_CONV_RESULT = 0x25,
   IC_IDENTITY = 0x3F,
@@ -121,6 +123,8 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   void set_mifare_key_a(uint64_t key) { this->mifare_key_a_ = key; }
   void set_mifare_key_b(uint64_t key) { this->mifare_key_b_ = key; }
   void set_miss_threshold(uint8_t t) { this->miss_threshold_ = t; }
+  void set_ant_tune_a(uint8_t v) { this->ant_tune_a_ = v; }
+  void set_ant_tune_b(uint8_t v) { this->ant_tune_b_ = v; }
 
   void register_on_tag_trigger(ST25RTagTrigger *trig) { this->on_tag_triggers_.push_back(trig); }
   void register_on_tag_removed_trigger(ST25RTagRemovedTrigger *trig) {
@@ -171,6 +175,8 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   uint64_t mifare_key_a_{0xFFFFFFFFFFFFULL};
   uint64_t mifare_key_b_{0xFFFFFFFFFFFFULL};
   uint8_t miss_threshold_{3};
+  uint8_t ant_tune_a_{0x80};  // AAT DAC A: 0x80 = mid-range (~0.48V on 3.3V / ~0.87V on 5V)
+  uint8_t ant_tune_b_{0x80};  // AAT DAC B: same
   bool is_b_version_{false};
   uint8_t health_check_failures_{0};
   uint8_t reinitialization_attempts_{0};

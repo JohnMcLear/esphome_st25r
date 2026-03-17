@@ -37,6 +37,8 @@ CONF_FIELD_STRENGTH = "field_strength"
 CONF_MIFARE_KEY_A = "mifare_key_a"
 CONF_MIFARE_KEY_B = "mifare_key_b"
 CONF_MISS_THRESHOLD = "miss_threshold"
+CONF_ANT_TUNE_A = "ant_tune_a"
+CONF_ANT_TUNE_B = "ant_tune_b"
 
 st25r_ns = cg.esphome_ns.namespace("st25r")
 ST25R = st25r_ns.class_("ST25R", cg.PollingComponent)
@@ -63,6 +65,8 @@ ST25R_SCHEMA = cv.Schema(
         cv.Optional(CONF_MIFARE_KEY_A, default="FFFFFFFFFFFF"): _validate_mifare_key,
         cv.Optional(CONF_MIFARE_KEY_B, default="FFFFFFFFFFFF"): _validate_mifare_key,
         cv.Optional(CONF_MISS_THRESHOLD, default=3): cv.int_range(min=1, max=255),
+        cv.Optional(CONF_ANT_TUNE_A, default=0x80): cv.int_range(min=0, max=255),
+        cv.Optional(CONF_ANT_TUNE_B, default=0x80): cv.int_range(min=0, max=255),
         cv.Optional(CONF_STATUS): binary_sensor_.binary_sensor_schema(),
         cv.Optional(CONF_FIELD_STRENGTH): sensor_.sensor_schema(),
         cv.Optional(CONF_ON_TAG): automation.validate_automation(
@@ -97,6 +101,8 @@ async def setup_st25r(var, config):
     cg.add(var.set_mifare_key_a(int(config[CONF_MIFARE_KEY_A], 16)))
     cg.add(var.set_mifare_key_b(int(config[CONF_MIFARE_KEY_B], 16)))
     cg.add(var.set_miss_threshold(config[CONF_MISS_THRESHOLD]))
+    cg.add(var.set_ant_tune_a(config[CONF_ANT_TUNE_A]))
+    cg.add(var.set_ant_tune_b(config[CONF_ANT_TUNE_B]))
 
     if CONF_STATUS in config:
         sens = await binary_sensor_.new_binary_sensor(config[CONF_STATUS])
