@@ -62,6 +62,13 @@ st25r_i2c:
   update_interval: 1s
   on_tag:
     then:
+      - output.turn_on: led
       - logger.log:
           format: "I2C Tag detected: %s"
+          args: ['x.c_str()']
+  on_tag_removed:
+    then:
+      - output.turn_off: led
+      - logger.log:
+          format: "I2C Tag removed: %s"
           args: ['x.c_str()']
