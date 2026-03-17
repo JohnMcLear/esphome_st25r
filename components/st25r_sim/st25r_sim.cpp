@@ -50,6 +50,7 @@ static constexpr uint8_t REG_FIFO_STATUS1      = 0x1E;
 static constexpr uint8_t REG_FIFO_STATUS2      = 0x1F;
 static constexpr uint8_t REG_COLLISION_DISPLAY = 0x20;
 static constexpr uint8_t REG_AD_CONV_RESULT    = 0x25;
+static constexpr uint8_t REG_TX_DRIVER_CONF    = 0x28;
 
 // ── Odd-parity lookup (identical to st25r.cpp) ────────────────────────────────
 static const uint8_t ODD_PARITY[256] = {
@@ -408,6 +409,20 @@ void ST25RSim::on_wupa_() {
   collision_display_ = 0;
   last_selected_valid_ = false;
   auth_state_ = {};  // reset any in-progress auth
+
+  // Enforce correct AM modulation for ISO14443A.
+  // TX_DRIVER_CONF bits[7:4] = am_mod — must be 0 (100% ASK / OOK).
+  // am_mod != 0 (e.g. 0x70 = am_mod=7 = 12% ASK) means the carrier never
+  // fully switches off during WUPA pulses, so real tags cannot demodulate the
+  // command and never respond.  Simulate that behaviour here so tests catch it.
+  uint8_t tx_conf = regs_[REG_TX_DRIVER_CONF & 0x3F];
+  if ((tx_conf & 0xF0) != 0x00) {
+    ESP_LOGW(TAG, "SIM WUPA rejected: TX_DRIVER_CONF=0x%02X has non-zero am_mod "
+             "(bits[7:4]=0x%X); ISO14443A requires am_mod=0 (100%% ASK). "
+             "Tags will not respond.", tx_conf, (tx_conf >> 4) & 0xF);
+    pending_irq_timer_ = 0x40;  // NRE — no response
+    return;
+  }
 
   std::lock_guard<std::mutex> lk(tags_mutex_);
   for (auto &t : virtual_tags_) t.halted = false;

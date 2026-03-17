@@ -770,6 +770,59 @@ class TestDetectionLatency:
         )
 
 
+class TestInitRegisters:
+    """
+    Critical registers must be set to the correct values after startup.
+
+    These are direct regression tests for misconfiguration bugs.  Each test
+    reads a register value back from the sim via GET_REG and asserts the
+    expected value.
+
+    Registers under test and why they matter:
+      TX_DRIVER_CONF (0x28): am_mod bits[7:4] MUST be 0 (100% ASK / OOK for
+          ISO14443A).  Any non-zero am_mod causes the carrier to only partially
+          dip during WUPA/REQA pulses — real tags cannot demodulate the command
+          and never respond.  Regression: commit 92f7807 set am_mod=7 (0x70),
+          which destroyed all tag detection until fixed in 7fc9554.
+
+      IO_CONF2 (0x01): sup3V bit (bit7) selects the supply voltage regulator
+          mode.  Default supply_3v3=true → 0x80.  Wrong setting degrades or
+          kills the TX driver output level.
+
+      MODE (0x03): must be 0x08 (ISO14443A initiator mode).  Any other value
+          switches the chip out of NFC-A mode and breaks all tag detection.
+    """
+
+    def test_tx_driver_conf_am_mod_zero(self, sim):
+        """TX_DRIVER_CONF bits[7:4] (am_mod) must be 0 — 100% ASK for ISO14443A."""
+        proc, ctrl1, ctrl2 = sim
+        proc.wait_for(r"Sent WUPA", timeout=5)
+        val = ctrl1.get_reg("28")
+        assert (val & 0xF0) == 0x00, (
+            f"TX_DRIVER_CONF am_mod must be 0 for ISO14443A (100% ASK), "
+            f"got TX_DRIVER_CONF=0x{val:02X} (am_mod=0x{(val>>4)&0xF:X}). "
+            f"Regression: am_mod!=0 means tags never respond to WUPA/REQA."
+        )
+
+    def test_io_conf2_supply_3v3_default(self, sim):
+        """IO_CONF2 must be 0x80 (sup3V=1) when supply_3v3 is default true."""
+        proc, ctrl1, ctrl2 = sim
+        val = ctrl1.get_reg("01")
+        assert val == 0x80, (
+            f"IO_CONF2 expected 0x80 (supply_3v3=true default), got 0x{val:02X}. "
+            f"Wrong supply mode reduces TX driver output power."
+        )
+
+    def test_mode_iso14443a(self, sim):
+        """MODE register must be 0x08 (ISO14443A initiator)."""
+        proc, ctrl1, ctrl2 = sim
+        val = ctrl1.get_reg("03")
+        assert val == 0x08, (
+            f"MODE expected 0x08 (ISO14443A initiator), got 0x{val:02X}. "
+            f"Wrong mode disables NFC-A entirely."
+        )
+
+
 class TestRxConf3Selection:
     """
     RX_CONF3 depends on IC identity and rx_gain_boost:
