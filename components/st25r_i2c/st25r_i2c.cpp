@@ -33,12 +33,10 @@ uint8_t ST25RI2c::read_register(uint8_t reg) {
 void ST25RI2c::write_register(uint8_t reg, uint8_t value) {
   uint8_t data[2] = { (uint8_t)(0x00 | (reg & 0x3F)), value };
   this->i2c::I2CDevice::write(data, 2);
-  delay(1);
 }
 
 void ST25RI2c::write_command(uint8_t command) {
   this->i2c::I2CDevice::write(&command, 1);
-  delay(1);
 }
 
 void ST25RI2c::write_fifo(const uint8_t *data, size_t len) {
@@ -47,7 +45,6 @@ void ST25RI2c::write_fifo(const uint8_t *data, size_t len) {
   buf.push_back(0x80);
   buf.insert(buf.end(), data, data + len);
   this->i2c::I2CDevice::write(buf.data(), buf.size());
-  delay(1);
 }
 
 void ST25RI2c::read_fifo(uint8_t *data, size_t len) {
