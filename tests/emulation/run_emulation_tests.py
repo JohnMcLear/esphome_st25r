@@ -703,8 +703,8 @@ class TestDetectionLatency:
     """
 
     UID = "DEADBABE"
-    MAX_DETECTION_MS = 1500
-    MAX_REMOVAL_MS   = 2500
+    MAX_DETECTION_MS = 750    # 500ms interval + scan overhead + polling jitter
+    MAX_REMOVAL_MS   = 1700  # 3 misses × 500ms + scan + polling jitter
 
     def test_tag_detected_within_latency_budget(self, sim):
         proc, ctrl1, ctrl2 = sim
