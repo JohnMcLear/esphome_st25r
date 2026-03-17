@@ -658,6 +658,36 @@ class TestLargeNdefThreeByteTlv:
         proc.wait_for(r"READER1_ON_TAG_REMOVED 04AABBCCDDEEFF", timeout=10)
 
 
+class TestOnTagActionChain:
+    """
+    Verify that all actions in an on_tag / on_tag_removed automation chain execute,
+    not just the first (lambda).  Regression test for the class of bug where a tag
+    is detected ("Tag selected" logged) but downstream automation actions — such as
+    output.turn_on or logger.log — silently fail to run.
+
+    The YAML wires reader1's on_tag to a lambda FOLLOWED BY a logger.log action.
+    Both must appear in the log; if only the lambda fires the second assertion fails.
+    """
+
+    UID = "DEADBEEF"
+
+    def test_on_tag_lambda_and_action_both_fire(self, sim):
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        ctrl1.add_tag(self.UID)
+        proc.wait_for(r"READER1_ON_TAG DEADBEEF", timeout=10)
+        proc.wait_for(r"READER1_ON_TAG_ACTION DEADBEEF", timeout=5)
+
+    def test_on_tag_removed_lambda_and_action_both_fire(self, sim):
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        ctrl1.remove_tag(self.UID)
+        proc.wait_for(r"READER1_ON_TAG_REMOVED DEADBEEF", timeout=10)
+        proc.wait_for(r"READER1_ON_TAG_REMOVED_ACTION DEADBEEF", timeout=5)
+
+
 class TestRxConf3Selection:
     """
     RX_CONF3 depends on IC identity and rx_gain_boost:
