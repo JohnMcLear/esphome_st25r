@@ -884,7 +884,7 @@ static std::vector<std::string> split_tokens(const std::string &line) {
 }
 
 void ST25RSim::handle_client_(int fd) {
-  char buf[512];
+  char buf[4096];
   int n = (int)recv(fd, buf, sizeof(buf) - 1, 0);
   if (n <= 0) return;
   buf[n] = '\0';

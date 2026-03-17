@@ -630,14 +630,14 @@ class TestLargeNdefSingleByteTlv:
 
 class TestLargeNdefThreeByteTlv:
     """
-    NDEF payload ~283 bytes: TLV length requires 3-byte encoding (0xFF 0x01 0x1B).
+    NDEF payload ~286 bytes: TLV length requires 3-byte encoding (0xFF 0x01 0x1E).
     Exercises the extended TLV length path added to read_tag_() in both the
     firmware and the simulator.
     Uses NTAG216 (908 bytes of user memory available from page 4).
     """
 
     UID = "04AABBCCDDEEFF"
-    NDEF = _make_text_ndef("B" * 273)  # payload=278, record=286 bytes, TLV 3-byte len
+    NDEF = _make_text_ndef("B" * 276)  # payload=279, record=286 bytes, TLV 3-byte len
 
     def test_large_ndef_three_byte_tlv_detected(self, sim):
         proc, ctrl1, ctrl2 = sim
