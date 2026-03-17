@@ -12,7 +12,7 @@ esp32:
       CONFIG_ESP_CONSOLE_SECONDARY_NONE: "y"
 
 logger:
-  level: VERY_VERBOSE
+  level: DEBUG
   hardware_uart: USB_SERIAL_JTAG
 
 external_components:
@@ -25,6 +25,11 @@ spi:
   clk_pin: GPIO19
   miso_pin: GPIO10
   mosi_pin: GPIO18
+
+output:
+  - platform: gpio
+    pin: GPIO2
+    id: led
 
 i2c:
   sda: 21
@@ -39,8 +44,15 @@ st25r_spi:
   update_interval: 1s
   on_tag:
     then:
+      - output.turn_on: led
       - logger.log:
           format: "SPI Tag detected: %s"
+          args: ['x.c_str()']
+  on_tag_removed:
+    then:
+      - output.turn_off: led
+      - logger.log:
+          format: "SPI Tag removed: %s"
           args: ['x.c_str()']
 
 st25r_i2c:

@@ -870,6 +870,7 @@ void ST25R::process_state_() {
 }
 
 void ST25R::finalize_scan_() {
+  ESP_LOGD(TAG, "finalize_scan_: this_scan=%zu present=%zu", this->tags_this_scan_.size(), this->present_tags_.size());
   // Increment miss counters for tags not seen this scan; fire on_tag_removed when threshold reached
   std::vector<std::string> to_remove;
   for (auto &kv : this->present_tags_) {
@@ -904,6 +905,7 @@ void ST25R::finalize_scan_() {
   // Fire on_tag for newly seen UIDs
   for (const auto &uid : this->tags_this_scan_) {
     if (!this->present_tags_.count(uid)) {
+      ESP_LOGD(TAG, "finalize_scan_: NEW tag %s, firing %zu on_tag triggers", uid.c_str(), this->on_tag_triggers_.size());
       this->present_tags_[uid] = 0;
       for (auto *trigger : this->on_tag_triggers_) {
         trigger->trigger(uid);
