@@ -688,6 +688,49 @@ class TestOnTagActionChain:
         proc.wait_for(r"READER1_ON_TAG_REMOVED_ACTION DEADBEEF", timeout=5)
 
 
+class TestDetectionLatency:
+    """
+    Tag detection and removal must complete within UX-acceptable time bounds.
+
+    These are regression tests for timing regressions (e.g. accidental blocking
+    delays, extra I2C waits, slow transceive paths).  Any change that causes
+    detection to take more than 2 scan cycles, or removal more than 3+1 scan
+    cycles, will fail here.
+
+    Bounds (update_interval=500ms in test-emulation.yaml):
+      detection  ≤ 1500ms  (worst-case: tag appears just after a scan)
+      removal    ≤ 2500ms  (3 misses × 500ms + 1 scan margin)
+    """
+
+    UID = "DEADBABE"
+    MAX_DETECTION_MS = 1500
+    MAX_REMOVAL_MS   = 2500
+
+    def test_tag_detected_within_latency_budget(self, sim):
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        t0 = time.time()
+        ctrl1.add_tag(self.UID)
+        proc.wait_for(rf"READER1_ON_TAG {self.UID}", timeout=(self.MAX_DETECTION_MS + 500) / 1000)
+        elapsed_ms = (time.time() - t0) * 1000
+        assert elapsed_ms <= self.MAX_DETECTION_MS, (
+            f"Tag detection took {elapsed_ms:.0f}ms, exceeds {self.MAX_DETECTION_MS}ms budget"
+        )
+
+    def test_tag_removed_within_latency_budget(self, sim):
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        t0 = time.time()
+        ctrl1.remove_tag(self.UID)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.UID}", timeout=(self.MAX_REMOVAL_MS + 500) / 1000)
+        elapsed_ms = (time.time() - t0) * 1000
+        assert elapsed_ms <= self.MAX_REMOVAL_MS, (
+            f"Tag removal took {elapsed_ms:.0f}ms, exceeds {self.MAX_REMOVAL_MS}ms budget"
+        )
+
+
 class TestRxConf3Selection:
     """
     RX_CONF3 depends on IC identity and rx_gain_boost:
