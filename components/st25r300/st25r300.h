@@ -115,6 +115,7 @@ class ST25R300 : public PollingComponent, public nfc::Nfcc {
   uint8_t health_check_failures_{0};
   volatile bool irq_triggered_{false};
   volatile uint8_t irq_status1_{0};
+  uint8_t irq_status2_{0};
 
   // Multi-tag tracking
   std::map<std::string, uint8_t> present_tags_;   // UID → consecutive miss count

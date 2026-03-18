@@ -92,6 +92,8 @@ void ST25R300::update() {
 
   // Send WUPA (7-bit short frame) via FIFO + CMD_TRANSMIT_DATA
   // ST25R300 has no dedicated WUPA/REQA command — must be done manually
+  this->irq_status1_ = 0;
+  this->irq_status2_ = 0;
   this->irq_triggered_ = false;
   uint8_t resp[2];
   uint8_t resp_len = 0;
@@ -111,30 +113,31 @@ bool ST25R300::send_short_frame_(uint8_t byte7, uint8_t *resp, uint8_t &resp_len
   // Set Rx protocol: antcl=0 here (set to 1 later in anticol), rx_crc=0 for ATQA response
   this->write_register(ST25R300_REG_RX_PROTOCOL1, 0x00);
 
-  this->write_command(ST25R300_CMD_CLEAR_FIFO);
-  this->read_register(ST25R300_REG_IRQ_STATUS1);
+  this->write_command(ST25R300_CMD_STOP_ALL);  // reset receiver state + clear FIFO + clear IRQs
+  this->read_register(ST25R300_REG_IRQ_STATUS1);  // read-to-clear (STOP_ALL may have already cleared)
   this->read_register(ST25R300_REG_IRQ_STATUS2);
   this->read_register(ST25R300_REG_IRQ_STATUS3);
+  this->write_command(ST25R300_CMD_CLEAR_RX_GAIN);  // init AGC/squelch before every TX
   this->irq_triggered_ = false;
+
+  // TX frame: 0 full bytes + 7 partial bits — MUST be written before FIFO data
+  this->write_register(ST25R300_REG_TX_FRAME1, 0x00);
+  this->write_register(ST25R300_REG_TX_FRAME2, 0x07);  // nbtx=7
 
   // Write the 7-bit byte to FIFO
   uint8_t data = byte7 & 0x7F;
   this->write_fifo(&data, 1);
 
-  // TX frame: 0 full bytes + 7 partial bits
-  this->write_register(ST25R300_REG_TX_FRAME1, 0x00);
-  this->write_register(ST25R300_REG_TX_FRAME2, 0x07);  // nbtx=7
-
   this->write_command(ST25R300_CMD_TRANSMIT_DATA);
 
-  // Wait briefly for TXE then return; state machine handles response polling
-  uint32_t start = millis();
+  // No SPI activity during the ATQA receive window (152-389µs after TX start).
+  delay(10);  // NRT=5ms; 10ms covers the full ATQA window with plenty of margin
+  uint8_t post1 = this->read_register(ST25R300_REG_IRQ_STATUS1);
+  uint8_t post2 = this->read_register(ST25R300_REG_IRQ_STATUS2);
+  ESP_LOGD(TAG, "ssf post10ms: IRQ1=0x%02X IRQ2=0x%02X", post1, post2);
+  this->irq_status1_ |= post1;
+  this->irq_status2_ |= post2;
   resp_len = 0;
-  while (millis() - start < timeout_ms) {
-    uint8_t irq1 = this->read_register(ST25R300_REG_IRQ_STATUS1);
-    if (irq1 & ST25R300_IRQ1_TXE) break;
-    delay(1);
-  }
   return true;
 }
 
@@ -295,18 +298,19 @@ void ST25R300::loop() {
   if (this->irq_triggered_) {
     this->irq_triggered_ = false;
     uint8_t irq1 = this->read_register(ST25R300_REG_IRQ_STATUS1);
-    // Store irq1 in a member; we handle it in process_state_
-    // Use a temporary volatile field — reuse irq_triggered_ flag pattern via direct field
-    // Store in the cached field used by process_state_
-    this->irq_status1_ = irq1;
-    ESP_LOGV(TAG, "IRQ triggered, IRQ1=0x%02X, state=%d", irq1, this->state_);
+    uint8_t irq2 = this->read_register(ST25R300_REG_IRQ_STATUS2);
+    this->irq_status1_ |= irq1;
+    this->irq_status2_ |= irq2;
+    ESP_LOGV(TAG, "IRQ triggered, IRQ1=0x%02X IRQ2=0x%02X state=%d", irq1, irq2, this->state_);
   } else if (this->state_ == STATE_WUPA || this->state_ == STATE_ANTICOL) {
-    this->irq_status1_ = this->read_register(ST25R300_REG_IRQ_STATUS1);
-    if (this->irq_status1_ != 0) {
-      ESP_LOGV(TAG, "IRQ polled, IRQ1=0x%02X, state=%d", this->irq_status1_, this->state_);
+    this->irq_status1_ |= this->read_register(ST25R300_REG_IRQ_STATUS1);
+    this->irq_status2_ |= this->read_register(ST25R300_REG_IRQ_STATUS2);
+    if (this->irq_status1_ != 0 || this->irq_status2_ != 0) {
+      ESP_LOGV(TAG, "IRQ polled, IRQ1=0x%02X IRQ2=0x%02X state=%d", this->irq_status1_, this->irq_status2_, this->state_);
     }
   } else {
     this->irq_status1_ = 0;
+    this->irq_status2_ = 0;
   }
 
   this->process_state_();
@@ -320,6 +324,7 @@ void ST25R300::process_state_() {
 
     case STATE_WUPA: {
       if (this->irq_status1_ & (ST25R300_IRQ1_RXE | ST25R300_IRQ1_COL)) {
+        ESP_LOGD(TAG, "WUPA got response: IRQ1=0x%02X IRQ2=0x%02X", this->irq_status1_, this->irq_status2_);
         this->cascade_level_ = 0;
         this->current_uid_ = "";
         if (!this->anticol_resume_) {
@@ -332,14 +337,30 @@ void ST25R300::process_state_() {
         this->send_anticol_frame_();
         this->state_ = STATE_ANTICOL;
         this->last_state_change_ = millis();
+      } else if (this->irq_status2_ & ST25R300_IRQ2_NRE) {
+        // NRT expired: no tag response — fast path to idle
+        uint8_t rssi1   = this->read_register(ST25R300_REG_RSSI1);
+        uint8_t rssi2   = this->read_register(ST25R300_REG_RSSI2);
+        uint8_t stat2   = this->read_register(ST25R300_REG_STATUS2);
+        uint8_t sstatus2 = this->read_register(ST25R300_REG_STATIC_STATUS2);
+        uint8_t sstatus3 = this->read_register(ST25R300_REG_STATIC_STATUS3);
+        ESP_LOGD(TAG, "WUPA NRE (no tag): IRQ1=0x%02X RSSI=%02X/%02X STAT2=0x%02X SS2=0x%02X SS3=0x%02X",
+                 this->irq_status1_, rssi1, rssi2, stat2, sstatus2, sstatus3);
+        this->irq_status1_ = 0;
+        this->irq_status2_ = 0;
+        this->state_ = STATE_IDLE;
+        this->finalize_scan_();
       } else if (millis() - this->last_state_change_ > 100) {
-        uint8_t irq2 = this->read_register(ST25R300_REG_IRQ_STATUS2);
         uint8_t irq3 = this->read_register(ST25R300_REG_IRQ_STATUS3);
         uint8_t fifo = this->read_register(ST25R300_REG_FIFO_STATUS1);
-        uint8_t sense = this->read_register(ST25R300_REG_SENSE_RF);
         uint8_t op = this->read_register(ST25R300_REG_OPERATION);
-        ESP_LOGD(TAG, "WUPA timeout: IRQ1=0x%02X IRQ2=0x%02X IRQ3=0x%02X FIFO=%u SENSE=%u OP=0x%02X",
-                 this->irq_status1_, irq2, irq3, fifo, sense, op);
+        uint8_t stat2 = this->read_register(ST25R300_REG_STATUS2);
+        uint8_t sstatus2 = this->read_register(ST25R300_REG_STATIC_STATUS2);
+        uint8_t sstatus3 = this->read_register(ST25R300_REG_STATIC_STATUS3);
+        ESP_LOGD(TAG, "WUPA timeout: IRQ1=0x%02X IRQ2=0x%02X IRQ3=0x%02X FIFO=%u OP=0x%02X STAT2=0x%02X SS2=0x%02X SS3=0x%02X",
+                 this->irq_status1_, this->irq_status2_, irq3, fifo, op, stat2, sstatus2, sstatus3);
+        this->irq_status1_ = 0;
+        this->irq_status2_ = 0;
         this->state_ = STATE_IDLE;
         this->finalize_scan_();
       }
@@ -359,6 +380,8 @@ void ST25R300::process_state_() {
           this->read_register(ST25R300_REG_IRQ_STATUS2);
           this->read_register(ST25R300_REG_IRQ_STATUS3);
           this->irq_triggered_ = false;
+          this->irq_status1_ = 0;  // fresh receive window
+          this->irq_status2_ = 0;
           this->anticol_resume_ = true;
 
           uint8_t dummy[2];
@@ -375,9 +398,12 @@ void ST25R300::process_state_() {
 
       if (this->irq_status1_ != 0 &&
           (this->irq_status1_ & (ST25R300_IRQ1_RXE | ST25R300_IRQ1_COL | ST25R300_IRQ1_TXE))) {
+        uint8_t saved_irq = this->irq_status1_;
+        this->irq_status1_ = 0;
+        this->irq_status2_ = 0;  // consume; send_anticol_frame_ / send_short_frame_ will repopulate
         delay(5);
         uint8_t f1 = this->read_register(ST25R300_REG_FIFO_STATUS1);
-        bool has_collision = (this->irq_status1_ & ST25R300_IRQ1_COL) != 0;
+        bool has_collision = (saved_irq & ST25R300_IRQ1_COL) != 0;
 
         if (has_collision) {
           uint8_t col_raw = this->read_register(ST25R300_REG_COLLISION_DISPLAY);
@@ -488,11 +514,12 @@ void ST25R300::process_state_() {
               this->read_register(ST25R300_REG_IRQ_STATUS1);
               this->read_register(ST25R300_REG_IRQ_STATUS2);
               this->read_register(ST25R300_REG_IRQ_STATUS3);
-              this->write_fifo(halt_cmd, 2);
+              // TX_FRAME must be written before FIFO data
               this->write_register(ST25R300_REG_TX_FRAME1, 0x00);
               this->write_register(ST25R300_REG_TX_FRAME2, 0x10);   // 2 full bytes
               this->write_register(ST25R300_REG_TX_PROTOCOL1,
                                    ST25R300_TX_PROT1_A_TX_PAR | ST25R300_TX_PROT1_TX_CRC);
+              this->write_fifo(halt_cmd, 2);
               this->write_command(ST25R300_CMD_TRANSMIT_DATA);
               delay(10);
             }
@@ -517,6 +544,8 @@ void ST25R300::process_state_() {
             this->read_register(ST25R300_REG_IRQ_STATUS2);
             this->read_register(ST25R300_REG_IRQ_STATUS3);
             this->irq_triggered_ = false;
+            this->irq_status1_ = 0;
+            this->irq_status2_ = 0;  // fresh receive window for resume WUPA
 
             if (can_resume) {
               this->cascade_level_ = 0;
@@ -639,14 +668,18 @@ void ST25R300::send_anticol_frame_() {
   // Tx protocol: no CRC for anticollision frame
   this->write_register(ST25R300_REG_TX_PROTOCOL1, ST25R300_TX_PROT1_A_TX_PAR);  // parity, no CRC
 
-  this->write_command(ST25R300_CMD_CLEAR_FIFO);
+  this->write_command(ST25R300_CMD_STOP_ALL);  // reset receiver state + clear FIFO + clear IRQs
   this->read_register(ST25R300_REG_IRQ_STATUS1);
   this->read_register(ST25R300_REG_IRQ_STATUS2);
   this->read_register(ST25R300_REG_IRQ_STATUS3);
+  this->write_command(ST25R300_CMD_CLEAR_RX_GAIN);  // init AGC/squelch before every TX
   this->irq_triggered_ = false;
-  this->write_fifo(frame, frame_len);
+  this->irq_status1_ = 0;
+  this->irq_status2_ = 0;  // clear accumulated bits; fresh receive window starts
+  // TX_FRAME must be written before FIFO data (per datasheet section 5.16.6)
   this->write_register(ST25R300_REG_TX_FRAME1, ntx_n >> 5);
   this->write_register(ST25R300_REG_TX_FRAME2, (uint8_t)(((ntx_n & 0x1F) << 3) | (ntx_b & 0x07)));
+  this->write_fifo(frame, frame_len);
   this->write_command(ST25R300_CMD_TRANSMIT_DATA);
 }
 
@@ -706,10 +739,16 @@ bool ST25R300::reset_() {
   this->write_register(ST25R300_REG_RX_PROTOCOL1,
                        ST25R300_RX_PROT1_A_RX_PAR | ST25R300_RX_PROT1_RX_CRC);  // 0x0C
 
-  // Rx analog: dig_clk_dly=0x7 (recommended per datasheet), gain_boost based on user config
-  uint8_t rx_analog1 = 0x70;  // dig_clk_dly=7
-  if (this->rx_gain_boost_) rx_analog1 |= 0x04;  // gain_boost bit2
-  this->write_register(ST25R300_REG_RX_ANALOG1, rx_analog1);
+  // RX path analog and correlator configuration from STEVAL-25R300KA working values (UM3536 Figure 34)
+  // 0x09 RX Path Ana 1: dig_clk_dly=7 (bits[7:4]=0x7), hpf_clr=3 (bits[1:0]=3)
+  uint8_t rx_ana1 = 0x73 | (this->rx_gain_boost_ ? 0x04 : 0x00);  // gain_boost = bit2
+  this->write_register(ST25R300_REG_RX_ANALOG1, rx_ana1);
+  this->write_register(0x0A, 0x02);  // RX Path Ana 2
+  this->write_register(0x0B, 0x85);  // RX Path Ana 3
+  this->write_register(0x0D, 0xCC);  // RX Digital
+  this->write_register(0x0E, 0xC1);  // Correlator 1 — critical for I/Q demod framing
+  this->write_register(0x11, 0xAA);  // Correlator 4 — critical for I/Q demod framing
+  this->write_register(0x13, 0x30);  // Correlator 6
 
   // TX driver: d_res controls power (0=max, 15=min); keep am_mod field at 0x7 in TX_MOD1
   uint8_t d_res = (15 - this->rf_power_) & 0x0F;
@@ -720,6 +759,12 @@ bool ST25R300::reset_() {
   this->write_register(ST25R300_REG_IRQ_MASK1, 0x00);
   this->write_register(ST25R300_REG_IRQ_MASK2, 0x00);
   this->write_register(ST25R300_REG_IRQ_MASK3, 0x00);
+
+  // NRT: auto-starts after CMD_TRANSMIT_DATA when non-zero; fires I_nre on timeout.
+  // 1059 steps × 64/fc (4.72µs/step) ≈ 5ms — enough window to capture ATQA (arrives ~86µs, lasts ~165µs)
+  this->write_register(ST25R300_REG_NRT_CONF1, 0x00);   // nrt_step=0 → 64/fc = 4.72µs per step
+  this->write_register(ST25R300_REG_NRT_CONF2, 0x04);   // nrt[15:8] = 0x04
+  this->write_register(ST25R300_REG_NRT_CONF3, 0x23);   // nrt[7:0]  = 0x23 → 0x0423 = 1059 steps = 5ms
 
   if (this->rf_field_enabled_) {
     ESP_LOGV(TAG, "  reset_: Enabling RF field");

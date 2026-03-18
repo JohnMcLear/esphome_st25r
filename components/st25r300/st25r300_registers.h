@@ -60,16 +60,23 @@ enum ST25R300Register : uint8_t {
   ST25R300_REG_IC_IDENTITY      = 0x3F, // ic_type[7:3]=10110b for ST25R300 → (val & 0xF8)==0xB0
 
   // Status registers
-  ST25R300_REG_STATUS1          = 0x40, // osc_ok(b4), agd_ok(b5)
+  ST25R300_REG_STATUS1          = 0x40, // osc_ok(b4), agd_ok(b5), efd_out(b1), efd_on(b0)
+  ST25R300_REG_STATUS2          = 0x41, // subc_on(b7), gpt_on(b6), nrt_on(b5), mrt_on(b4), rx_act(b3), rx_on(b2), tx_on(b1)
+  ST25R300_REG_STATIC_STATUS1   = 0x42, // s_eon(b5), s_eof(b6), s_dct(b4)
+  ST25R300_REG_STATIC_STATUS2   = 0x43, // s_rx_err(b5), s_rxe(b4), s_rx_rest(b3), s_col(b2), s_rxs(b1)
+  ST25R300_REG_STATIC_STATUS3   = 0x44, // s_crc(b7), s_par(b6), s_hfe(b5), s_sfe(b4)
 
   // RSSI / Field sense
   ST25R300_REG_RSSI1            = 0x4A, // rssi_i[6:0] (I channel)
   ST25R300_REG_RSSI2            = 0x4B, // rssi_q[6:0] (Q channel)
-  ST25R300_REG_SENSE_RF         = 0x4C, // sense_adc[7:0]
+  ST25R300_REG_SENSE_RF         = 0x4C, // sense_adc[7:0] — updated by CMD_SENSE_RF (0x7C/7D)
 };
 
 // ── IRQ Status 1 (0x3C) bit masks ───────────────────────────────────────────
+static const uint8_t ST25R300_IRQ1_SUBC_START = 0x80; // bit7: subcarrier start detected
 static const uint8_t ST25R300_IRQ1_COL    = 0x40;  // bit6: bit collision
+static const uint8_t ST25R300_IRQ1_WL     = 0x20;  // bit5: FIFO water level
+static const uint8_t ST25R300_IRQ1_RX_REST= 0x10;  // bit4: automatic reception restart
 static const uint8_t ST25R300_IRQ1_RXE    = 0x08;  // bit3: end of receive
 static const uint8_t ST25R300_IRQ1_RXS    = 0x04;  // bit2: start of receive
 static const uint8_t ST25R300_IRQ1_TXE    = 0x02;  // bit1: end of transmission
@@ -112,6 +119,7 @@ enum ST25R300Command : uint8_t {
   ST25R300_CMD_FIELD_ON         = 0x6F, // NFC field on (RF collision avoidance)
   ST25R300_CMD_MASK_RX          = 0x71, // mask receive data
   ST25R300_CMD_UNMASK_RX        = 0x73, // unmask receive data
+  ST25R300_CMD_START_MRT        = 0xE7, // start mask-receive timer (also starts NRT if nrt≠0)
   ST25R300_CMD_START_NRT        = 0xE9, // start no-response timer
   ST25R300_CMD_STOP_NRT         = 0xEB, // stop no-response timer
 };

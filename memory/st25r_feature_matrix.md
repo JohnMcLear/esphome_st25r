@@ -24,19 +24,19 @@ This document provides a comprehensive feature-by-feature comparison across all 
 
 ## RF Communication
 
-| Feature | ST25R3916/17 | ST25R39xxB | ST25R3914/15 | ST25R200 | ST25R100 | ST25R500 | ST25R501 | ST25R95 | ST25RN300 |
-|---------|--------------|------------|--------------|----------|----------|----------|----------|---------|-----------|
-| **Carrier Frequency** | 13.56 MHz | 13.56 MHz | 13.56 MHz | 13.56 MHz | 13.56 MHz | 13.56 MHz | 13.56 MHz | 13.56 MHz | 13.56 MHz |
-| **RF Output Power** | Up to 1.5W | Up to 1.5W | **Up to 1W** | Up to 1W | Up to 1W | Up to 1.5W | Up to 1.5W | ? | **Up to 2.2W** |
-| **Modulation Depth** | 5–40% | **0–82%** | 5–40% | 5–40% | 5–40% | 0–82% | 0–82% | ? | ? |
-| **ASK Modulation** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **PSK Modulation** | ✓ | ✓ | ✓ | ✗ | ✗ | ✓ | ✓ | ? | ✓ |
-| **Dynamic Power Output (DPO)** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ? | ✓ |
-| **Active Wave Shaping (AWS)** | ✓ | **Enhanced** | ✓ | ✓ | ✗ | ✓ | ✓ | ? | ✓ |
-| **Noise Suppression Receiver** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ? | ✓ |
-| **I/Q Demodulator** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ? | ✓ |
-| **AM/PM Demodulator** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ? | ✓ |
-| **Automatic Channel Selection** | ✓ | ✓ | ✓ | ✗ | ✗ | ✓ | ✓ | ? | ✓ |
+| Feature | ST25R3916/17 | ST25R39xxB | ST25R3914/15 | ST25R200 | ST25R100 | ST25R500 | ST25R300 | ST25R501 | ST25R95 | ST25RN300 |
+|---------|--------------|------------|--------------|----------|----------|----------|----------|----------|---------|-----------|
+| **Carrier Frequency** | 13.56 MHz | 13.56 MHz | 13.56 MHz | 13.56 MHz | 13.56 MHz | 13.56 MHz | 13.56 MHz | 13.56 MHz | 13.56 MHz | 13.56 MHz |
+| **RF Output Power** | Up to 1.5W | Up to 1.5W | **Up to 1W** | Up to 1W | Up to 1W | Up to 1.5W | Up to 1.5W | Up to 1.5W | ? | **Up to 2.2W** |
+| **Modulation Depth** | 5–40% | **0–82%** | 5–40% | 5–40% | 5–40% | 0–82% | 0–82% | 0–82% | ? | ? |
+| **ASK Modulation** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **PSK Modulation** | ✓ | ✓ | ✓ | ✗ | ✗ | ✓ | ✓ | ✓ | ? | ✓ |
+| **Dynamic Power Output (DPO)** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ? | ✓ |
+| **Active Wave Shaping (AWS)** | ✓ | **Enhanced** | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ | ? | ✓ |
+| **Noise Suppression Receiver** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ? | ✓ |
+| **I/Q Demodulator** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ? | ✓ |
+| **AM/PM Demodulator** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ? | ✓ |
+| **Automatic Channel Selection** | ✓ | ✓ | ✓ | ✗ | ✗ | ✓ | ✓ | ✓ | ? | ✓ |
 
 ---
 
@@ -44,53 +44,53 @@ This document provides a comprehensive feature-by-feature comparison across all 
 
 ### Reader/Writer Mode
 
-| Protocol | ST25R3916/17 | ST25R39xxB | ST25R3914/15 | ST25R200 | ST25R100 | ST25R500 | ST25R501 | ST25R95 | ST25RN300 |
-|----------|--------------|------------|--------------|----------|----------|----------|----------|---------|-----------|
-| **NFC-A (ISO14443A)** | ✓ 848 kbps | ✓ 848 kbps | ✓ 848 kbps | ✓ 106 kbps | ✓ 106 kbps | ✓ 848 kbps | ✓ 848 kbps | ✓ | ✓ 848 kbps |
-| **NFC-B (ISO14443B)** | ✓ 848 kbps | ✓ 848 kbps | ✓ 848 kbps | ✓ 106 kbps | ✓ 106 kbps | ✓ 848 kbps | ✓ 848 kbps | ✓ | ✓ 848 kbps |
-| **NFC-F (FeliCa)** | ✓ 424 kbps | ✓ 424 kbps | ✓ 424 kbps | ✗ | ✗ | ✓ 424 kbps | ✓ 424 kbps | ✓ | ✓ 424 kbps |
-| **NFC-V (ISO15693)** | ✓ 53 kbps | ✓ 53 kbps | ✓ 53 kbps | ✓ 53 kbps | ✓ 53 kbps | **✓ 212 kbps** | **✓ 212 kbps** | ✓ | ✓ |
-| **NFC Forum T1T** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **NFC Forum T2T** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **NFC Forum T3T** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **NFC Forum T4T** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **NFC Forum T5T** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **MIFARE Classic** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓* |
-| **MIFARE DESFire** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **Kovio BC** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ? | ✓ |
-| **CTS** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ? | ✓ |
-| **B'** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ? | ✓ |
+| Protocol | ST25R3916/17 | ST25R39xxB | ST25R3914/15 | ST25R200 | ST25R100 | ST25R500 | ST25R300 | ST25R501 | ST25R95 | ST25RN300 |
+|----------|--------------|------------|--------------|----------|----------|----------|----------|----------|---------|-----------|
+| **NFC-A (ISO14443A)** | ✓ 848 kbps | ✓ 848 kbps | ✓ 848 kbps | ✓ 106 kbps | ✓ 106 kbps | ✓ 848 kbps | ✓ 848 kbps | ✓ 848 kbps | ✓ | ✓ 848 kbps |
+| **NFC-B (ISO14443B)** | ✓ 848 kbps | ✓ 848 kbps | ✓ 848 kbps | ✓ 106 kbps | ✓ 106 kbps | ✓ 848 kbps | ✓ 848 kbps | ✓ 848 kbps | ✓ | ✓ 848 kbps |
+| **NFC-F (FeliCa)** | ✓ 424 kbps | ✓ 424 kbps | ✓ 424 kbps | ✗ | ✗ | ✓ 424 kbps | ✓ 424 kbps | ✓ 424 kbps | ✓ | ✓ 424 kbps |
+| **NFC-V (ISO15693)** | ✓ 53 kbps | ✓ 53 kbps | ✓ 53 kbps | ✓ 53 kbps | ✓ 53 kbps | **✓ 212 kbps** | **✓ 212 kbps** | **✓ 212 kbps** | ✓ | ✓ |
+| **NFC Forum T1T** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **NFC Forum T2T** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **NFC Forum T3T** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **NFC Forum T4T** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **NFC Forum T5T** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **MIFARE Classic** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓* |
+| **MIFARE DESFire** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Kovio BC** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ? | ✓ |
+| **CTS** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ? | ✓ |
+| **B'** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ? | ✓ |
 
 *MIFARE Classic feature availability depends on licensing
 
 ### Card Emulation Mode
 
-| Feature | ST25R3916/17 | ST25R39xxB | ST25R3914/15 | ST25R200 | ST25R100 | ST25R500 | ST25R501 | ST25R95 | ST25RN300 |
-|---------|--------------|------------|--------------|----------|----------|----------|----------|---------|-----------|
-| **ISO14443A CE** | ✓ | ✓ | ? | ✗ | ✗ | ✓ | ✗ | ✓ | ✓ |
-| **ISO14443B CE** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| **FeliCa CE** | ✓ | ✓ | ? | ✗ | ✗ | ✓ | ✗ | ✗ | ✓ |
-| **NFC Forum CE** | ✓ | ✓ | ? | ✗ | ✗ | ✓ | ✗ | ✗ | ✓ |
-| **Intelligent Card Switching** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
+| Feature | ST25R3916/17 | ST25R39xxB | ST25R3914/15 | ST25R200 | ST25R100 | ST25R500 | ST25R300 | ST25R501 | ST25R95 | ST25RN300 |
+|---------|--------------|------------|--------------|----------|----------|----------|----------|----------|---------|-----------|
+| **ISO14443A CE** | ✓ | ✓ | ? | ✗ | ✗ | ✓ | ✓ | ✗ | ✓ | ✓ |
+| **ISO14443B CE** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| **FeliCa CE** | ✓ | ✓ | ? | ✗ | ✗ | ✓ | ✓ | ✗ | ✗ | ✓ |
+| **NFC Forum CE** | ✓ | ✓ | ? | ✗ | ✗ | ✓ | ✓ | ✗ | ✗ | ✓ |
+| **Intelligent Card Switching** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
 
 ### Peer-to-Peer Mode
 
-| Feature | ST25R3916/17 | ST25R39xxB | ST25R3914/15 | ST25R200 | ST25R100 | ST25R500 | ST25R501 | ST25R95 | ST25RN300 |
-|---------|--------------|------------|--------------|----------|----------|----------|----------|---------|-----------|
-| **Active P2P Initiator** | ✓ | ✓ | ✓ | ✗ | ✗ | ✓ | ✓ | ? | ✓ |
-| **Active P2P Target** | ✓ | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ? | ✗ |
-| **Passive P2P Initiator** | ✓ | ✓ | ✓ | ✗ | ✗ | ✓ | ✓ | ? | ✓ |
-| **Passive P2P Target** | ✓ | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ? | ✗ |
-| **NFCIP-1** | ✓ | ✓ | ✓ | ✗ | ✗ | ✓ | ✓ | ? | ✓ |
+| Feature | ST25R3916/17 | ST25R39xxB | ST25R3914/15 | ST25R200 | ST25R100 | ST25R500 | ST25R300 | ST25R501 | ST25R95 | ST25RN300 |
+|---------|--------------|------------|--------------|----------|----------|----------|----------|----------|---------|-----------|
+| **Active P2P Initiator** | ✓ | ✓ | ✓ | ✗ | ✗ | ✓ | ✓ | ✓ | ? | ✓ |
+| **Active P2P Target** | ✓ | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ? | ✗ |
+| **Passive P2P Initiator** | ✓ | ✓ | ✓ | ✗ | ✗ | ✓ | ✓ (Initiator)| ✓ | ? | ✓ |
+| **Passive P2P Target** | ✓ | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ? | ✗ |
+| **NFCIP-1** | ✓ | ✓ | ✓ | ✗ | ✗ | ✓ | ✓ | ✓ | ? | ✓ |
 
 ### EMVCo Compliance
 
-| Feature | ST25R3916/17 | ST25R39xxB | ST25R3914/15 | ST25R200 | ST25R100 | ST25R500 | ST25R501 | ST25R95 | ST25RN300 |
-|---------|--------------|------------|--------------|----------|----------|----------|----------|---------|-----------|
-| **EMVCo Version** | 3.0 | **3.1a/3.2a** | ? | ? | ? | **3.2a** | **DK** | ? | **3.2a** |
-| **EMD Handling** | Basic | **Enhanced** | ? | Basic | Basic | **Enhanced** | **Enhanced** | ? | **Enhanced** |
-| **CCC Digital Key** | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ | ✓ | ✗ | ✗ |
-| **USI WLC Reader** | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ | ✗ | ✗ | ✗ |
+| Feature | ST25R3916/17 | ST25R39xxB | ST25R3914/15 | ST25R200 | ST25R100 | ST25R500 | ST25R300 | ST25R501 | ST25R95 | ST25RN300 |
+|---------|--------------|------------|--------------|----------|----------|----------|----------|----------|---------|-----------|
+| **EMVCo Version** | 3.0 | **3.1a/3.2a** | ? | ? | ? | **3.2a** | **3.2a** | **DK** | ? | **3.2a** |
+| **EMD Handling** | Basic | **Enhanced** | ? | Basic | Basic | **Enhanced** | **Enhanced** | **Enhanced** | ? | **Enhanced** |
+| **CCC Digital Key** | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ | ✗ | ✓ | ✗ | ✗ |
+| **USI WLC Reader** | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ | ✓ | ✗ | ✗ | ✗ |
 
 ---
 
@@ -124,53 +124,53 @@ This document provides a comprehensive feature-by-feature comparison across all 
 
 ## Wake-up Features
 
-| Feature | ST25R3916/17 | ST25R39xxB | ST25R3914/15 | ST25R200 | ST25R100 | ST25R500 | ST25R501 | ST25R95 | ST25RN300 |
-|---------|--------------|------------|--------------|----------|----------|----------|----------|---------|-----------|
-| **Capacitive Sensing** | ✓ | ✗ | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| **Inductive Wake-up** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **Amplitude Measurement** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **Phase Measurement** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **Low Power Card Detection** | ✓ | ✓ | ✓ | ✓ (Improved) | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **Wake-up Timer** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **Wake-up Periods** | 9.7–1237ms | 9.7–1237ms | 9.7–1237ms | 9.7–1737ms | 9.7–1737ms | 9.7–1737ms | 9.7–1737ms | ? | ? |
-| **Auto Wake-up on RF** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **Auto Wake-up on GPIO** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Feature | ST25R3916/17 | ST25R39xxB | ST25R3914/15 | ST25R200 | ST25R100 | ST25R500 | ST25R300 | ST25R501 | ST25R95 | ST25RN300 |
+|---------|--------------|------------|--------------|----------|----------|----------|----------|----------|---------|-----------|
+| **Capacitive Sensing** | ✓ | ✗ | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| **Inductive Wake-up** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Amplitude Measurement** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Phase Measurement** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Low Power Card Detection** | ✓ | ✓ | ✓ | ✓ (Improved) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Wake-up Timer** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Wake-up Periods** | 9.7–1237ms | 9.7–1237ms | 9.7–1237ms | 9.7–1737ms | 9.7–1737ms | 9.7–1737ms | 9.7–1737ms | 9.7–1737ms | ? | ? |
+| **Auto Wake-up on RF** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Auto Wake-up on GPIO** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 ---
 
 ## Antenna Features
 
-| Feature | ST25R3916/17 | ST25R39xxB | ST25R3914/15 | ST25R200 | ST25R100 | ST25R500 | ST25R501 | ST25R95 | ST25RN300 |
-|---------|--------------|------------|--------------|----------|----------|----------|----------|---------|-----------|
-| **Differential Antenna** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **Two Single-Ended Antennas** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ? |
-| **Automatic Antenna Tuning** | ✓ | ✓ | ✓ (3914 only) | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| **Varicap Control** | ✓ | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| **Antenna Voltage Measurement** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **Antenna Phase Measurement** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **Antenna Detuning Detection** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **Coil Multiplexer Support** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ? |
+| Feature | ST25R3916/17 | ST25R39xxB | ST25R3914/15 | ST25R200 | ST25R100 | ST25R500 | ST25R300 | ST25R501 | ST25R95 | ST25RN300 |
+|---------|--------------|------------|--------------|----------|----------|----------|----------|----------|---------|-----------|
+| **Differential Antenna** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Two Single-Ended Antennas** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ? |
+| **Automatic Antenna Tuning** | ✓ | ✓ | ✓ (3914 only) | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| **Varicap Control** | ✓ | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| **Antenna Voltage Measurement** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Antenna Phase Measurement** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Antenna Detuning Detection** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Coil Multiplexer Support** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ? |
 
 ---
 
 ## Advanced Features
 
-| Feature | ST25R3916/17 | ST25R39xxB | ST25R3914/15 | ST25R200 | ST25R100 | ST25R500 | ST25R501 | ST25R95 | ST25RN300 |
-|---------|--------------|------------|--------------|----------|----------|----------|----------|---------|-----------|
-| **FIFO Size** | 512 bytes | 512 bytes | 96 bytes | 256 bytes | 256 bytes | 512 bytes | 512 bytes | 528 bytes | N/A |
-| **Hardware CRC** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **Hardware Parity** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| **Collision Detection** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **Collision Position** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **Water Level IRQ** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **External Field Detection** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **RSSI Measurement** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **Amplitude ADC** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **Phase ADC** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **On-chip Temperature** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| **Firmware Update** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ (100%) |
-| **In-Frame Synchronization** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
-| **OOFS with Ext. Clock** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
+| Feature | ST25R3916/17 | ST25R39xxB | ST25R3914/15 | ST25R200 | ST25R100 | ST25R500 | ST25R300 | ST25R501 | ST25R95 | ST25RN300 |
+|---------|--------------|------------|--------------|----------|----------|----------|----------|----------|---------|-----------|
+| **FIFO Size** | 512 bytes | 512 bytes | 96 bytes | 256 bytes | 256 bytes | 512 bytes | 256 bytes | 512 bytes | 528 bytes | N/A |
+| **Hardware CRC** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Hardware Parity** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| **Collision Detection** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Collision Position** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Water Level IRQ** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **External Field Detection** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **RSSI Measurement** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Amplitude ADC** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Phase ADC** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **On-chip Temperature** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| **Firmware Update** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ (100%) |
+| **In-Frame Synchronization** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
+| **OOFS with Ext. Clock** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
 
 ---
 
@@ -181,7 +181,7 @@ This document provides a comprehensive feature-by-feature comparison across all 
 | **Package** | QFN32/WLCSP | QFN32/WLCSP | QFN32 | QFN24 | QFN24 | QFN32 | QFN32 | QFN24 | QFN32 | QFN32 | WLCSP49 |
 | **Package Size** | 5x5mm / 3x3mm | 5x5mm / 3x3mm | 5x5mm | 4x4mm | 4x4mm | 5x5mm | 5x5mm | 4x4mm | ? | 5x5mm | 2.56x2.58mm |
 | **Pin Count** | 32 / 36 | 32 / 36 | 32 | 24 | 24 | 32 | 32 | 24 | ? | 32 | 49 |
-| **Datasheet** | DS12484 | DS13541 | DS11837 | DS13658 | DS14139 | DS14593 | **DS14655** | DS14983 | **(missing)** | DS12807 | DB5606 |
+| **Datasheet** | DS12484 | DS13541 | DS11837 | DS13658 | DS14139 | DS14593 | **DS14655 Rev 2** | DS14983 | **(missing)** | DS12807 | DB5606 |
 | **Exposed Pad** | GND | GND | GND | GND | GND | **GND (req)** | **GND (req)** | **GND (req)** | **GND (req)** | GND | N/A |
 | **Wettable Flanks** | ✗ | ✗ | ✓ (3914) | ✗ | ✗ | ✗ | ✗ | ✓ | ? | ✗ | ✗ |
 | **ECOPACK** | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -289,6 +289,7 @@ Start
 | Date | Changes |
 |------|---------|
 | 2026-03-16 | Initial comprehensive feature matrix created from datasheets |
+| 2026-03-20 | Updated ST25R300 to dedicated columns and added detailed specs |
 
 ---
 
@@ -302,6 +303,7 @@ All information extracted from official STMicroelectronics datasheets and applic
 - DS14139 (ST25R100)
 - DS14593 (ST25R500)
 - **DS14655 (ST25R300)**
+- **UM3536 (ST25R300 GUI)**
 - DS14983 (ST25R501)
 - DS12807 (ST25R95)
 - DB5606 (ST25RN300)

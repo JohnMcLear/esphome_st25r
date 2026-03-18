@@ -22,29 +22,29 @@ All ST25R devices use two register spaces:
 
 ### Space A - Universal Registers
 
-| Addr | Name | ST25R39xx | ST25R39xxB | ST25R200/100 | ST25R500 | Notes |
-|------|------|-----------|------------|--------------|----------|-------|
-| 0x00 | IO_CONF1 | ✓ | ✓ | ✓ | ✓ | Pin configuration |
-| 0x01 | IO_CONF2 | ✓ | ✓ | ✓ | ✓ | Supply configuration |
-| 0x02 | OP_CONTROL | ✓ | ✓ | ✓ | ✓ | Enable control |
-| 0x03 | MODE | ✓ | ✓ | ✓ | ✓ | Protocol mode |
-| 0x04 | BIT_RATE | ✓ | ✓ | ✓ | ✓ | Bit rate selection |
-| 0x05 | ISO14443A_CONF | ✓ | ✓ | ✓ | ✓ | NFC-A configuration |
-| 0x0B | RX_CONF1 | ✓ | ✓ | ✓ | ✓ | Receiver config 1 |
-| 0x0C | RX_CONF2 | ✓ | ✓ | ✓ | ✓ | Receiver config 2 |
-| 0x16 | MASK_MAIN | ✓ | ✓ | ✓ | ✓ | IRQ mask main |
-| 0x17 | MASK_TIMER | ✓ | ✓ | ✓ | ✓ | IRQ mask timer |
-| 0x1A | IRQ_MAIN | ✓ | ✓ | ✓ | ✓ | IRQ status main |
-| 0x1B | IRQ_TIMER | ✓ | ✓ | ✓ | ✓ | IRQ status timer |
-| 0x1C | IRQ_ERROR | ✓ | ✓ | ✓ | ✓ | IRQ error status |
-| 0x1E | FIFO_STATUS1 | ✓ | ✓ | ✓ | ✓ | FIFO count LSB |
-| 0x1F | FIFO_STATUS2 | ✓ | ✓ | ✓ | ✓ | FIFO count MSB + flags |
-| 0x20 | COLLISION_DISPLAY | ✓ | ✓ | ✓ | ✓ | Collision position |
-| 0x22 | NUM_TX_BYTES1 | ✓ | ✓ | ✓ | ✓ | TX byte count MSB |
-| 0x23 | NUM_TX_BYTES2 | ✓ | ✓ | ✓ | ✓ | TX byte count LSB |
-| 0x25 | AD_CONV_RESULT | ✓ | ✓ | ✓ | ✓ | ADC conversion result |
-| 0x28 | TX_DRIVER_CONF | ⚠️ | ⚠️ | ✓ | ✓ | **Different bit mapping** |
-| 0x3F | IC_IDENTITY | ✓ | ✓ | ✓ | ✓ | IC identification |
+| Addr | Name | ST25R39xx | ST25R39xxB | ST25R200/100 | ST25R500 | ST25R300 | Notes |
+|------|------|-----------|------------|--------------|----------|----------|-------|
+| 0x00 | IO_CONF1 / OPERATION | ✓ | ✓ | ✓ | ✓ | **0x00** | ST25R300 uses 0x00 for Op Control |
+| 0x01 | IO_CONF2 | ✓ | ✓ | ✓ | ✓ | **0x01** | ST25R300 uses 0x01 for Gen Conf |
+| 0x02 | OP_CONTROL | ✓ | ✓ | ✓ | ✓ | ⚠️ | ST25R300 map is shifted |
+| 0x03 | MODE / PROTOCOL | ✓ | ✓ | ✓ | ✓ | **0x14** | ST25R300 Protocol1 at 0x14 |
+| 0x04 | BIT_RATE | ✓ | ✓ | ✓ | ✓ | ⚠️ | Bit rate handling differs |
+| 0x05 | ISO14443A_CONF | ✓ | ✓ | ✓ | ✓ | **0x15** | ST25R300 TxProtocol1 at 0x15 |
+| 0x0B | RX_CONF1 | ✓ | ✓ | ✓ | ✓ | **0x09** | ST25R300 RxAnalog1 at 0x09 |
+| 0x0C | RX_CONF2 | ✓ | ✓ | ✓ | ✓ | ⚠️ | - |
+| 0x16 | MASK_MAIN | ✓ | ✓ | ✓ | ✓ | **0x39** | ST25R300 IRQ_MASK1 at 0x39 |
+| 0x17 | MASK_TIMER | ✓ | ✓ | ✓ | ✓ | **0x3A** | ST25R300 IRQ_MASK2 at 0x3A |
+| 0x1A | IRQ_MAIN | ✓ | ✓ | ✓ | ✓ | **0x3C** | ST25R300 IRQ_STATUS1 at 0x3C |
+| 0x1B | IRQ_TIMER | ✓ | ✓ | ✓ | ✓ | **0x3D** | ST25R300 IRQ_STATUS2 at 0x3D |
+| 0x1C | IRQ_ERROR | ✓ | ✓ | ✓ | ✓ | **0x3E** | ST25R300 IRQ_STATUS3 at 0x3E |
+| 0x1E | FIFO_STATUS1 | ✓ | ✓ | ✓ | ✓ | **0x36** | ST25R300 FIFO_STATUS1 at 0x36 |
+| 0x1F | FIFO_STATUS2 | ✓ | ✓ | ✓ | ✓ | **0x37** | ST25R300 FIFO_STATUS2 at 0x37 |
+| 0x20 | COLLISION_DISPLAY | ✓ | ✓ | ✓ | ✓ | **0x38** | ST25R300 COLLISION at 0x38 |
+| 0x22 | NUM_TX_BYTES1 | ✓ | ✓ | ✓ | ✓ | **0x34** | ST25R300 TX_FRAME1 at 0x34 |
+| 0x23 | NUM_TX_BYTES2 | ✓ | ✓ | ✓ | ✓ | **0x35** | ST25R300 TX_FRAME2 at 0x35 |
+| 0x25 | AD_CONV_RESULT | ✓ | ✓ | ✓ | ✓ | **0x4C** | ST25R300 SENSE_RF at 0x4C |
+| 0x28 | TX_DRIVER_CONF | ⚠️ | ⚠️ | ✓ | ✓ | **0x03** | **Different bit mapping** |
+| 0x3F | IC_IDENTITY | ✓ | ✓ | ✓ | ✓ | ✓ | Same address (0x3F) |
 
 ### Key Register Details
 
@@ -383,6 +383,61 @@ wut[3:0] in WUT_CONFIG:
 
 ---
 
+### ST25R300 - Unified Architecture
+
+The ST25R300 (and R300 series) uses a significantly different register map compared to the 3916/500 family. It features a unified 0x00–0x57 address space without the Space A/B split.
+
+#### OPERATION (0x00)
+
+Replaces `OP_CONTROL` and `IO_CONF1` for basic enable.
+
+| Bit | Name | Description |
+|-----|------|-------------|
+| 6 | tx_en | Transmitter enable |
+| 5 | rx_en | Receiver enable |
+| 4 | vdddr_en | VDD_DR regulator enable |
+| 3 | en | Global chip enable |
+
+#### PROTOCOL1 (0x14)
+
+Replaces `MODE` for protocol selection.
+
+| Value | Mode | Description |
+|-------|------|-------------|
+| 0x01 | ISO14443A | NFC-A initiator |
+| 0x02 | ISO14443B | NFC-B initiator |
+| 0x03 | FeliCa | NFC-F initiator |
+| 0x05 | ISO15693 | NFC-V initiator |
+
+#### TX_PROTOCOL1 (0x15)
+
+Replaces `ISO14443A_CONF` for parity/CRC.
+
+| Bit | Name | Description |
+|-----|------|-------------|
+| 6 | a_tx_par | 1=ISO14443A TX parity enable |
+| 5 | tx_crc | 1=TX CRC enable |
+| 4 | tr_am | 0=OOK, 1=AM modulation |
+
+#### FIFO SPI Access
+
+ST25R300 uses fixed SPI command bytes for FIFO access instead of register-based streaming:
+- **FIFO Write:** `0x5F`
+- **FIFO Read:** `0xDF` (0x80 | 0x5F)
+
+#### ST25R300 Command Set
+
+| Command | Hex | Description |
+|---------|-----|-------------|
+| SET_DEFAULT | 0x61 | Reset to power-up state |
+| STOP_ALL | 0x63 | Stop activities + clear FIFO |
+| CLEAR_FIFO | 0x65 | Clear FIFO only |
+| FIELD_ON | 0x6F | RF field on |
+| MASK_RX | 0x71 | Stop receiver |
+| UNMASK_RX | 0x73 | Start receiver |
+
+---
+
 ## IRQ Register Details
 
 ### IRQ_MAIN (0x1A) - Read-to-Clear
@@ -447,7 +502,7 @@ wut[3:0] in WUT_CONFIG:
 
 **FIFO Capacity by Variant:**
 - ST25R3914/15: 96 bytes
-- ST25R200/100: 256 bytes
+- ST25R200/100/300: 256 bytes
 - ST25R39xx/39xxB/500/501: 512 bytes
 - ST25R95: 528 bytes
 
@@ -598,6 +653,17 @@ if (chip_type != 0x28 && chip_type != 0x30) {
 - [ ] Add RESET pin handling (optional)
 - [ ] Connect exposed pad to GND
 - [ ] Update PCB (different pinout)
+
+### From ST25R39xx to ST25R300
+
+- [ ] Update IC detection: `(id & 0xF8) == 0xB0`
+- [ ] **Complete register map remap**: Addresses are shifted from ST25R39xx family
+- [ ] Update operation control (0x02 → 0x00)
+- [ ] Update FIFO access (0x5F/0xDF command bytes)
+- [ ] Update IRQ registers (Shifted to 0x3C-0x3E)
+- [ ] Update direct command hex values (0xC1 → 0x61, etc.)
+- [ ] Update regulator control logic (new VDD_DR management)
+- [ ] Update protocol configuration (MODE 0x03 → PROTOCOL1 0x14)
 
 ### From Any Variant to ST25RN300
 
