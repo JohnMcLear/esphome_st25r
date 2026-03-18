@@ -134,24 +134,19 @@ bool ST25R300::send_short_frame_(uint8_t byte7, uint8_t *resp, uint8_t &resp_len
 
   this->write_command(ST25R300_CMD_TRANSMIT_DATA);
 
-  // Wait past ATQA window (~400µs from TX start) before reading diagnostics.
-  // ATQA arrives at ~86µs after TX-end and takes ~170µs, so safe to read at 700µs.
+  // Wait past ATQA window (~400µs from TX start) — ATQA arrives ~86µs after TX-end.
   delayMicroseconds(700);
-  uint8_t stat2_early = this->read_register(ST25R300_REG_STATUS2);
-  uint8_t irq1_early  = this->read_register(ST25R300_REG_IRQ_STATUS1);
-  uint8_t irq2_early  = this->read_register(ST25R300_REG_IRQ_STATUS2);
-  uint8_t fifo_early  = this->read_register(ST25R300_REG_FIFO_STATUS1);
-  ESP_LOGD(TAG, "ssf @700us: STAT2=0x%02X FIFO=%u IRQ1=0x%02X IRQ2=0x%02X", stat2_early, fifo_early, irq1_early, irq2_early);
+  uint8_t irq1_early = this->read_register(ST25R300_REG_IRQ_STATUS1);
+  uint8_t irq2_early = this->read_register(ST25R300_REG_IRQ_STATUS2);
+  ESP_LOGV(TAG, "ssf @700us: FIFO=%u IRQ1=0x%02X IRQ2=0x%02X",
+           this->read_register(ST25R300_REG_FIFO_STATUS1), irq1_early, irq2_early);
   this->irq_status1_ |= irq1_early;
   this->irq_status2_ |= irq2_early;
 
-  // Now wait out the NRT (5ms total from TX) before reading final status
+  // Wait out the NRT (5ms) then do a final IRQ sweep to catch late arrivals
   delay(10);
-  uint8_t post1 = this->read_register(ST25R300_REG_IRQ_STATUS1);
-  uint8_t post2 = this->read_register(ST25R300_REG_IRQ_STATUS2);
-  ESP_LOGD(TAG, "ssf post10ms: IRQ1=0x%02X IRQ2=0x%02X", post1, post2);
-  this->irq_status1_ |= post1;
-  this->irq_status2_ |= post2;
+  this->irq_status1_ |= this->read_register(ST25R300_REG_IRQ_STATUS1);
+  this->irq_status2_ |= this->read_register(ST25R300_REG_IRQ_STATUS2);
   resp_len = 0;
   return true;
 }
@@ -200,13 +195,9 @@ bool ST25R300::transceive_ex_(const uint8_t *data, size_t len, uint8_t *resp, ui
   bool tx_done = false;
 
   while (millis() - start < timeout_ms) {
-    uint8_t irq1;
-    if (this->irq_triggered_) {
-      this->irq_triggered_ = false;
-      irq1 = this->read_register(ST25R300_REG_IRQ_STATUS1);
-    } else {
-      irq1 = this->read_register(ST25R300_REG_IRQ_STATUS1);
-    }
+    this->irq_triggered_ = false;
+    uint8_t irq1 = this->read_register(ST25R300_REG_IRQ_STATUS1);
+    uint8_t irq2 = this->read_register(ST25R300_REG_IRQ_STATUS2);
 
     if (irq1 & ST25R300_IRQ1_TXE) tx_done = true;
 
@@ -216,9 +207,13 @@ bool ST25R300::transceive_ex_(const uint8_t *data, size_t len, uint8_t *resp, ui
         uint8_t to_read = std::min((uint8_t)(64 - resp_len), f1);
         this->read_fifo(resp + resp_len, to_read);
         resp_len += to_read;
-        start = millis();
+        start = millis();  // reset timeout while data is flowing
       }
       if (irq1 & ST25R300_IRQ1_RXE) {
+        return resp_len > 0;
+      }
+      // NRT expired with no response — tag not present or ignoring us, exit fast
+      if (irq2 & ST25R300_IRQ2_NRE) {
         return resp_len > 0;
       }
     }
@@ -294,12 +289,15 @@ std::unique_ptr<nfc::NfcTag> ST25R300::read_tag_(std::vector<uint8_t> &uid) {
                                            data.begin() + (int) msg_start + (int) msg_len);
             nfc::NfcTagUid nfc_uid(uid.begin(), uid.end());
             if (msg_len > 0) {
+              ESP_LOGD(TAG, "read_tag_: NDEF found, %zu bytes at TLV offset %zu", msg_len, tlv_index);
               return make_unique<nfc::NfcTag>(nfc_uid, nfc::NFC_FORUM_TYPE_2, ndef_data);
             }
+            ESP_LOGD(TAG, "read_tag_: NDEF TLV present but empty");
             return make_unique<nfc::NfcTag>(nfc_uid, nfc::NFC_FORUM_TYPE_2);
           }
         }
       }
+      ESP_LOGD(TAG, "read_tag_: no NDEF TLV found (found=%d terminator=%d)", found, terminator_found);
     } else {
       ESP_LOGW(TAG, "Failed to read page 0, len=%d", len);
     }
