@@ -110,11 +110,15 @@ void ST25R300::update() {
 bool ST25R300::send_short_frame_(uint8_t byte7, uint8_t *resp, uint8_t &resp_len, uint32_t timeout_ms) {
   // Temporarily disable CRC and parity for short frame
   this->write_register(ST25R300_REG_TX_PROTOCOL1, 0x00);  // no CRC, no parity
-  // Set Rx protocol: antcl=0 here (set to 1 later in anticol), rx_crc=0 for ATQA response
-  this->write_register(ST25R300_REG_RX_PROTOCOL1, 0x00);
+  // Set Rx protocol: b_rx_sof+b_rx_eof MUST be set for Manchester framing; no CRC for ATQA
+  this->write_register(ST25R300_REG_RX_PROTOCOL1,
+                       ST25R300_RX_PROT1_B_RX_SOF | ST25R300_RX_PROT1_B_RX_EOF |
+                       ST25R300_RX_PROT1_A_RX_PAR);  // 0x38
 
-  this->write_command(ST25R300_CMD_STOP_ALL);  // reset receiver state + clear FIFO + clear IRQs
-  this->read_register(ST25R300_REG_IRQ_STATUS1);  // read-to-clear (STOP_ALL may have already cleared)
+  // Use CLEAR_FIFO (not STOP_ALL) — STOP_ALL disables the RX decoder (rx_on→0),
+  // preventing ATQA reception. CLEAR_FIFO only resets FIFO without killing the RX path.
+  this->write_command(ST25R300_CMD_CLEAR_FIFO);
+  this->read_register(ST25R300_REG_IRQ_STATUS1);  // read-to-clear pending IRQs
   this->read_register(ST25R300_REG_IRQ_STATUS2);
   this->read_register(ST25R300_REG_IRQ_STATUS3);
   this->write_command(ST25R300_CMD_CLEAR_RX_GAIN);  // init AGC/squelch before every TX
@@ -130,8 +134,19 @@ bool ST25R300::send_short_frame_(uint8_t byte7, uint8_t *resp, uint8_t &resp_len
 
   this->write_command(ST25R300_CMD_TRANSMIT_DATA);
 
-  // No SPI activity during the ATQA receive window (152-389µs after TX start).
-  delay(10);  // NRT=5ms; 10ms covers the full ATQA window with plenty of margin
+  // Wait past ATQA window (~400µs from TX start) before reading diagnostics.
+  // ATQA arrives at ~86µs after TX-end and takes ~170µs, so safe to read at 700µs.
+  delayMicroseconds(700);
+  uint8_t stat2_early = this->read_register(ST25R300_REG_STATUS2);
+  uint8_t irq1_early  = this->read_register(ST25R300_REG_IRQ_STATUS1);
+  uint8_t irq2_early  = this->read_register(ST25R300_REG_IRQ_STATUS2);
+  uint8_t fifo_early  = this->read_register(ST25R300_REG_FIFO_STATUS1);
+  ESP_LOGD(TAG, "ssf @700us: STAT2=0x%02X FIFO=%u IRQ1=0x%02X IRQ2=0x%02X", stat2_early, fifo_early, irq1_early, irq2_early);
+  this->irq_status1_ |= irq1_early;
+  this->irq_status2_ |= irq2_early;
+
+  // Now wait out the NRT (5ms total from TX) before reading final status
+  delay(10);
   uint8_t post1 = this->read_register(ST25R300_REG_IRQ_STATUS1);
   uint8_t post2 = this->read_register(ST25R300_REG_IRQ_STATUS2);
   ESP_LOGD(TAG, "ssf post10ms: IRQ1=0x%02X IRQ2=0x%02X", post1, post2);
@@ -166,10 +181,13 @@ bool ST25R300::transceive_ex_(const uint8_t *data, size_t len, uint8_t *resp, ui
     this->write_register(ST25R300_REG_TX_PROTOCOL1,
                          ST25R300_TX_PROT1_A_TX_PAR | ST25R300_TX_PROT1_TX_CRC);  // 0x60
     this->write_register(ST25R300_REG_RX_PROTOCOL1,
-                         ST25R300_RX_PROT1_A_RX_PAR | ST25R300_RX_PROT1_RX_CRC);  // 0x0C
+                         ST25R300_RX_PROT1_B_RX_SOF | ST25R300_RX_PROT1_B_RX_EOF |
+                         ST25R300_RX_PROT1_A_RX_PAR | ST25R300_RX_PROT1_RX_CRC);  // 0x3C
   } else {
     this->write_register(ST25R300_REG_TX_PROTOCOL1, 0x00);
-    this->write_register(ST25R300_REG_RX_PROTOCOL1, 0x00);
+    this->write_register(ST25R300_REG_RX_PROTOCOL1,
+                         ST25R300_RX_PROT1_B_RX_SOF | ST25R300_RX_PROT1_B_RX_EOF |
+                         ST25R300_RX_PROT1_A_RX_PAR);  // 0x38, no CRC
   }
 
   this->write_fifo(data, len);
@@ -442,6 +460,10 @@ void ST25R300::process_state_() {
           uint8_t sel_pk[7] = {sel_cmds[this->cascade_level_], 0x70,
                                full_uid[0], full_uid[1], full_uid[2], full_uid[3], bcc};
 
+          ESP_LOGV(TAG, "SELECT CL%d: UID=%02X%02X%02X%02X BCC=%02X tagBCC=%02X",
+                   this->cascade_level_ + 1,
+                   full_uid[0], full_uid[1], full_uid[2], full_uid[3], bcc, resp[4]);
+
           if (full_uid[0] == 0x88) {
             for (int i = 1; i < 4; i++) {
               char buf[3]; sprintf(buf, "%02X", full_uid[i]); this->current_uid_ += buf;
@@ -454,12 +476,13 @@ void ST25R300::process_state_() {
 
           // Restore normal Rx protocol (clear antcl) for SELECT (uses CRC)
           this->write_register(ST25R300_REG_RX_PROTOCOL1,
-                               ST25R300_RX_PROT1_A_RX_PAR | ST25R300_RX_PROT1_RX_CRC);
+                               ST25R300_RX_PROT1_B_RX_SOF | ST25R300_RX_PROT1_B_RX_EOF |
+                               ST25R300_RX_PROT1_A_RX_PAR | ST25R300_RX_PROT1_RX_CRC);  // 0x3C
 
           uint8_t sak_buf[3];
           uint8_t sak_len = 0;
           if (!this->transceive_(sel_pk, 7, sak_buf, sak_len) || sak_len == 0) {
-            ESP_LOGW(TAG, "SELECT failed (no SAK)");
+            ESP_LOGW(TAG, "SELECT failed (no SAK), sak_len=%d", sak_len);
             this->state_ = STATE_IDLE;
             this->finalize_scan_();
             return;
@@ -662,8 +685,12 @@ void ST25R300::send_anticol_frame_() {
   uint8_t ntx_n = 2 + this->anticol_prefix_full_;
   uint8_t ntx_b = this->anticol_prefix_bits_;
 
-  // Enable anticollision mode in Rx protocol register
-  this->write_register(ST25R300_REG_RX_PROTOCOL1, ST25R300_RX_PROT1_ANTCL);
+  // Enable anticollision mode; keep b_rx_sof+b_rx_eof+a_rx_par for correct 8-bit byte recovery.
+  // a_rx_par MUST be set: without it, parity bits from 9-bit NFC-A bytes are packed into FIFO
+  // alongside data bits, garbling the UID. a_rx_par strips parity before FIFO write.
+  this->write_register(ST25R300_REG_RX_PROTOCOL1,
+                       ST25R300_RX_PROT1_B_RX_SOF | ST25R300_RX_PROT1_B_RX_EOF |
+                       ST25R300_RX_PROT1_A_RX_PAR | ST25R300_RX_PROT1_ANTCL);  // 0x39
 
   // Tx protocol: no CRC for anticollision frame
   this->write_register(ST25R300_REG_TX_PROTOCOL1, ST25R300_TX_PROT1_A_TX_PAR);  // parity, no CRC
@@ -735,20 +762,33 @@ bool ST25R300::reset_() {
   this->write_register(ST25R300_REG_TX_PROTOCOL1,
                        ST25R300_TX_PROT1_A_TX_PAR | ST25R300_TX_PROT1_TX_CRC);  // 0x60
 
-  // Rx protocol: a_rx_par=1 (bit3), rx_crc=1 (bit2), antcl=0
+  // Rx protocol: b_rx_sof+b_rx_eof MUST be set (factory default=0x3C); antcl=0
   this->write_register(ST25R300_REG_RX_PROTOCOL1,
-                       ST25R300_RX_PROT1_A_RX_PAR | ST25R300_RX_PROT1_RX_CRC);  // 0x0C
+                       ST25R300_RX_PROT1_B_RX_SOF | ST25R300_RX_PROT1_B_RX_EOF |
+                       ST25R300_RX_PROT1_A_RX_PAR | ST25R300_RX_PROT1_RX_CRC);  // 0x3C
 
-  // RX path analog and correlator configuration from STEVAL-25R300KA working values (UM3536 Figure 34)
-  // 0x09 RX Path Ana 1: dig_clk_dly=7 (bits[7:4]=0x7), hpf_clr=3 (bits[1:0]=3)
+  // RX path analog and correlator configuration tuned for NFC-A 106kbps reception.
+  // Values derived from RFAL ST25R500 analogConfigTbl for Poll NFC-A Rx 106kbps.
+  // The ST25R300 and ST25R500 share the same register map at these addresses.
+
+  // 0x09 RX Path Ana 1: dig_clk_dly=7 (recommended), hpf_ctrl=3 (80kHz HPF), gain_boost optional
   uint8_t rx_ana1 = 0x73 | (this->rx_gain_boost_ ? 0x04 : 0x00);  // gain_boost = bit2
   this->write_register(ST25R300_REG_RX_ANALOG1, rx_ana1);
-  this->write_register(0x0A, 0x02);  // RX Path Ana 2
-  this->write_register(0x0B, 0x85);  // RX Path Ana 3
-  this->write_register(0x0D, 0xCC);  // RX Digital
-  this->write_register(0x0E, 0xC1);  // Correlator 1 — critical for I/Q demod framing
-  this->write_register(0x11, 0xAA);  // Correlator 4 — critical for I/Q demod framing
-  this->write_register(0x13, 0x30);  // Correlator 6
+
+  // 0x0A RX Path Ana 2: afe_gain_rw=2 (6dB start reduction, per RFAL), afe_gain_td=2
+  // Note: afe_gain_rw≠0 requires dis_agc_noise_meas=1 in CORR5 (0x12)
+  this->write_register(0x0A, 0x22);
+
+  this->write_register(0x0B, 0x85);  // RX Path Ana 3: ook thresholds (factory default)
+  this->write_register(0x0D, 0xCC);  // RX Digital: agc_en=1, lpf_coef=4, hpf_coef=3 (factory default)
+
+  // Correlator settings tuned for NFC-A 106kbps (from RFAL analogConfigTbl)
+  this->write_register(0x0E, 0xF8);  // CORR1: iir_coef2=F, iir_coef1=8 (RFAL; factory=0xC1)
+  this->write_register(0x0F, 0x2E);  // CORR2: squelch_thr=2, agc_thr=E (RFAL; factory=0x5A)
+  this->write_register(0x10, 0x0F);  // CORR3: start_wait=15 (RFAL; factory=7) — longer wait prevents false subc_start
+  this->write_register(0x11, 0x88);  // CORR4: coll_lvl=8, data_lvl=8 (RFAL; factory=0xAA) — lower threshold
+  this->write_register(0x12, 0x32);  // CORR5: dis_soft_sq=1, dis_agc_noise_meas=1, dec_f=2 (required for afe_gain_rw≠0)
+  this->write_register(0x13, 0x20);  // CORR6: init_noise_lvl=2 (RFAL; factory=0x30)
 
   // TX driver: d_res controls power (0=max, 15=min); keep am_mod field at 0x7 in TX_MOD1
   uint8_t d_res = (15 - this->rf_power_) & 0x0F;
