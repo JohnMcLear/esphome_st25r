@@ -104,8 +104,11 @@ static const uint8_t ST25R300_TX_PROT1_TX_CRC   = 0x20; // bit5: TX CRC enable
 static const uint8_t ST25R300_TX_PROT1_TR_AM    = 0x10; // bit4: modulation type (0=OOK, 1=AM)
 
 // ── Rx Protocol register 1 (0x17) bit masks ──────────────────────────────────
-static const uint8_t ST25R300_RX_PROT1_A_RX_PAR = 0x08; // bit3: ISO14443A RX parity enable
-static const uint8_t ST25R300_RX_PROT1_RX_CRC   = 0x04; // bit2: RX CRC enable
+// DS14655 Table 44: factory default = 0x3C (b_rx_sof=1, b_rx_eof=1, a_rx_par=1, rx_crc=1)
+static const uint8_t ST25R300_RX_PROT1_B_RX_SOF = 0x20; // bit5: expect SOF from PICC (default=1, MUST be set for I_rxs to fire)
+static const uint8_t ST25R300_RX_PROT1_B_RX_EOF = 0x10; // bit4: expect EOF from PICC (default=1)
+static const uint8_t ST25R300_RX_PROT1_A_RX_PAR = 0x08; // bit3: ISO14443A RX parity enable (default=1)
+static const uint8_t ST25R300_RX_PROT1_RX_CRC   = 0x04; // bit2: RX CRC enable (default=1)
 static const uint8_t ST25R300_RX_PROT1_ANTCL    = 0x01; // bit0: anticollision mode
 
 // ── Direct Commands ──────────────────────────────────────────────────────────
