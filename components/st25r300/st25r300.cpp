@@ -289,12 +289,15 @@ std::unique_ptr<nfc::NfcTag> ST25R300::read_tag_(std::vector<uint8_t> &uid) {
                                            data.begin() + (int) msg_start + (int) msg_len);
             nfc::NfcTagUid nfc_uid(uid.begin(), uid.end());
             if (msg_len > 0) {
+              ESP_LOGD(TAG, "read_tag_: NDEF found, %zu bytes at TLV offset %zu", msg_len, tlv_index);
               return make_unique<nfc::NfcTag>(nfc_uid, nfc::NFC_FORUM_TYPE_2, ndef_data);
             }
+            ESP_LOGD(TAG, "read_tag_: NDEF TLV present but empty");
             return make_unique<nfc::NfcTag>(nfc_uid, nfc::NFC_FORUM_TYPE_2);
           }
         }
       }
+      ESP_LOGD(TAG, "read_tag_: no NDEF TLV found (found=%d terminator=%d)", found, terminator_found);
     } else {
       ESP_LOGW(TAG, "Failed to read page 0, len=%d", len);
     }
