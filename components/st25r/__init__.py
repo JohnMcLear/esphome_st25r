@@ -39,6 +39,31 @@ CONF_MIFARE_KEY_B = "mifare_key_b"
 CONF_MISS_THRESHOLD = "miss_threshold"
 CONF_ANT_TUNE_A = "ant_tune_a"
 CONF_ANT_TUNE_B = "ant_tune_b"
+CONF_SMART_TAP_COLLECTOR_ID = "smart_tap_collector_id"
+
+
+def _validate_smart_tap_collector_id(value):
+    """Accept the Google Wallet issuer/collector ID as decimal or 0x-prefixed hex.
+
+    The ID comes from the Google Pay and Wallet API console (pay.google.com/business/console)
+    and is displayed as a large decimal integer, e.g. 3388000000022304.
+    It is sent big-endian in the Smart Tap 2.0 NEGOTIATE command (tag 0x82, 8 bytes).
+    Leaving it at 0 (default) means the reader acts as an anonymous issuer — only
+    passes whose redemptionIssuers explicitly includes 0 will respond.
+    """
+    if isinstance(value, int):
+        int_val = value
+    else:
+        value = cv.string_strict(value)
+        try:
+            int_val = int(value, 0)  # 0 base accepts decimal and 0x-hex
+        except ValueError as err:
+            raise cv.Invalid(
+                "smart_tap_collector_id must be a decimal integer or 0x-prefixed hex"
+            ) from err
+    if int_val < 0 or int_val > 0xFFFFFFFFFFFFFFFF:
+        raise cv.Invalid("smart_tap_collector_id must fit in 64 bits (0 – 2^64-1)")
+    return int_val
 
 st25r_ns = cg.esphome_ns.namespace("st25r")
 ST25R = st25r_ns.class_("ST25R", cg.PollingComponent)
@@ -67,6 +92,7 @@ ST25R_SCHEMA = cv.Schema(
         cv.Optional(CONF_MISS_THRESHOLD, default=3): cv.int_range(min=1, max=255),
         cv.Optional(CONF_ANT_TUNE_A, default=0x80): cv.int_range(min=0, max=255),
         cv.Optional(CONF_ANT_TUNE_B, default=0x80): cv.int_range(min=0, max=255),
+        cv.Optional(CONF_SMART_TAP_COLLECTOR_ID, default=0): _validate_smart_tap_collector_id,
         cv.Optional(CONF_STATUS): binary_sensor_.binary_sensor_schema(),
         cv.Optional(CONF_FIELD_STRENGTH): sensor_.sensor_schema(),
         cv.Optional(CONF_ON_TAG): automation.validate_automation(
@@ -103,6 +129,7 @@ async def setup_st25r(var, config):
     cg.add(var.set_miss_threshold(config[CONF_MISS_THRESHOLD]))
     cg.add(var.set_ant_tune_a(config[CONF_ANT_TUNE_A]))
     cg.add(var.set_ant_tune_b(config[CONF_ANT_TUNE_B]))
+    cg.add(var.set_smart_tap_collector_id(config[CONF_SMART_TAP_COLLECTOR_ID]))
 
     if CONF_STATUS in config:
         sens = await binary_sensor_.new_binary_sensor(config[CONF_STATUS])

@@ -534,24 +534,40 @@ void ST25R::iso_dep_deselect_() {
 // ── iso_dep_smart_tap_ ───────────────────────────────────────────────────────
 // Reads a stable credential from a Google Wallet pass via Google Smart Tap 2.0.
 //
-// HOW IT WORKS:
-//   The pass owner creates a Google Wallet generic pass (free Google Wallet API
-//   issuer account) with Smart Tap enabled and a person-specific string as the
-//   smartTapRedemptionValue (e.g. "alice@home").  The pass is configured to NOT
-//   require reader authentication, so the redemption value is returned in
-//   cleartext.  When the phone is tapped, the reader:
-//     1. SELECTs the Smart Tap 2.0 application (AID "OSE.GST")
-//     2. Sends NEGOTIATE without a reader public key — this signals no-encryption
-//     3. Sends GET SMART TAP DATA
-//     4. Parses BER-TLV: E2 → E3 → tag 0x82 = redemption value
+// ── IMPORTANT: "merchant name" vs "redemption value" ────────────────────────
+// The "merchant name" or "issuer name" shown on the Google Wallet pass card is
+// a purely visual display field (GenericObject.issuerName / GenericClass.issuerName).
+// It is NOT returned by Smart Tap and the reader does NOT query by name.
 //
-// WHAT FAILS (returns false):
-//   • Phone has no Smart-Tap-enabled Google Wallet pass (SW=6A82 on SELECT)
-//   • Pass requires merchant authentication  (SW≠90 on NEGOTIATE)
-//   • Pass response is encrypted (0x82 absent in cleartext E2>E3)
+// What Smart Tap returns is the pass's  s m a r t T a p R e d e m p t i o n V a l u e
+// field — a string set by the pass issuer (you) when creating the pass via the
+// Google Wallet API.  That string becomes the stable token passed to on_tag.
 //
-// Passes that require reader authentication need the operator to register with
-// Google as a certified Smart Tap reader — out of scope for this DIY component.
+// ── HOW IT WORKS ────────────────────────────────────────────────────────────
+// 1. SELECT the Smart Tap 2.0 application (AID "OSE.GST" = 4F 53 45 2E 47 53 54)
+// 2. NEGOTIATE SECURE SESSIONS:
+//    - The reader sends its collectorId (= smart_tap_collector_id_, configured via
+//      YAML option smart_tap_collector_id; defaults to 0 for anonymous readers).
+//    - No reader public key is included → requests cleartext response.
+//    - The phone checks all passes whose redemptionIssuers list contains the
+//      collectorId; matching passes will be returned in plaintext.
+// 3. GET SMART TAP DATA
+// 4. Parse BER-TLV: E2 → E3 → tag 0x82 = smartTapRedemptionValue string
+//
+// ── WHAT FAILS (returns false) ───────────────────────────────────────────────
+// • Phone has no Smart-Tap-enabled pass (SW=6A82 on SELECT)
+// • No passes match this reader's collectorId (GET DATA returns E2>E3 without 0x82)
+// • Pass is encrypted (0x82 present but ciphertext, not plaintext string)
+//
+// ── PASS CONFIGURATION REQUIREMENTS ─────────────────────────────────────────
+// For a Google Wallet pass to respond to this reader in cleartext:
+//   1. The pass class and object must have Smart Tap enabled
+//   2. GenericObject.smartTapRedemptionValue must be set (this is what's returned)
+//   3. GenericObject.redemptionIssuers must include this reader's collectorId
+//      (the numeric issuer ID from pay.google.com/business/console)
+//   4. The pass class must NOT have requireUserAuthentication set to true
+//
+// Set smart_tap_collector_id in your YAML to match your Google Wallet issuer ID.
 bool ST25R::iso_dep_smart_tap_(std::string &token) {
   token.clear();
   uint8_t resp[64];
@@ -575,22 +591,24 @@ bool ST25R::iso_dep_smart_tap_(std::string &token) {
   }
   ESP_LOGD(TAG, "Smart Tap: SELECT OSE.GST OK");
 
-  // ── Step 2: NEGOTIATE SECURE SESSIONS (no reader public key = cleartext) ──
-  // TLV structure: E0 (merchant data) → 81 (version 2.0) + 82 (merchant ID,
-  // 8 zero bytes = anonymous) + 83 (nonce, 8 bytes).  Omitting tag 0x84
-  // (reader public key) requests cleartext response for no-auth passes.
-  // Total APDU data: E0 18 | 81 02 01 02 | 82 08 00*8 | 83 08 [nonce]
-  //   = 2 + 4 + 10 + 10 = 26 bytes → Lc = 0x1A
+  // ── Step 2: NEGOTIATE SECURE SESSIONS ────────────────────────────────────
+  // TLV: E0 (merchant-data) → 81 (min version 2.0) + 82 (collectorId 8 bytes)
+  //      + 83 (nonce 8 bytes).
+  // Tag 0x84 (reader public key) is intentionally omitted → cleartext mode.
+  // collectorId (tag 0x82) = smart_tap_collector_id_, sent big-endian.
+  // This must match an entry in the pass's redemptionIssuers list for the pass
+  // to be returned; a value of 0 acts as an anonymous/open reader.
+  // Total data: E0 18 | 81 02 01 02 | 82 08 [id] | 83 08 [nonce] = 26 bytes
   uint8_t neg[31];
-  neg[0]  = 0x80; neg[1]  = 0x50;  // CLA INS
+  neg[0]  = 0x80; neg[1]  = 0x50;  // CLA INS (proprietary)
   neg[2]  = 0x01; neg[3]  = 0x00;  // P1 = 1 merchant, P2 = 0
   neg[4]  = 0x1A;                   // Lc = 26 bytes
   neg[5]  = 0xE0; neg[6]  = 0x18;  // E0 merchant-data TLV: 24 bytes follow
   neg[7]  = 0x81; neg[8]  = 0x02; neg[9]  = 0x01; neg[10] = 0x02;  // version 2.0
-  neg[11] = 0x82; neg[12] = 0x08;  // merchant ID TLV (8 zero bytes = anonymous)
-  memset(neg + 13, 0x00, 8);
+  neg[11] = 0x82; neg[12] = 0x08;  // collectorId TLV (8 bytes big-endian)
+  for (int i = 0; i < 8; i++)
+    neg[13 + i] = (uint8_t)(this->smart_tap_collector_id_ >> ((7 - i) * 8));
   neg[21] = 0x83; neg[22] = 0x08;  // nonce TLV (8 bytes)
-  // Use ESPHome's random_uint32() for unpredictable nonces.
   for (int i = 0; i < 2; i++) {
     uint32_t r = random_uint32();
     neg[23 + i * 4 + 0] = (uint8_t)(r >> 24);
@@ -602,11 +620,13 @@ bool ST25R::iso_dep_smart_tap_(std::string &token) {
   if (!this->iso_dep_transceive_(neg, sizeof(neg), resp, resp_len, 500))
     return false;
   if (resp_len < 2 || resp[resp_len - 2] != 0x90 || resp[resp_len - 1] != 0x00) {
-    ESP_LOGD(TAG, "Smart Tap: NEGOTIATE SW=%02X%02X (pass may require merchant auth)",
+    ESP_LOGD(TAG, "Smart Tap: NEGOTIATE SW=%02X%02X (pass may require merchant auth or collectorId mismatch)",
              resp_len >= 2 ? resp[resp_len - 2] : 0,
              resp_len >= 1 ? resp[resp_len - 1] : 0);
     return false;
   }
+  ESP_LOGD(TAG, "Smart Tap: NEGOTIATE OK (collectorId=0x%016" PRIx64 ")",
+           this->smart_tap_collector_id_);
 
   // ── Step 3: GET SMART TAP DATA ────────────────────────────────────────────
   const uint8_t get_data[4] = {0x80, 0xCA, 0x01, 0x00};
@@ -619,21 +639,39 @@ bool ST25R::iso_dep_smart_tap_(std::string &token) {
              resp_len >= 1 ? resp[resp_len - 1] : 0);
     return false;
   }
+  // Log the raw response at DEBUG level — essential for diagnosing pass configuration.
+  // With logger: level: DEBUG you can see exactly what the phone returned.
+  if (resp_len > 2) {
+    const size_t body_len = (size_t)(resp_len - 2);
+    // 3 chars per byte ("XX ") + null terminator; cap at 64 bytes shown
+    char hexbuf[64 * 3 + 1];
+    const size_t show = (body_len < 64) ? body_len : 64;
+    for (size_t i = 0; i < show; i++)
+      snprintf(hexbuf + i * 3, 4, "%02X ", resp[i]);
+    ESP_LOGD(TAG, "Smart Tap: GET DATA body (%zu bytes): %s%s",
+             body_len, hexbuf, body_len > 64 ? "..." : "");
+  }
 
   // ── Step 4: Parse BER-TLV response: E2 → E3 → 0x82 (redemption value) ───
+  // Reminder: what is being extracted here is smartTapRedemptionValue — the string
+  // you set when creating the pass.  The "merchant name" field is NOT part of this
+  // response; it is a UI-only display label.
   const size_t data_len = (size_t)(resp_len - 2);  // strip SW bytes
   size_t e2_len = 0, e3_len = 0, v82_len = 0;
   const uint8_t *e2 = ber_find(resp, data_len, 0xE2, &e2_len);
   if (!e2) { ESP_LOGD(TAG, "Smart Tap: E2 missing in response"); return false; }
   const uint8_t *e3 = ber_find(e2, e2_len, 0xE3, &e3_len);
-  if (!e3) { ESP_LOGD(TAG, "Smart Tap: E3 missing in E2"); return false; }
+  if (!e3) { ESP_LOGD(TAG, "Smart Tap: E3 missing in E2 (pass has no matching object)"); return false; }
   const uint8_t *v82 = ber_find(e3, e3_len, 0x82, &v82_len);
   if (!v82 || v82_len == 0) {
-    ESP_LOGD(TAG, "Smart Tap: redemption value (0x82) absent in E3 — pass is encrypted");
+    ESP_LOGD(TAG, "Smart Tap: redemption value (tag 0x82) absent — "
+             "check that smartTapRedemptionValue is set on the pass object and "
+             "that redemptionIssuers includes collectorId=0x%016" PRIx64,
+             this->smart_tap_collector_id_);
     return false;
   }
   token.assign(reinterpret_cast<const char *>(v82), v82_len);
-  ESP_LOGI(TAG, "Smart Tap: redemption value = %s", token.c_str());
+  ESP_LOGI(TAG, "Smart Tap: smartTapRedemptionValue = \"%s\"", token.c_str());
   return true;
 }
 

@@ -15,11 +15,27 @@
 #   2. Google Smart Tap 2.0 (Google Wallet generic/loyalty passes)
 #   3. Apple VAS URL mode   (Apple Wallet .pkpass passes)
 #
-# For wallet passes the reader sends the protocol's SELECT + GET DATA commands
-# WITHOUT including a reader public key, requesting plaintext data.  Passes
-# configured for no-reader-authentication return their credential in cleartext.
-# Payment passes (Google Pay, Apple Pay) always require merchant authentication
-# and will therefore return an error — this is expected and handled gracefully.
+# For wallet passes the reader sends SELECT + GET DATA without a reader public
+# key, requesting plaintext.  Passes whose issuer configured no-auth mode
+# return their credential string in cleartext.  Payment passes (Google Pay,
+# Apple Pay) always require certified merchant authentication and are skipped.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# "MERCHANT NAME" IS NOT THE CREDENTIAL — READ THIS FIRST
+# ══════════════════════════════════════════════════════════════════════════════
+# The "merchant name" or "issuer name" shown on a Google Wallet pass card
+# (e.g. "door", "My Company", "Acme Corp") is a DISPLAY-ONLY field.
+# The reader does NOT query by merchant name and the name is NOT returned by
+# Smart Tap.
+#
+# What Smart Tap returns is a separate field called  smartTapRedemptionValue
+# — a string that YOU set when creating the pass via the Google Wallet API.
+# That string is what appears in ESPHome logs and is used as the 'uid' in your
+# binary sensor.  Example:
+#
+#   Pass created with:   smartTapRedemptionValue = "alice@home"
+#   Reader logs:         Smart Tap: smartTapRedemptionValue = "alice@home"
+#   binary_sensor uid:   "alice@home"
 #
 # ══════════════════════════════════════════════════════════════════════════════
 # DOES THE TOKEN REPRESENT THE PERSON OR THE PHONE?
@@ -31,10 +47,6 @@
 #   • She taps the new phone — the reader reads the same credential as before.
 #   • No re-enrollment needed.
 #
-# The credential IS person-specific because the user chooses what string to put
-# in the pass as the Smart Tap / VAS redemption value.  Using a meaningful string
-# (e.g. "alice@home") makes it obvious who the pass belongs to.
-#
 # ══════════════════════════════════════════════════════════════════════════════
 # GOOGLE WALLET SETUP
 # ══════════════════════════════════════════════════════════════════════════════
@@ -43,24 +55,31 @@
 # 1. Create a Google Wallet Issuer account:
 #    a. Go to https://console.cloud.google.com/ and create a project.
 #    b. Enable the "Google Wallet API" on that project.
-#    c. Go to https://pay.google.com/business/console/ and create an issuer
-#       (takes ~24 hours to approve, but you can test immediately in DEMO mode).
+#    c. Go to https://pay.google.com/business/console/ and create an issuer.
+#    d. Note your ISSUER ID — a large decimal number shown in the console,
+#       e.g. 3388000000022304.  This goes in smart_tap_collector_id below.
 #
 # 2. Create a "Generic" pass class and object via the Wallet REST API.
-#    The key fields for Smart Tap:
-#      "smartTapRedemptionValue": "alice@home"   ← your person-specific token
-#      "redemptionIssuers": []                   ← empty = no reader auth needed
-#    Set the same "alice@home" value for every pass you issue to Alice.
+#    Required Smart Tap fields on the OBJECT (not just the class):
+#      "smartTapRedemptionValue": "alice@home"   ← the string returned to on_tag
+#      "redemptionIssuers": [3388000000022304]   ← your issuer ID from step 1d
+#    The "issuerName" / "merchantName" field shown on the card is separate and
+#    is purely cosmetic — it plays no role in the Smart Tap exchange.
 #
 # 3. Generate a "Save to Google Wallet" JWT link and send it to the user.
 #    When they click it, the pass is added to their Google Wallet.
 #
-# 4. Tap the phone — check ESPHome logs for:
-#      [I][st25r:???]: Smart Tap: redemption value = alice@home
+# 4. Set smart_tap_collector_id in the YAML below to your issuer ID from step 1d.
 #
-# 5. Use "alice@home" as the uid in the binary_sensor below.
+# 5. Tap the phone with logger: DEBUG — ESPHome logs will show:
+#      Smart Tap: SELECT OSE.GST OK
+#      Smart Tap: NEGOTIATE OK (collectorId=0x000C095E38801720)
+#      Smart Tap: GET DATA body (NN bytes): E2 xx E3 xx 82 0A ...
+#      Smart Tap: smartTapRedemptionValue = "alice@home"
 #
-# Quick-start tool: https://developers.google.com/wallet/generic/web/  (pass builder)
+# 6. Use "alice@home" as the uid in the binary_sensor below.
+#
+# Quick-start pass builder: https://developers.google.com/wallet/generic/web/
 #
 # ══════════════════════════════════════════════════════════════════════════════
 # APPLE WALLET SETUP
@@ -93,6 +112,7 @@
 #   authentication — SW=6985 is returned and the reader falls back gracefully.
 # • Transit passes, airline boarding passes: often require reader auth too.
 # • Passes with requiresAuthentication:true (Google) / without "nfc" key (Apple).
+# • Passes whose redemptionIssuers does NOT include your smart_tap_collector_id.
 # ══════════════════════════════════════════════════════════════════════════════
 
 esphome:
@@ -125,6 +145,16 @@ st25r_spi:
   cs_pin: GPIO6
   irq_pin: GPIO7
   update_interval: 1s
+
+  # smart_tap_collector_id: your Google Wallet issuer ID from pay.google.com/business/console
+  # This is the numeric issuer ID (a large decimal integer) that must also appear
+  # in the pass's redemptionIssuers list for the pass to respond to this reader.
+  # Default (0) acts as an anonymous reader — only works if you explicitly put 0
+  # in the pass's redemptionIssuers, which is not normal.
+  # Set this to your real issuer ID once you have a Google Wallet API account.
+  # Accepts decimal:   smart_tap_collector_id: 3388000000022304
+  # Or 0x-prefixed hex: smart_tap_collector_id: 0x000C095E38801720
+  smart_tap_collector_id: 0   # ← replace with your issuer ID
 
   on_tag:
     then:

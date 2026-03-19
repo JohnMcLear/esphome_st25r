@@ -152,26 +152,37 @@ Phones randomise their ISO 14443A UID on every tap. The reader bypasses this by 
 
 Each protocol is attempted with no reader public key, requesting **cleartext** data. Passes configured without mandatory reader authentication return their credential in plaintext. Payment passes (Google Pay, Apple Pay) always require certified merchant authentication and are skipped gracefully.
 
+### "Merchant name" is not the credential
+
+The "merchant name" / "issuer name" shown on a Google Wallet pass card is a **display-only** label. It plays no role in the Smart Tap protocol and is never returned to the reader.
+
+What Smart Tap returns is the pass's **`smartTapRedemptionValue`** field — a string you set when creating the pass via the Google Wallet API. That string is what fires in `on_tag` and is used as `uid` in a binary sensor.
+
 ### Is the token tied to the person or the phone?
 
 The pass credential is tied to the person's **Google or Apple account**, not to the phone hardware. When a user gets a new phone, they sign into their account, their passes automatically re-appear in Google/Apple Wallet, and the same credential is read by the reader — **no re-enrollment needed**.
 
-The user chooses what string goes in the pass (e.g. `alice@home`). That string represents Alice, not her phone.
-
 ### Google Wallet setup (free)
 
-1. Create a Google Cloud project, enable the **Google Wallet API**, and create a Wallet Issuer account at <https://pay.google.com/business/console/>
-2. Create a **Generic** pass with Smart Tap fields:
+1. Create a Google Cloud project, enable the **Google Wallet API**, and create a Wallet Issuer account at <https://pay.google.com/business/console/>. Note the **issuer ID** — a large decimal number shown in the console (e.g. `3388000000022304`)
+2. Create a **Generic** pass with Smart Tap fields on the **object** (not just the class):
    ```json
    {
      "smartTapRedemptionValue": "alice@home",
-     "redemptionIssuers": []
+     "redemptionIssuers": [3388000000022304]
    }
    ```
-   Empty `redemptionIssuers` = no reader auth required = cleartext response.
+   `redemptionIssuers` must contain **your issuer ID** from step 1. The `issuerName` field is cosmetic only.
 3. Generate a "Save to Google Wallet" link and send it to the user
-4. Tap phone — logs show `Smart Tap: redemption value = alice@home`
-5. Use `alice@home` as `uid` in the binary sensor
+4. Set `smart_tap_collector_id` in your YAML to your issuer ID from step 1
+5. Set `logger: level: DEBUG` and tap phone — logs show:
+   ```
+   Smart Tap: SELECT OSE.GST OK
+   Smart Tap: NEGOTIATE OK (collectorId=0x000C095E38801720)
+   Smart Tap: GET DATA body (NN bytes): E2 ...
+   Smart Tap: smartTapRedemptionValue = "alice@home"
+   ```
+6. Use `alice@home` as `uid` in the binary sensor
 
 ### Apple Wallet setup
 
@@ -188,12 +199,19 @@ Requires an Apple Developer account ($99/year) or a third-party pass service (Pa
 3. Tap phone — logs show `Apple VAS: pass URL = https://yoursite.com/pass/alice`
 4. Use that URL as `uid`
 
+### Configuration option
+
+| Key | Default | Description |
+|---|---|---|
+| `smart_tap_collector_id` | `0` | Google Wallet issuer/collector ID (decimal or `0x`-hex). Must match `redemptionIssuers` on the pass. |
+
 ### Minimal example
 
 ```yaml
 st25r_spi:
   cs_pin: GPIO6
   irq_pin: GPIO7
+  smart_tap_collector_id: 3388000000022304  # your Google Wallet issuer ID
   on_tag:
     then:
       - logger.log:

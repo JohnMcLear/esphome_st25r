@@ -121,6 +121,95 @@ def parse_mifare_key(value: str) -> int:
     return int(validated, 16)
 
 
+# ── smart_tap_collector_id validator ─────────────────────────────────────────
+# Inline copy of _validate_smart_tap_collector_id from components/st25r/__init__.py
+
+def _validate_smart_tap_collector_id(value):
+    """Accept Google Wallet issuer/collector ID as decimal int or 0x-hex string."""
+    if isinstance(value, int):
+        int_val = value
+    else:
+        value = cv.string_strict(value)
+        try:
+            int_val = int(value, 0)
+        except ValueError as err:
+            raise cv.Invalid(
+                "smart_tap_collector_id must be a decimal integer or 0x-prefixed hex"
+            ) from err
+    if int_val < 0 or int_val > 0xFFFFFFFFFFFFFFFF:
+        raise cv.Invalid("smart_tap_collector_id must fit in 64 bits (0 – 2^64-1)")
+    return int_val
+
+
+def collector_id_to_bytes(cid: int) -> bytes:
+    """
+    Python mirror of the big-endian encoding in ST25R::iso_dep_smart_tap_()
+    (components/st25r/st25r.cpp):
+      for (int i = 0; i < 8; i++)
+          neg[13 + i] = (uint8_t)(smart_tap_collector_id_ >> ((7 - i) * 8));
+    """
+    return cid.to_bytes(8, "big")
+
+
+class TestSmartTapCollectorIdValidator:
+    """Tests for the smart_tap_collector_id YAML option validator."""
+
+    def test_default_zero_int(self):
+        assert _validate_smart_tap_collector_id(0) == 0
+
+    def test_decimal_string(self):
+        assert _validate_smart_tap_collector_id("3388000000022304") == 3388000000022304
+
+    def test_decimal_int(self):
+        assert _validate_smart_tap_collector_id(3388000000022304) == 3388000000022304
+
+    def test_hex_string(self):
+        assert _validate_smart_tap_collector_id("0x000BC35E25CA2380") == 0x000BC35E25CA2380
+
+    def test_zero_string(self):
+        assert _validate_smart_tap_collector_id("0") == 0
+
+    def test_max_uint64(self):
+        assert _validate_smart_tap_collector_id(0xFFFFFFFFFFFFFFFF) == 0xFFFFFFFFFFFFFFFF
+
+    def test_rejects_negative(self):
+        with pytest.raises(cv.Invalid):
+            _validate_smart_tap_collector_id(-1)
+
+    def test_rejects_over_64bit(self):
+        with pytest.raises(cv.Invalid):
+            _validate_smart_tap_collector_id(0x10000000000000000)
+
+    def test_rejects_garbage_string(self):
+        with pytest.raises(cv.Invalid):
+            _validate_smart_tap_collector_id("not-a-number")
+
+
+class TestCollectorIdByteEncoding:
+    """Tests for big-endian encoding of the collector ID into NEGOTIATE bytes."""
+
+    def test_zero_is_eight_zero_bytes(self):
+        assert collector_id_to_bytes(0) == b"\x00" * 8
+
+    def test_real_issuer_id(self):
+        """Verify big-endian encoding matches C++ big-endian shift loop.
+        Uses a hand-crafted value where the byte layout is obvious.
+        """
+        # 0x0102030405060708 → bytes [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]
+        cid = 0x0102030405060708
+        expected = bytes([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08])
+        assert collector_id_to_bytes(cid) == expected
+
+    def test_max_value(self):
+        assert collector_id_to_bytes(0xFFFFFFFFFFFFFFFF) == b"\xFF" * 8
+
+    def test_byte_order_is_big_endian(self):
+        """MSB must be in index 0 (sent first in NEGOTIATE)."""
+        cid = 0x0102030405060708
+        b = collector_id_to_bytes(cid)
+        assert b[0] == 0x01 and b[7] == 0x08
+
+
 class TestMifareKeyValidation:
     """Tests for mifare_key_a / mifare_key_b YAML option."""
 

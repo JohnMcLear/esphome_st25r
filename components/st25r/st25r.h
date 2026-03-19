@@ -125,6 +125,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   void set_miss_threshold(uint8_t t) { this->miss_threshold_ = t; }
   void set_ant_tune_a(uint8_t v) { this->ant_tune_a_ = v; }
   void set_ant_tune_b(uint8_t v) { this->ant_tune_b_ = v; }
+  void set_smart_tap_collector_id(uint64_t id) { this->smart_tap_collector_id_ = id; }
 
   void register_on_tag_trigger(ST25RTagTrigger *trig) { this->on_tag_triggers_.push_back(trig); }
   void register_on_tag_removed_trigger(ST25RTagRemovedTrigger *trig) {
@@ -199,6 +200,11 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   uint8_t miss_threshold_{3};
   uint8_t ant_tune_a_{0x80};  // AAT DAC A: 0x80 = mid-range (~0.48V on 3.3V / ~0.87V on 5V)
   uint8_t ant_tune_b_{0x80};  // AAT DAC B: same
+  // Google Smart Tap 2.0 collector/issuer ID sent in the NEGOTIATE command (tag 0x82, 8 bytes
+  // big-endian).  Obtained from the Google Pay and Wallet API console.  Leave at 0 (default)
+  // to act as an anonymous reader — only passes whose redemptionIssuers list includes 0 will
+  // respond.  Set to your real issuer ID to match passes you issued via the Wallet API.
+  uint64_t smart_tap_collector_id_{0};
   bool is_b_version_{false};
   uint8_t health_check_failures_{0};
   uint8_t reinitialization_attempts_{0};
