@@ -1,60 +1,92 @@
 # ST25R NFC Reader — Phone & Wallet Pass Example
 #
-# This configuration shows how to use an Android or iOS phone as a stable NFC
-# credential via ISO 14443-4 (ISO-DEP / HCE).
+# This configuration documents how to use a phone as a stable NFC credential
+# with the ST25R reader, and explains the important limitations and trade-offs.
 #
-# ──────────────────────────────────────────────────────────────────────────────
-# HOW THE READER IDENTIFIES A PHONE
-# ──────────────────────────────────────────────────────────────────────────────
-# Phones randomise their NFC UID on every tap for privacy.  The reader works
-# around this by:
-#   1. Detecting that the phone supports ISO-DEP (SAK bit 5 set)
-#   2. Sending RATS to activate an ISO 14443-4 session
-#   3. Reading the NDEF message from the phone using the NFC Forum Type 4 Tag
-#      application AID (D2 76 00 00 85 01 01)
-#   4. Extracting a stable token from the NDEF content:
-#      - HA tag UUID (https://www.home-assistant.io/tag/<UUID>) → just the UUID
-#      - Otherwise the first record's URI or text payload
-#      - Hex-encoded raw bytes as fallback
+# ══════════════════════════════════════════════════════════════════════════════
+# THE CORE PROBLEM
+# ══════════════════════════════════════════════════════════════════════════════
+# Phones randomise their ISO 14443A UID on every tap for privacy.  Tracking a
+# phone by its UID is therefore impossible.
 #
-# ──────────────────────────────────────────────────────────────────────────────
-# PHONE SETUP OPTIONS
-# ──────────────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# HOW THE READER TRIES TO FIND A STABLE TOKEN
+# ══════════════════════════════════════════════════════════════════════════════
+# When a phone is tapped, the reader detects ISO-DEP capability (SAK bit 5)
+# and attempts to read NDEF data over ISO 14443-4:
+#   1. Sends RATS → phone responds with ATS (ISO 14443-4 activation)
+#   2. Sends SELECT Application (AID D2 76 00 00 85 01 01, the NFC Forum T4T AID)
+#   3. If accepted: reads the CC file, then the NDEF file
+#   4. Extracts a stable token from the NDEF content:
+#        • HA tag UUID  — https://www.home-assistant.io/tag/<UUID> → just the UUID
+#        • First-record payload — URI or text string from the first NDEF record
+#        • Hex fallback — raw NDEF bytes if no printable payload
 #
-# Option A — Home Assistant Companion App (Android, recommended)
-#   1. Open the HA Companion App → Settings → NFC Tags → Add tag
-#   2. Note the generated tag UUID shown in the app
-#      (e.g. "abc12345-0000-1234-abcd-ef1234567890")
-#   3. In the app, enable Host Card Emulation (HCE) for that tag so the phone
-#      presents it when tapped to any NFC reader
-#   4. Tap the phone to the ST25R reader once; check ESPHome logs for:
-#        ISO-DEP: HA tag UUID: abc12345-0000-1234-abcd-ef1234567890
-#   5. Use that UUID in the binary_sensor uid field below.
+# ══════════════════════════════════════════════════════════════════════════════
+# CRITICAL: THE NDEF DATA IS NOT AUTO-POPULATED
+# ══════════════════════════════════════════════════════════════════════════════
+# The NFC Forum T4T AID (D2 76 00 00 85 01 01) is NOT served by phones by
+# default.  Without a specific app, the phone will respond to RATS (step 1
+# above), but return SW=6A82 "Application Not Found" for the SELECT (step 2).
 #
-# Option B — Generic Android HCE app
-#   Use any app that implements Android Host Card Emulation with standard NDEF
-#   (NFC Forum Type 4 Tag over AID D2 76 00 00 85 01 01).  Popular choices:
-#     • "NFC Card Emulator Pro" (requires root on some devices)
-#     • "Trigger" NFC app
-#     • Custom Android app with HostApduService
-#   Program the app to serve a URI record (e.g. https://yourcompany.com/nfc/alice)
-#   or a plain-text record.  Tap the phone; the payload appears in the logs:
-#        ISO-DEP: NDEF payload token: https://yourcompany.com/nfc/alice
-#   Use that string as the uid value below.
+# To serve NDEF to this reader, the user must install a dedicated Android HCE
+# (Host Card Emulation) app that:
+#   • Registers for the NFC Forum T4T AID (D2 76 00 00 85 01 01)
+#   • Is running in the foreground or has an enabled HCE service
+#   • Has been configured with the credential payload (see below)
 #
-# Option C — NFC sticker / fob (fallback)
-#   ISO-DEP smart-cards and Java Card devices (DESFire EV1/EV2, etc.) also
-#   trigger the ISO-DEP path.  Program them with an NDEF message via NFC Tools
-#   or a card-management tool; the payload is extracted the same way.
+# Popular apps that support this:
+#   • "NFC Card Emulator" (Android, some versions require root)
+#   • "CardEmulator" (Android)
+#   • A custom Android app with HostApduService (developer option)
 #
-# NOTE — Apple Wallet:
-#   Apple Wallet passes expose NFC via Apple's proprietary VAS protocol, which
-#   uses a different AID and an encrypted payload.  Standard NFC Forum NDEF HCE
-#   is NOT used by Apple Wallet; support for VAS is not yet implemented.
-#   For iOS users, Option B with a third-party NFC-emulation app is the current
-#   workaround.
+# ══════════════════════════════════════════════════════════════════════════════
+# DOES THE TOKEN REPRESENT THE PERSON OR THE HARDWARE?
+# ══════════════════════════════════════════════════════════════════════════════
+# The short answer: IT DEPENDS ON WHAT YOU PUT IN THE NDEF PAYLOAD.
 #
-# ──────────────────────────────────────────────────────────────────────────────
+# Scenario A — Auto-generated UUID (hardware-tied, NOT recommended):
+#   Some HCE apps auto-generate a UUID per installation.
+#   When the user gets a new phone, the UUID changes → access breaks → re-enroll.
+#   The token represents the phone installation, not the person.
+#
+# Scenario B — User-chosen credential string (person-tied, RECOMMENDED):
+#   Configure the HCE app with a string the person chooses and remembers, e.g.:
+#     "alice@home" or "https://yoursite.com/person/alice"
+#   When Alice gets a new phone:
+#     1. Install the HCE app on the new phone
+#     2. Configure the same credential string "alice@home"
+#     3. No re-enrollment needed — the same token → same access
+#   The token represents the person, not the hardware.
+#
+# RECOMMENDATION: always choose a manually-configured, person-specific string
+# as the credential in the HCE app.  Treat it like a password for your NFC
+# access system — document it somewhere safe.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# APPLE WALLET / GOOGLE PAY / CONTACTLESS PAYMENT APPS
+# ══════════════════════════════════════════════════════════════════════════════
+# Standard wallet apps (Apple Wallet, Google Pay) do NOT use the NFC Forum T4T
+# AID.  They use proprietary protocols:
+#   • Apple Wallet passes → Apple VAS (Value Added Services) protocol
+#   • Google Wallet / Android Pay → Google Smart Tap protocol
+#   • Contactless payment → EMVCo protocol
+# None of these are supported by this reader yet.  Implementing VAS or Smart Tap
+# requires registration with Apple/Google and cryptographic key management.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# PRACTICAL SETUP WORKFLOW
+# ══════════════════════════════════════════════════════════════════════════════
+# 1. Install a supported Android HCE app on the phone
+# 2. In the app, create a URI record or Text record with a PERSON-SPECIFIC string,
+#    e.g.: "https://home.example.com/access/alice"
+#    (This is the credential Alice carries.  It should be stable and unique.)
+# 3. Enable the HCE service in the app
+# 4. Tap the phone to the ST25R reader
+# 5. Check ESPHome logs for the detected token:
+#      [I][st25r:???]: ISO-DEP: NDEF payload token: https://home.example.com/access/alice
+# 6. Use that string as the 'uid' in the binary sensor below
+# ══════════════════════════════════════════════════════════════════════════════
 
 esphome:
   name: st25r-wallet-example
@@ -65,7 +97,7 @@ esp32:
   variant: esp32c6
 
 logger:
-  level: INFO  # Change to DEBUG to see full ISO-DEP exchange during initial setup
+  level: INFO  # Set DEBUG to trace the full ISO-DEP / NDEF exchange on first setup
 
 wifi:
   ssid: "WIFI_SSID"
@@ -91,8 +123,7 @@ st25r_spi:
       - logger.log:
           format: "NFC token: %s"
           args: ['x.c_str()']
-      # Optionally fire a Home Assistant event with the token so you can use
-      # it in HA automations:
+      # Optionally forward the token to Home Assistant for use in automations:
       - homeassistant.event:
           event: esphome.nfc_token
           data:
@@ -104,21 +135,23 @@ st25r_spi:
           format: "NFC removed: %s"
           args: ['x.c_str()']
 
-# Binary sensor example — replace uid with the token from your logs.
+# Binary sensors — set uid to the person-specific credential string you
+# configured in the HCE app.  Use the exact string that appears in the logs.
 #
-# For a phone using HA Companion App HCE, the uid is the HA tag UUID:
+# For a URI record: uid is the full URI, e.g.:
+#   uid: "https://home.example.com/access/alice"
+# For a text record: uid is the exact text, e.g.:
+#   uid: "alice@home"
+# For an HA tag URL: uid is just the UUID portion, e.g.:
 #   uid: "abc12345-0000-1234-abcd-ef1234567890"
-#
-# For a phone using a URI-based HCE app, the uid is the full URI string:
-#   uid: "https://yourcompany.com/nfc/alice"
 #
 binary_sensor:
   - platform: st25r
     st25r_id: nfc_reader
     name: "Alice's Phone"
-    uid: "abc12345-0000-1234-abcd-ef1234567890"
+    uid: "https://home.example.com/access/alice"
 
   - platform: st25r
     st25r_id: nfc_reader
     name: "Bob's Phone"
-    uid: "https://yourcompany.com/nfc/bob"
+    uid: "bob@home"

@@ -637,9 +637,19 @@ std::unique_ptr<nfc::NfcTag> ST25R::read_tag_(std::vector<uint8_t> &uid, uint8_t
   nfc::NfcTagUid nfc_uid(uid.begin(), uid.end());
 
   // ── ISO-DEP (NFC Forum Type 4 / ISO 14443-4) ─────────────────────────────
-  // SAK bit 5 (0x20) = T=CL: device supports ISO-DEP.  This covers NFC-enabled
-  // phones (Android HCE, Apple Wallet), ISO 14443-4 smart-cards and DESFire.
-  // We always try ISO-DEP first when this bit is set, regardless of UID length.
+  // SAK bit 5 (0x20) = T=CL: device supports ISO-DEP.  This covers ISO 14443-4
+  // smart-cards, DESFire, Java Card devices, and phones running a dedicated
+  // Android HCE app that registers the NFC Forum T4T AID (D2 76 00 00 85 01 01).
+  //
+  // NOTE: standard Apple Wallet, Google Pay, and most payment apps use proprietary
+  // protocols (Apple VAS / Google Smart Tap / EMVCo) and will NOT respond to the
+  // NFC Forum T4T NDEF AID.  They will activate ISO-DEP (respond to RATS) but
+  // return SW=6A82 (Application Not Found) for the SELECT below.  The reader
+  // handles that gracefully — iso_dep_token_ stays empty, caller falls back to UID.
+  //
+  // For a phone to serve NDEF to this reader the user must install a dedicated
+  // Android HCE app and pre-configure a credential string in that app.  See
+  // examples/example-wallet.yaml for setup instructions.
   if (sak & 0x20) {
     ESP_LOGI(TAG, "ISO-DEP device detected (SAK=0x%02X), activating ISO 14443-4", sak);
     uint8_t ats[64];
@@ -653,17 +663,16 @@ std::unique_ptr<nfc::NfcTag> ST25R::read_tag_(std::vector<uint8_t> &uid, uint8_t
         // Derive a stable, human-readable token from the NDEF records.
         // Priority order:
         //   1. Home Assistant tag UUID — extracted from the HA NDEF URL record
-        //      (https://www.home-assistant.io/tag/<UUID>). Matches what the HA
-        //      Companion App and HA NFC tag automations use.  The token is just
+        //      (https://www.home-assistant.io/tag/<UUID>).  The token is just
         //      the UUID (e.g. "abc12345-0000-1234-abcd-ef1234567890").
         //   2. First-record payload — URI or plain-text string from the first NDEF
-        //      record. Covers custom Android HCE apps, loyalty passes, etc.
+        //      record.  Covers Android HCE apps configured with a URI or text record.
         //   3. Raw-bytes hex fallback — used when the NDEF records have no
         //      printable payload (e.g. custom binary external records).
         this->iso_dep_token_.clear();
 
         if (nfc::has_ha_tag_ndef(*tag)) {
-          // HA Companion App / HA NFC tag — use the UUID directly.
+          // NDEF contains the HA tag URL — use just the UUID portion.
           this->iso_dep_token_ = nfc::get_ha_tag_ndef(*tag);
           ESP_LOGI(TAG, "ISO-DEP: HA tag UUID: %s", this->iso_dep_token_.c_str());
         } else if (tag->has_ndef_message()) {
@@ -693,8 +702,11 @@ std::unique_ptr<nfc::NfcTag> ST25R::read_tag_(std::vector<uint8_t> &uid, uint8_t
         this->iso_dep_deselect_();
         return tag;
       }
-      // NDEF read failed (payment-only phone, DESFire, etc.) — still mark as T4.
-      ESP_LOGD(TAG, "ISO-DEP: NDEF not available on this device");
+      // SELECT NDEF Application failed (SW=6A82) — device does not serve NFC
+      // Forum T4T NDEF.  This is normal for payment-only phones, Apple Wallet,
+      // Google Pay, and DESFire cards with non-NDEF applications.  The ISO-DEP
+      // session is still valid; we just cannot get a meaningful stable token.
+      ESP_LOGD(TAG, "ISO-DEP: NFC Forum T4T NDEF not available (phone needs HCE app, or payment-only device)");
       this->iso_dep_deselect_();
     } else {
       ESP_LOGW(TAG, "ISO-DEP: activation failed despite T=CL SAK");
