@@ -230,3 +230,111 @@ class TestPrngSuccessor:
     ])
     def test_parametrized_known_values(self, x, n, expected):
         assert prng_successor_py(x, n) == expected
+
+
+# ── ISO-DEP token extraction logic ───────────────────────────────────────────
+# The C++ read_tag_() in st25r.cpp extracts a stable token from an NFC Forum
+# T4T NDEF message with the following priority:
+#   1. HA tag UUID    — URL containing HA_TAG_ID_PREFIX → return UUID suffix
+#   2. First payload  — first NDEF record's get_payload() string
+#   3. Hex fallback   — raw NDEF bytes hex-encoded
+#
+# This module re-implements that logic in Python so it can be tested without
+# the full ESPHome C++ build.  The logic must stay in sync with st25r.cpp.
+
+HA_TAG_ID_PREFIX = "https://www.home-assistant.io/tag/"
+
+
+def extract_iso_dep_token(record_payloads: list, raw_bytes: bytes) -> str:
+    """
+    Python mirror of the ISO-DEP token extraction in ST25R::read_tag_().
+
+    record_payloads: list of payload strings (one per NDEF record, in order).
+                     URI records yield the full URI string; Text records yield
+                     the text string — matching NdefRecord::get_payload() /
+                     NdefRecordUri::get_payload() / NdefRecordText::get_payload().
+    raw_bytes: raw NDEF message bytes (for the hex fallback only).
+    """
+    # Priority 1: check all records for the HA tag URL (mirrors has_ha_tag_ndef
+    # / get_ha_tag_ndef which iterate all records).
+    for payload in record_payloads:
+        pos = payload.find(HA_TAG_ID_PREFIX)
+        if pos != -1:
+            return payload[pos + len(HA_TAG_ID_PREFIX):]
+
+    # Priority 2: first record's payload string (mirrors records[0]->get_payload()).
+    if record_payloads and record_payloads[0]:
+        return record_payloads[0]
+
+    # Priority 3: hex-encode raw NDEF bytes.
+    return "".join(f"{b:02X}" for b in raw_bytes)
+
+
+class TestIsodepTokenExtraction:
+    """Tests for the ISO-DEP stable token extraction logic in ST25R::read_tag_()."""
+
+    # ── Priority 1: HA tag UUID ──────────────────────────────────────────────
+
+    def test_ha_url_returns_uuid(self):
+        """Standard HA Companion App record → just the UUID portion."""
+        uuid = "abc12345-0000-1234-abcd-ef1234567890"
+        records = [HA_TAG_ID_PREFIX + uuid]
+        assert extract_iso_dep_token(records, b"") == uuid
+
+    def test_ha_url_in_second_record(self):
+        """HA URL in second record (not first) is still detected."""
+        uuid = "11111111-2222-3333-4444-555555555555"
+        records = ["https://example.com/other", HA_TAG_ID_PREFIX + uuid]
+        assert extract_iso_dep_token(records, b"") == uuid
+
+    def test_ha_url_with_query_string(self):
+        """UUID portion is everything after the prefix, including any query string."""
+        records = [HA_TAG_ID_PREFIX + "my-tag-id?extra=1"]
+        assert extract_iso_dep_token(records, b"") == "my-tag-id?extra=1"
+
+    def test_ha_priority_over_other_records(self):
+        """HA URL takes priority even if a non-HA URI record appears first."""
+        uuid = "deadbeef-dead-beef-dead-beefdeadbeef"
+        records = ["https://otherprovider.com/token/xyz", HA_TAG_ID_PREFIX + uuid]
+        assert extract_iso_dep_token(records, b"\x01\x02\x03")
+
+    # ── Priority 2: first record payload ────────────────────────────────────
+
+    def test_uri_record_without_ha_prefix(self):
+        """Custom URI → full URI string used as token."""
+        uri = "https://mycompany.com/nfc/alice"
+        records = [uri]
+        assert extract_iso_dep_token(records, b"\x01\x02") == uri
+
+    def test_text_record_payload(self):
+        """Plain text record → text string used as token."""
+        records = ["Alice Smith"]
+        assert extract_iso_dep_token(records, b"\xD1\x01\x0CT") == "Alice Smith"
+
+    def test_first_record_used_when_multiple_non_ha(self):
+        """When multiple non-HA records, only the first record's payload is used."""
+        records = ["first-record-uri", "second-record-uri"]
+        assert extract_iso_dep_token(records, b"") == "first-record-uri"
+
+    # ── Priority 3: hex fallback ─────────────────────────────────────────────
+
+    def test_no_records_falls_back_to_hex(self):
+        """Empty record list → hex-encode raw bytes."""
+        assert extract_iso_dep_token([], b"\xDE\xAD\xBE\xEF") == "DEADBEEF"
+
+    def test_empty_first_payload_falls_back_to_hex(self):
+        """Record with empty payload → hex fallback (not empty string)."""
+        assert extract_iso_dep_token([""], b"\xAB\xCD") == "ABCD"
+
+    def test_hex_fallback_single_byte(self):
+        assert extract_iso_dep_token([], b"\x00") == "00"
+
+    def test_hex_fallback_uppercase(self):
+        """Hex output should be uppercase to match the C++ snprintf '%02X'."""
+        token = extract_iso_dep_token([], b"\x1a\xff")
+        assert token == "1AFF"
+
+    def test_hex_fallback_preserves_all_bytes(self):
+        raw = bytes(range(16))
+        expected = "".join(f"{b:02X}" for b in raw)
+        assert extract_iso_dep_token([], raw) == expected

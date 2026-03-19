@@ -4,6 +4,7 @@
 #include "esphome/core/helpers.h"
 #include "esphome/components/nfc/nfc_tag.h"
 #include "esphome/components/nfc/nfc_helpers.h"
+#include "esphome/components/nfc/ndef_message.h"
 #include <cinttypes>
 #include <algorithm>
 #include <cstring>
@@ -646,22 +647,51 @@ std::unique_ptr<nfc::NfcTag> ST25R::read_tag_(std::vector<uint8_t> &uid, uint8_t
     if (this->iso_dep_activate_(ats, ats_len)) {
       std::vector<uint8_t> ndef_data;
       if (this->read_nfc_type4_ndef_(ndef_data) && !ndef_data.empty()) {
-        // Build a stable, human-readable hex token from the NDEF content.
-        // This token is stored in iso_dep_token_ and used by process_state_() as
-        // the tracking key so that phones with rotating random UIDs are correctly
-        // deduplicated across scans.
-        // Pre-allocate the full string (2 hex chars per byte) to avoid repeated
-        // reallocations during the encoding loop.
+        // Build the NfcTag with parsed NDEF records so we can inspect the content.
+        auto tag = make_unique<nfc::NfcTag>(nfc_uid, NFC_FORUM_TYPE_4, ndef_data);
+
+        // Derive a stable, human-readable token from the NDEF records.
+        // Priority order:
+        //   1. Home Assistant tag UUID — extracted from the HA NDEF URL record
+        //      (https://www.home-assistant.io/tag/<UUID>). Matches what the HA
+        //      Companion App and HA NFC tag automations use.  The token is just
+        //      the UUID (e.g. "abc12345-0000-1234-abcd-ef1234567890").
+        //   2. First-record payload — URI or plain-text string from the first NDEF
+        //      record. Covers custom Android HCE apps, loyalty passes, etc.
+        //   3. Raw-bytes hex fallback — used when the NDEF records have no
+        //      printable payload (e.g. custom binary external records).
         this->iso_dep_token_.clear();
-        this->iso_dep_token_.resize(ndef_data.size() * 2);
-        for (size_t i = 0; i < ndef_data.size(); i++) {
-          snprintf(&this->iso_dep_token_[i * 2], 3, "%02X", ndef_data[i]);
+
+        if (nfc::has_ha_tag_ndef(*tag)) {
+          // HA Companion App / HA NFC tag — use the UUID directly.
+          this->iso_dep_token_ = nfc::get_ha_tag_ndef(*tag);
+          ESP_LOGI(TAG, "ISO-DEP: HA tag UUID: %s", this->iso_dep_token_.c_str());
+        } else if (tag->has_ndef_message()) {
+          const auto &records = tag->get_ndef_message()->get_records();
+          if (!records.empty()) {
+            // get_payload() returns the full URI for URI records and the text
+            // string for Text records — either is human-readable and stable.
+            this->iso_dep_token_ = records[0]->get_payload();
+            if (!this->iso_dep_token_.empty()) {
+              ESP_LOGI(TAG, "ISO-DEP: NDEF payload token: %s", this->iso_dep_token_.c_str());
+            }
+          }
         }
-        ESP_LOGI(TAG, "ISO-DEP NFC Type 4: stable token = %.40s%s",
-                 this->iso_dep_token_.c_str(),
-                 this->iso_dep_token_.size() > 40 ? "..." : "");
+
+        // Hex fallback: guarantees a non-empty token when NDEF data exists but
+        // no printable payload could be extracted from the parsed records.
+        if (this->iso_dep_token_.empty()) {
+          this->iso_dep_token_.resize(ndef_data.size() * 2);
+          for (size_t i = 0; i < ndef_data.size(); i++) {
+            snprintf(&this->iso_dep_token_[i * 2], 3, "%02X", ndef_data[i]);
+          }
+          ESP_LOGI(TAG, "ISO-DEP: hex token: %.40s%s",
+                   this->iso_dep_token_.c_str(),
+                   this->iso_dep_token_.size() > 40 ? "..." : "");
+        }
+
         this->iso_dep_deselect_();
-        return make_unique<nfc::NfcTag>(nfc_uid, NFC_FORUM_TYPE_4, ndef_data);
+        return tag;
       }
       // NDEF read failed (payment-only phone, DESFire, etc.) — still mark as T4.
       ESP_LOGD(TAG, "ISO-DEP: NDEF not available on this device");
@@ -1096,14 +1126,14 @@ void ST25R::process_state_() {
               uint8_t max_val = (1 << (resume_col_pos + 1)) - 1;
               if (this->anticol_prefix_val_ > max_val) {
                 // All branches at this collision level exhausted — done
-              this->state_ = STATE_IDLE;
+                this->state_ = STATE_IDLE;
                 this->finalize_scan_();
                 return;
               }
               // Send WUPA (not REQA) so all tags — including those in HALT — wake up.
               // Some cards (e.g. Mifare Classic) return to HALT after a non-matching SELECT,
               // so REQA would not wake them.
-                  this->anticol_resume_ = true;
+              this->anticol_resume_ = true;
               this->write_command(ST25R_CMD_TRANSMIT_WUPA);
             } else {
               // No prior collision: this was the only tag — scan complete

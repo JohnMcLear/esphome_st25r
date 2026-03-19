@@ -1,0 +1,124 @@
+# ST25R NFC Reader — Phone & Wallet Pass Example
+#
+# This configuration shows how to use an Android or iOS phone as a stable NFC
+# credential via ISO 14443-4 (ISO-DEP / HCE).
+#
+# ──────────────────────────────────────────────────────────────────────────────
+# HOW THE READER IDENTIFIES A PHONE
+# ──────────────────────────────────────────────────────────────────────────────
+# Phones randomise their NFC UID on every tap for privacy.  The reader works
+# around this by:
+#   1. Detecting that the phone supports ISO-DEP (SAK bit 5 set)
+#   2. Sending RATS to activate an ISO 14443-4 session
+#   3. Reading the NDEF message from the phone using the NFC Forum Type 4 Tag
+#      application AID (D2 76 00 00 85 01 01)
+#   4. Extracting a stable token from the NDEF content:
+#      - HA tag UUID (https://www.home-assistant.io/tag/<UUID>) → just the UUID
+#      - Otherwise the first record's URI or text payload
+#      - Hex-encoded raw bytes as fallback
+#
+# ──────────────────────────────────────────────────────────────────────────────
+# PHONE SETUP OPTIONS
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# Option A — Home Assistant Companion App (Android, recommended)
+#   1. Open the HA Companion App → Settings → NFC Tags → Add tag
+#   2. Note the generated tag UUID shown in the app
+#      (e.g. "abc12345-0000-1234-abcd-ef1234567890")
+#   3. In the app, enable Host Card Emulation (HCE) for that tag so the phone
+#      presents it when tapped to any NFC reader
+#   4. Tap the phone to the ST25R reader once; check ESPHome logs for:
+#        ISO-DEP: HA tag UUID: abc12345-0000-1234-abcd-ef1234567890
+#   5. Use that UUID in the binary_sensor uid field below.
+#
+# Option B — Generic Android HCE app
+#   Use any app that implements Android Host Card Emulation with standard NDEF
+#   (NFC Forum Type 4 Tag over AID D2 76 00 00 85 01 01).  Popular choices:
+#     • "NFC Card Emulator Pro" (requires root on some devices)
+#     • "Trigger" NFC app
+#     • Custom Android app with HostApduService
+#   Program the app to serve a URI record (e.g. https://yourcompany.com/nfc/alice)
+#   or a plain-text record.  Tap the phone; the payload appears in the logs:
+#        ISO-DEP: NDEF payload token: https://yourcompany.com/nfc/alice
+#   Use that string as the uid value below.
+#
+# Option C — NFC sticker / fob (fallback)
+#   ISO-DEP smart-cards and Java Card devices (DESFire EV1/EV2, etc.) also
+#   trigger the ISO-DEP path.  Program them with an NDEF message via NFC Tools
+#   or a card-management tool; the payload is extracted the same way.
+#
+# NOTE — Apple Wallet:
+#   Apple Wallet passes expose NFC via Apple's proprietary VAS protocol, which
+#   uses a different AID and an encrypted payload.  Standard NFC Forum NDEF HCE
+#   is NOT used by Apple Wallet; support for VAS is not yet implemented.
+#   For iOS users, Option B with a third-party NFC-emulation app is the current
+#   workaround.
+#
+# ──────────────────────────────────────────────────────────────────────────────
+
+esphome:
+  name: st25r-wallet-example
+  friendly_name: ST25R Wallet Example
+
+esp32:
+  board: esp32-c6-devkitc-1
+  variant: esp32c6
+
+logger:
+  level: INFO  # Change to DEBUG to see full ISO-DEP exchange during initial setup
+
+wifi:
+  ssid: "WIFI_SSID"
+  password: "WIFI_PASSWORD"
+
+external_components:
+  - source: github://JohnMcLear/esphome_st25r
+    components: [st25r, st25r_spi]
+
+spi:
+  clk_pin: GPIO19
+  mosi_pin: GPIO18
+  miso_pin: GPIO10
+
+st25r_spi:
+  id: nfc_reader
+  cs_pin: GPIO6
+  irq_pin: GPIO7
+  update_interval: 1s
+
+  on_tag:
+    then:
+      - logger.log:
+          format: "NFC token: %s"
+          args: ['x.c_str()']
+      # Optionally fire a Home Assistant event with the token so you can use
+      # it in HA automations:
+      - homeassistant.event:
+          event: esphome.nfc_token
+          data:
+            token: !lambda 'return x;'
+
+  on_tag_removed:
+    then:
+      - logger.log:
+          format: "NFC removed: %s"
+          args: ['x.c_str()']
+
+# Binary sensor example — replace uid with the token from your logs.
+#
+# For a phone using HA Companion App HCE, the uid is the HA tag UUID:
+#   uid: "abc12345-0000-1234-abcd-ef1234567890"
+#
+# For a phone using a URI-based HCE app, the uid is the full URI string:
+#   uid: "https://yourcompany.com/nfc/alice"
+#
+binary_sensor:
+  - platform: st25r
+    st25r_id: nfc_reader
+    name: "Alice's Phone"
+    uid: "abc12345-0000-1234-abcd-ef1234567890"
+
+  - platform: st25r
+    st25r_id: nfc_reader
+    name: "Bob's Phone"
+    uid: "https://yourcompany.com/nfc/bob"

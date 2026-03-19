@@ -138,6 +138,66 @@ st25r_i2c:
 
 ---
 
+## Phone & Wallet Pass Support
+
+NFC-enabled phones randomise their ISO 14443A UID on every tap for privacy. The reader works around this by activating an ISO 14443-4 (ISO-DEP) session and reading an NDEF message from the phone's Host Card Emulation (HCE) app. The NDEF payload becomes the stable identifier used in `on_tag` and `binary_sensor`.
+
+### How the reader identifies a phone
+
+1. Detects ISO-DEP capability (SAK bit 5)
+2. Sends RATS to activate an ISO 14443-4 session and receive the ATS
+3. Reads the NDEF message via NFC Forum Type 4 Tag application AID (`D2 76 00 00 85 01 01`)
+4. Extracts a stable token from the NDEF content, in priority order:
+   - **HA tag UUID** — from a `https://www.home-assistant.io/tag/<UUID>` URI record (HA Companion App)
+   - **First-record payload** — full URI or text string from any other NDEF URI/Text record
+   - **Hex fallback** — raw NDEF bytes as hex if no printable payload is found
+
+### Phone setup
+
+**Android — Home Assistant Companion App (recommended)**
+
+1. Open the HA Companion App → **Settings → NFC Tags → Add tag**
+2. Note the generated UUID (e.g. `abc12345-0000-1234-abcd-ef1234567890`)
+3. Enable Host Card Emulation for that tag in the app so the phone presents it when tapped
+4. Tap the phone to the reader once and check logs for `ISO-DEP: HA tag UUID: ...`
+5. Use that UUID as `uid` in your binary sensor
+
+**Android — generic HCE app**
+
+Any app implementing standard NFC Forum T4T HCE works. Program it with a URI record (`https://yoursite.com/nfc/alice`) or a text record. The payload string appears in logs as `ISO-DEP: NDEF payload token: ...` and is used directly as `uid`.
+
+**Apple Wallet / iOS**
+
+Apple Wallet passes use Apple's proprietary VAS protocol — standard NFC Forum NDEF HCE is not used by Wallet.app. VAS support is not yet implemented. For iOS users, a third-party NFC-emulation app is the current workaround.
+
+### Example
+
+```yaml
+st25r_spi:
+  cs_pin: GPIO6
+  irq_pin: GPIO7
+  on_tag:
+    then:
+      - logger.log:
+          format: "NFC token: %s"
+          args: ['x.c_str()']
+
+binary_sensor:
+  # HA Companion App phone — uid is the HA tag UUID
+  - platform: st25r
+    name: "Alice's Phone"
+    uid: "abc12345-0000-1234-abcd-ef1234567890"
+
+  # Generic HCE app phone — uid is the URI payload
+  - platform: st25r
+    name: "Bob's Phone"
+    uid: "https://yourcompany.com/nfc/bob"
+```
+
+See `examples/example-wallet.yaml` for a full configuration including setup notes.
+
+---
+
 ## Features
 
 - ISO14443A: 4-byte, 7-byte, and 10-byte UIDs (Cascade Levels 1–3)
