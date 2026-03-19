@@ -47,20 +47,37 @@ void ST25R300::setup() {
 void ST25R300::update() {
   if (this->is_failed() || this->state_ != STATE_IDLE) return;
 
-  uint8_t ic_identity = this->read_register(ST25R300_REG_IC_IDENTITY);
-  if ((ic_identity & ST25R300_IC_TYPE_MASK) != ST25R300_IC_TYPE_VAL) {
-    ESP_LOGW(TAG, "IC identity check failed: 0x%02X", ic_identity);
-    this->health_check_failures_++;
-    if (this->status_binary_sensor_ != nullptr)
-      this->status_binary_sensor_->publish_state(false);
-    if (this->health_check_failures_ >= 3)
-      this->state_ = STATE_REINITIALIZING;
-    return;
+  // Health check: verify chip identity at the configured interval (default 60s),
+  // independent of the tag scan rate.  Uses ST25R300-specific IC identity value
+  // (chip_type=0xB0) but otherwise mirrors ST25R::update() so that all four
+  // configurable options (health_check_enabled, health_check_interval,
+  // max_failed_checks, auto_reset_on_failure) are honoured.
+  if (this->health_check_enabled_) {
+    uint32_t now = millis();
+    if (now - this->last_health_check_ms_ >= this->health_check_interval_ms_) {
+      this->last_health_check_ms_ = now;
+      uint8_t ic_identity = this->read_register(ST25R300_REG_IC_IDENTITY);
+      if ((ic_identity & ST25R300_IC_TYPE_MASK) != ST25R300_IC_TYPE_VAL) {
+        ESP_LOGW(TAG, "Health check failed: IC identity 0x%02X (failures: %u/%u)",
+                 ic_identity, this->health_check_failures_ + 1, this->max_failed_checks_);
+        this->health_check_failures_++;
+        if (this->status_binary_sensor_ != nullptr)
+          this->status_binary_sensor_->publish_state(false);
+        if (this->health_check_failures_ >= this->max_failed_checks_) {
+          if (this->auto_reset_on_failure_) {
+            ESP_LOGW(TAG, "Health check: max failures reached, triggering reinit");
+            this->state_ = STATE_REINITIALIZING;
+          } else {
+            ESP_LOGE(TAG, "Health check: max failures reached, auto-reset disabled");
+          }
+        }
+        return;
+      }
+      this->health_check_failures_ = 0;
+      if (this->status_binary_sensor_ != nullptr)
+        this->status_binary_sensor_->publish_state(true);
+    }
   }
-
-  this->health_check_failures_ = 0;
-  if (this->status_binary_sensor_ != nullptr)
-    this->status_binary_sensor_->publish_state(true);
 
   // Clear all IRQ registers (read-to-clear) and FIFO
   this->read_register(ST25R300_REG_IRQ_STATUS1);
@@ -499,6 +516,8 @@ bool ST25R300::reset_() {
 
 // ── reinitialize_ ─────────────────────────────────────────────────────────────
 void ST25R300::reinitialize_() {
+  this->reinitialization_attempts_++;
+  ESP_LOGW(TAG, "Reinitializing ST25R300 (attempt %u)...", this->reinitialization_attempts_);
   if (this->reset_pin_ != nullptr) {
     this->reset_pin_->digital_write(true);
     delay(10);
@@ -506,9 +525,18 @@ void ST25R300::reinitialize_() {
     delay(10);
   }
   if (this->reset_()) {
+    ESP_LOGI(TAG, "Reinitialize succeeded after %u attempt(s)", this->reinitialization_attempts_);
     this->health_check_failures_ = 0;
+    this->reinitialization_attempts_ = 0;
+    // Force an immediate health check on the next update() so the status sensor
+    // reflects recovery without waiting the full health_check_interval.
+    this->last_health_check_ms_ = 0;
   } else {
-    this->mark_failed();
+    ESP_LOGE(TAG, "Reinitialize attempt %u failed", this->reinitialization_attempts_);
+    if (this->reinitialization_attempts_ >= 5) {
+      ESP_LOGE(TAG, "Reinitialize: too many failures, marking component failed");
+      this->mark_failed();
+    }
   }
 }
 
@@ -519,6 +547,12 @@ void ST25R300::dump_config() {
   LOG_PIN("  Reset Pin: ", this->reset_pin_);
   ESP_LOGCONFIG(TAG, "  RF Power: %u", this->rf_power_);
   ESP_LOGCONFIG(TAG, "  RF Field Enabled: %s", YESNO(this->rf_field_enabled_));
+  ESP_LOGCONFIG(TAG, "  Health Check: %s", YESNO(this->health_check_enabled_));
+  if (this->health_check_enabled_) {
+    ESP_LOGCONFIG(TAG, "  Health Check Interval: %u ms", this->health_check_interval_ms_);
+    ESP_LOGCONFIG(TAG, "  Max Failed Checks: %u", this->max_failed_checks_);
+    ESP_LOGCONFIG(TAG, "  Auto Reset on Failure: %s", YESNO(this->auto_reset_on_failure_));
+  }
   LOG_UPDATE_INTERVAL(this);
   uint8_t ic_id = this->read_register(ST25R300_REG_IC_IDENTITY);
   ESP_LOGCONFIG(TAG, "  IC Identity (live): 0x%02X (chip_type=0x%02X)", ic_id,

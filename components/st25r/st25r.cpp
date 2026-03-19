@@ -945,6 +945,11 @@ bool ST25R::reset_() {
   }
   bool is_b_version = (chip_type == 0x30);
   this->is_b_version_ = is_b_version;
+  // ST25R3916 (0x28) and ST25R3916B (0x30) both have Automatic Antenna Tuning (AAT)
+  // with varicap DAC outputs on ANT_TUNE_A/B (0x26/0x27).  Variants without AAT
+  // (e.g. ST25R300/500/501 — see feature matrix) use their own reset_() override and
+  // never reach this code, but set the flag explicitly to represent the capability.
+  this->has_aat_ = true;
   ESP_LOGI(TAG, "IC identity match: 0x%02X (ST25R3916%s)", ic_identity, is_b_version ? "B" : "");
 
   ESP_LOGV(TAG, "  reset_: Enabling Ready mode");
@@ -967,12 +972,13 @@ bool ST25R::reset_() {
   // am_mod (bits[7:4]) MUST be 0 for ISO14443A — 100% ASK (OOK) required; tags cannot demodulate REQA/WUPA with partial AM.
   // Do NOT set am_mod=7 (0x70|d_res): that is for ISO14443B (type B uses ~10% ASK). Applies equally to non-B and B chip variants.
   this->write_register(TX_DRIVER_CONF, d_res);
-  // ANT_TUNE_A/B (0x26/0x27): DAC outputs to external varicap capacitors for antenna resonance tuning.
+  // ANT_TUNE_A/B (0x26/0x27): varicap DAC outputs for antenna resonance tuning (AAT).
+  // Only write on chips that have AAT hardware — ST25R3916/3916B do; ST25R300/500/501 do not.
   // V_AAT = (0.044 + 0.868 * value / 255) * VDD_A; 0x80 = mid-range (chip default).
-  // Increase to raise varicap voltage → reduce capacitance → shift resonance higher.
-  // Decrease to lower voltage → increase capacitance → shift resonance lower.
-  this->write_register(ANT_TUNE_A, this->ant_tune_a_);
-  this->write_register(ANT_TUNE_B, this->ant_tune_b_);
+  if (this->has_aat_) {
+    this->write_register(ANT_TUNE_A, this->ant_tune_a_);
+    this->write_register(ANT_TUNE_B, this->ant_tune_b_);
+  }
 
   if (this->rf_field_enabled_) {
     ESP_LOGV(TAG, "  reset_: Enabling RF field");

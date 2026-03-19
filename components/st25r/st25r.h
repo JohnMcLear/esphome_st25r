@@ -191,6 +191,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   uint8_t ant_tune_a_{0x80};  // AAT DAC A: 0x80 = mid-range (~0.48V on 3.3V / ~0.87V on 5V)
   uint8_t ant_tune_b_{0x80};  // AAT DAC B: same
   bool is_b_version_{false};
+  bool has_aat_{false};  // Automatic Antenna Tuning / varicap DAC (ANT_TUNE_A/B) available
   // Health check (chip liveness check, separate from tag scan interval)
   bool health_check_enabled_{true};
   uint32_t health_check_interval_ms_{60000};
