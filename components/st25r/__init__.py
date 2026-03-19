@@ -39,6 +39,10 @@ CONF_MIFARE_KEY_B = "mifare_key_b"
 CONF_MISS_THRESHOLD = "miss_threshold"
 CONF_ANT_TUNE_A = "ant_tune_a"
 CONF_ANT_TUNE_B = "ant_tune_b"
+CONF_HEALTH_CHECK_ENABLED = "health_check_enabled"
+CONF_HEALTH_CHECK_INTERVAL = "health_check_interval"
+CONF_MAX_FAILED_CHECKS = "max_failed_checks"
+CONF_AUTO_RESET_ON_FAILURE = "auto_reset_on_failure"
 
 st25r_ns = cg.esphome_ns.namespace("st25r")
 ST25R = st25r_ns.class_("ST25R", cg.PollingComponent)
@@ -67,6 +71,10 @@ ST25R_SCHEMA = cv.Schema(
         cv.Optional(CONF_MISS_THRESHOLD, default=3): cv.int_range(min=1, max=255),
         cv.Optional(CONF_ANT_TUNE_A, default=0x80): cv.int_range(min=0, max=255),
         cv.Optional(CONF_ANT_TUNE_B, default=0x80): cv.int_range(min=0, max=255),
+        cv.Optional(CONF_HEALTH_CHECK_ENABLED, default=True): cv.boolean,
+        cv.Optional(CONF_HEALTH_CHECK_INTERVAL, default="60s"): cv.positive_time_period_milliseconds,
+        cv.Optional(CONF_MAX_FAILED_CHECKS, default=3): cv.int_range(min=1, max=255),
+        cv.Optional(CONF_AUTO_RESET_ON_FAILURE, default=True): cv.boolean,
         cv.Optional(CONF_STATUS): binary_sensor_.binary_sensor_schema(),
         cv.Optional(CONF_FIELD_STRENGTH): sensor_.sensor_schema(),
         cv.Optional(CONF_ON_TAG): automation.validate_automation(
@@ -103,6 +111,10 @@ async def setup_st25r(var, config):
     cg.add(var.set_miss_threshold(config[CONF_MISS_THRESHOLD]))
     cg.add(var.set_ant_tune_a(config[CONF_ANT_TUNE_A]))
     cg.add(var.set_ant_tune_b(config[CONF_ANT_TUNE_B]))
+    cg.add(var.set_health_check_enabled(config[CONF_HEALTH_CHECK_ENABLED]))
+    cg.add(var.set_health_check_interval(config[CONF_HEALTH_CHECK_INTERVAL]))
+    cg.add(var.set_max_failed_checks(config[CONF_MAX_FAILED_CHECKS]))
+    cg.add(var.set_auto_reset_on_failure(config[CONF_AUTO_RESET_ON_FAILURE]))
 
     if CONF_STATUS in config:
         sens = await binary_sensor_.new_binary_sensor(config[CONF_STATUS])

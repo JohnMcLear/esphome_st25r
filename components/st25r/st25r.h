@@ -125,6 +125,10 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   void set_miss_threshold(uint8_t t) { this->miss_threshold_ = t; }
   void set_ant_tune_a(uint8_t v) { this->ant_tune_a_ = v; }
   void set_ant_tune_b(uint8_t v) { this->ant_tune_b_ = v; }
+  void set_health_check_enabled(bool v) { this->health_check_enabled_ = v; }
+  void set_health_check_interval(uint32_t ms) { this->health_check_interval_ms_ = ms; }
+  void set_max_failed_checks(uint8_t n) { this->max_failed_checks_ = n; }
+  void set_auto_reset_on_failure(bool v) { this->auto_reset_on_failure_ = v; }
 
   void register_on_tag_trigger(ST25RTagTrigger *trig) { this->on_tag_triggers_.push_back(trig); }
   void register_on_tag_removed_trigger(ST25RTagRemovedTrigger *trig) {
@@ -187,6 +191,12 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   uint8_t ant_tune_a_{0x80};  // AAT DAC A: 0x80 = mid-range (~0.48V on 3.3V / ~0.87V on 5V)
   uint8_t ant_tune_b_{0x80};  // AAT DAC B: same
   bool is_b_version_{false};
+  // Health check (chip liveness check, separate from tag scan interval)
+  bool health_check_enabled_{true};
+  uint32_t health_check_interval_ms_{60000};
+  uint32_t last_health_check_ms_{0};
+  uint8_t max_failed_checks_{3};
+  bool auto_reset_on_failure_{true};
   uint8_t health_check_failures_{0};
   uint8_t reinitialization_attempts_{0};
   volatile bool irq_triggered_{false};
