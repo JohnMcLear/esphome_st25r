@@ -84,6 +84,9 @@ namespace esphome {
 namespace st25r {
 
 static const char *const TAG = "st25r";
+// NFC Forum Type 4 Tag string (mirrors nfc::NFC_FORUM_TYPE_2 naming convention;
+// not yet in ESPHome's nfc.h so we define it here).
+static const char *const NFC_FORUM_TYPE_4 = "NFC Forum Type 4";
 
 void ST25R::isr(ST25R *arg) {
   arg->irq_triggered_ = true;
@@ -427,7 +430,249 @@ bool ST25R::mifare_read_block_(uint8_t block, uint8_t *data,
   return true;
 }
 
-std::unique_ptr<nfc::NfcTag> ST25R::read_tag_(std::vector<uint8_t> &uid) {
+// ── iso_dep_activate_ ────────────────────────────────────────────────────────
+// Sends RATS (Request for Answer To Select) to activate an ISO 14443-4
+// (ISO-DEP / T=CL) session.  FSDI=5 → max frame 64 bytes.
+// Returns true and fills ats/ats_len on success.
+bool ST25R::iso_dep_activate_(uint8_t *ats, uint8_t &ats_len) {
+  // RATS: E0 | (FSDI << 4) | CID — FSDI=5 (64 B), CID=0 (no card identifier)
+  const uint8_t rats[2] = {0xE0, 0x50};
+  this->iso_dep_block_num_ = 0;
+  ats_len = 0;
+  if (!this->transceive_(rats, 2, ats, ats_len, 100)) {
+    ESP_LOGD(TAG, "ISO-DEP: RATS timed out (no ATS)");
+    return false;
+  }
+  ESP_LOGD(TAG, "ISO-DEP: ATS received (%u bytes)", ats_len);
+  return ats_len >= 1;
+}
+
+// ── iso_dep_transceive_ ──────────────────────────────────────────────────────
+// Sends an APDU wrapped in an ISO 14443-4 I-block (PCB | INF | CRC).
+// Strips the PCB byte from the response before returning.
+// Block number toggles automatically (0 → 1 → 0 → …).
+bool ST25R::iso_dep_transceive_(const uint8_t *apdu, uint8_t apdu_len,
+                                 uint8_t *resp, uint8_t &resp_len,
+                                 uint32_t timeout_ms) {
+  // I-block PCB: bits 7-6 = 00, bit 5 = 0 (no chaining), bit 4 = 0 (no CID),
+  //              bit 3 = 0 (no NAD), bit 2 = 1 (required), bit 1 = 0 (RFU),
+  //              bit 0 = block number.
+  uint8_t pcb = (uint8_t)(0x02 | (this->iso_dep_block_num_ & 0x01));
+  this->iso_dep_block_num_ ^= 0x01;
+
+  // Build the frame: PCB + APDU.  Max = 1 + 61 = 62 bytes (FSDI=5 → FSD=64,
+  // minus 2 bytes CRC appended by the chip gives 62 bytes payload capacity).
+  uint8_t frame[66];
+  frame[0] = pcb;
+  if (apdu_len > 0)
+    memcpy(frame + 1, apdu, apdu_len);
+
+  uint8_t raw[64];
+  uint8_t raw_len = 0;
+  if (!this->transceive_(frame, (size_t)(1 + apdu_len), raw, raw_len, timeout_ms)) {
+    return false;
+  }
+
+  // Strip the PCB byte; return only the APDU response (INF).
+  if (raw_len < 1)
+    return false;
+  resp_len = (uint8_t)(raw_len - 1);
+  if (resp_len > 0)
+    memcpy(resp, raw + 1, resp_len);
+  return true;
+}
+
+// ── iso_dep_deselect_ ────────────────────────────────────────────────────────
+// Sends an S(DESELECT) supervisory block to cleanly close the ISO-DEP session
+// and put the PICC back into HALT state.
+void ST25R::iso_dep_deselect_() {
+  const uint8_t deselect = 0xC2;  // S(DESELECT) PCB, no CID
+  uint8_t resp[4];
+  uint8_t resp_len = 0;
+  // Best-effort — ignore errors; the HALT command that follows will finish the job.
+  this->transceive_(&deselect, 1, resp, resp_len, 50);
+}
+
+// ── read_nfc_type4_ndef_ ─────────────────────────────────────────────────────
+// Reads an NDEF message from an NFC Forum Type 4 Tag over an active ISO-DEP
+// session.  Protocol per NFC Forum T4T Technical Specification V2.0:
+//   1. SELECT NDEF Application (AID D2 76 00 00 85 01 01)
+//   2. SELECT CC File (E1 03)
+//   3. READ BINARY CC (15 bytes)  — parse NDEF File ID and max size
+//   4. SELECT NDEF File
+//   5. READ BINARY first 2 bytes  — get NDEF message length
+//   6. READ BINARY NDEF data      — in chunks of ≤59 bytes
+bool ST25R::read_nfc_type4_ndef_(std::vector<uint8_t> &ndef_data) {
+  uint8_t resp[64];
+  uint8_t resp_len;
+
+  // ── Step 1: SELECT NDEF Application ────────────────────────────────────────
+  // AID: D2 76 00 00 85 01 01 (NFC Forum NDEF Application AID V2.0)
+  const uint8_t select_ndef_app[] = {
+    0x00, 0xA4, 0x04, 0x00,              // CLA INS P1 P2
+    0x07,                                // Lc = 7
+    0xD2, 0x76, 0x00, 0x00, 0x85, 0x01, 0x01,  // AID
+    0x00                                 // Le (return FCI if any)
+  };
+  resp_len = 0;
+  if (!this->iso_dep_transceive_(select_ndef_app, sizeof(select_ndef_app), resp, resp_len)) {
+    ESP_LOGD(TAG, "ISO-DEP: SELECT NDEF App timeout");
+    return false;
+  }
+  if (resp_len < 2 || resp[resp_len - 2] != 0x90 || resp[resp_len - 1] != 0x00) {
+    ESP_LOGD(TAG, "ISO-DEP: SELECT NDEF App failed SW=%02X%02X",
+             resp_len >= 2 ? resp[resp_len - 2] : 0,
+             resp_len >= 1 ? resp[resp_len - 1] : 0);
+    return false;
+  }
+
+  // ── Step 2: SELECT CC File (File ID = E1 03) ────────────────────────────────
+  const uint8_t select_cc[] = {
+    0x00, 0xA4, 0x00, 0x0C,  // CLA INS P1(by ID) P2(no response data)
+    0x02, 0xE1, 0x03          // Lc=2, File ID
+  };
+  resp_len = 0;
+  if (!this->iso_dep_transceive_(select_cc, sizeof(select_cc), resp, resp_len)) {
+    ESP_LOGD(TAG, "ISO-DEP: SELECT CC file timeout");
+    return false;
+  }
+  if (resp_len < 2 || resp[resp_len - 2] != 0x90 || resp[resp_len - 1] != 0x00) {
+    ESP_LOGD(TAG, "ISO-DEP: SELECT CC file failed SW=%02X%02X",
+             resp_len >= 2 ? resp[resp_len - 2] : 0,
+             resp_len >= 1 ? resp[resp_len - 1] : 0);
+    return false;
+  }
+
+  // ── Step 3: READ BINARY CC (15 bytes) ──────────────────────────────────────
+  const uint8_t read_cc[] = {0x00, 0xB0, 0x00, 0x00, 0x0F};  // offset=0, Le=15
+  resp_len = 0;
+  if (!this->iso_dep_transceive_(read_cc, sizeof(read_cc), resp, resp_len)) {
+    ESP_LOGD(TAG, "ISO-DEP: READ CC timeout");
+    return false;
+  }
+  // Expect 15 CC bytes + 2 SW bytes = 17 bytes total
+  if (resp_len < 17 || resp[resp_len - 2] != 0x90 || resp[resp_len - 1] != 0x00) {
+    ESP_LOGD(TAG, "ISO-DEP: READ CC failed (resp_len=%u)", resp_len);
+    return false;
+  }
+
+  // Parse CC: byte[7]=NDEF TLV tag (0x04), byte[8]=TLV length (≥6),
+  //           bytes[9-10]=NDEF File ID, bytes[11-12]=max NDEF size.
+  if (resp[7] != 0x04 || resp[8] < 0x06) {
+    ESP_LOGD(TAG, "ISO-DEP: CC NDEF File Control TLV not found (T=%02X L=%02X)", resp[7], resp[8]);
+    return false;
+  }
+  const uint8_t ndef_file_id[2] = {resp[9], resp[10]};
+  const uint16_t ndef_max_size = (uint16_t)(resp[11] << 8 | resp[12]);
+
+  // ── Step 4: SELECT NDEF File ────────────────────────────────────────────────
+  uint8_t select_ndef[7] = {
+    0x00, 0xA4, 0x00, 0x0C, 0x02,
+    ndef_file_id[0], ndef_file_id[1]
+  };
+  resp_len = 0;
+  if (!this->iso_dep_transceive_(select_ndef, sizeof(select_ndef), resp, resp_len)) {
+    ESP_LOGD(TAG, "ISO-DEP: SELECT NDEF file timeout");
+    return false;
+  }
+  if (resp_len < 2 || resp[resp_len - 2] != 0x90 || resp[resp_len - 1] != 0x00) {
+    ESP_LOGD(TAG, "ISO-DEP: SELECT NDEF file failed SW=%02X%02X",
+             resp_len >= 2 ? resp[resp_len - 2] : 0,
+             resp_len >= 1 ? resp[resp_len - 1] : 0);
+    return false;
+  }
+
+  // ── Step 5: READ BINARY — first 2 bytes = NDEF message length ──────────────
+  const uint8_t read_nlen[] = {0x00, 0xB0, 0x00, 0x00, 0x02};
+  resp_len = 0;
+  if (!this->iso_dep_transceive_(read_nlen, sizeof(read_nlen), resp, resp_len)) {
+    ESP_LOGD(TAG, "ISO-DEP: READ NDEF length timeout");
+    return false;
+  }
+  if (resp_len < 4 || resp[resp_len - 2] != 0x90 || resp[resp_len - 1] != 0x00) {
+    ESP_LOGD(TAG, "ISO-DEP: READ NDEF length failed (resp_len=%u)", resp_len);
+    return false;
+  }
+  const uint16_t ndef_len = (uint16_t)(resp[0] << 8 | resp[1]);
+  if (ndef_len == 0 || ndef_len > ndef_max_size) {
+    ESP_LOGD(TAG, "ISO-DEP: NDEF length invalid (len=%u max=%u)", ndef_len, ndef_max_size);
+    return false;
+  }
+
+  // ── Step 6: READ BINARY — NDEF data in chunks ──────────────────────────────
+  // Max bytes per chunk: FSD(64) - PCB(1) - CRC(2) - SW(2) = 59 bytes of data.
+  ndef_data.clear();
+  ndef_data.reserve(ndef_len);
+  uint16_t offset = 2;       // skip the 2-byte NDEF length field
+  uint16_t remaining = ndef_len;
+  while (remaining > 0) {
+    const uint8_t chunk = (uint8_t)((remaining > 59) ? 59 : remaining);
+    uint8_t read_cmd[5] = {
+      0x00, 0xB0,
+      (uint8_t)((offset >> 8) & 0x7F),  // P1: high offset bits (bit7 must be 0)
+      (uint8_t)(offset & 0xFF),          // P2: low offset byte
+      chunk                              // Le
+    };
+    resp_len = 0;
+    if (!this->iso_dep_transceive_(read_cmd, sizeof(read_cmd), resp, resp_len)) {
+      ESP_LOGD(TAG, "ISO-DEP: READ NDEF data timeout (offset=%u)", offset);
+      return false;
+    }
+    if (resp_len < (uint8_t)(chunk + 2) ||
+        resp[resp_len - 2] != 0x90 || resp[resp_len - 1] != 0x00) {
+      ESP_LOGD(TAG, "ISO-DEP: READ NDEF data failed (offset=%u resp_len=%u)", offset, resp_len);
+      return false;
+    }
+    ndef_data.insert(ndef_data.end(), resp, resp + chunk);
+    offset += chunk;
+    remaining -= chunk;
+  }
+
+  ESP_LOGI(TAG, "ISO-DEP: NDEF message read successfully (%u bytes)", ndef_len);
+  return true;
+}
+
+std::unique_ptr<nfc::NfcTag> ST25R::read_tag_(std::vector<uint8_t> &uid, uint8_t sak) {
+  nfc::NfcTagUid nfc_uid(uid.begin(), uid.end());
+
+  // ── ISO-DEP (NFC Forum Type 4 / ISO 14443-4) ─────────────────────────────
+  // SAK bit 5 (0x20) = T=CL: device supports ISO-DEP.  This covers NFC-enabled
+  // phones (Android HCE, Apple Wallet), ISO 14443-4 smart-cards and DESFire.
+  // We always try ISO-DEP first when this bit is set, regardless of UID length.
+  if (sak & 0x20) {
+    ESP_LOGI(TAG, "ISO-DEP device detected (SAK=0x%02X), activating ISO 14443-4", sak);
+    uint8_t ats[64];
+    uint8_t ats_len = 0;
+    if (this->iso_dep_activate_(ats, ats_len)) {
+      std::vector<uint8_t> ndef_data;
+      if (this->read_nfc_type4_ndef_(ndef_data) && !ndef_data.empty()) {
+        // Build a stable, human-readable hex token from the NDEF content.
+        // This token is stored in iso_dep_token_ and used by process_state_() as
+        // the tracking key so that phones with rotating random UIDs are correctly
+        // deduplicated across scans.
+        // Pre-allocate the full string (2 hex chars per byte) to avoid repeated
+        // reallocations during the encoding loop.
+        this->iso_dep_token_.clear();
+        this->iso_dep_token_.resize(ndef_data.size() * 2);
+        for (size_t i = 0; i < ndef_data.size(); i++) {
+          snprintf(&this->iso_dep_token_[i * 2], 3, "%02X", ndef_data[i]);
+        }
+        ESP_LOGI(TAG, "ISO-DEP NFC Type 4: stable token = %.40s%s",
+                 this->iso_dep_token_.c_str(),
+                 this->iso_dep_token_.size() > 40 ? "..." : "");
+        this->iso_dep_deselect_();
+        return make_unique<nfc::NfcTag>(nfc_uid, NFC_FORUM_TYPE_4, ndef_data);
+      }
+      // NDEF read failed (payment-only phone, DESFire, etc.) — still mark as T4.
+      ESP_LOGD(TAG, "ISO-DEP: NDEF not available on this device");
+      this->iso_dep_deselect_();
+    } else {
+      ESP_LOGW(TAG, "ISO-DEP: activation failed despite T=CL SAK");
+    }
+    // No stable NDEF token — iso_dep_token_ stays empty; caller falls back to UID.
+    return make_unique<nfc::NfcTag>(nfc_uid, NFC_FORUM_TYPE_4);
+  }
+
   uint8_t type = nfc::guess_tag_type(uid.size());
   ESP_LOGI(TAG, "read_tag_: UID length=%zu, guessed type=%d", uid.size(), type);
 
@@ -436,7 +681,6 @@ std::unique_ptr<nfc::NfcTag> ST25R::read_tag_(std::vector<uint8_t> &uid) {
     struct Crypto1State cs = {};
     bool auth_ok = this->mifare_authenticate_(0, false, this->mifare_key_a_,
                                               uid.data(), (uint8_t) uid.size(), &cs);
-    nfc::NfcTagUid nfc_uid(uid.begin(), uid.end());
     if (!auth_ok) {
       ESP_LOGW(TAG, "Mifare Classic: sector 0 auth failed (wrong key or clone card)");
       return make_unique<nfc::NfcTag>(nfc_uid, nfc::MIFARE_CLASSIC);
@@ -575,7 +819,6 @@ std::unique_ptr<nfc::NfcTag> ST25R::read_tag_(std::vector<uint8_t> &uid) {
             std::vector<uint8_t> ndef_data(data.begin() + (int) msg_start_idx,
                                            data.begin() + (int) msg_start_idx + (int) msg_len);
             ESP_LOGI(TAG, "  Successfully read NDEF message of %zu bytes", msg_len);
-            nfc::NfcTagUid nfc_uid(uid.begin(), uid.end());
             if (msg_len > 0) {
               return make_unique<nfc::NfcTag>(nfc_uid, nfc::NFC_FORUM_TYPE_2, ndef_data);
             } else {
@@ -591,7 +834,6 @@ std::unique_ptr<nfc::NfcTag> ST25R::read_tag_(std::vector<uint8_t> &uid) {
     }
   }
 
-  nfc::NfcTagUid nfc_uid(uid.begin(), uid.end());
   return make_unique<nfc::NfcTag>(nfc_uid);
 }
 
@@ -777,17 +1019,32 @@ void ST25R::process_state_() {
               return;
             }
 
-            ESP_LOGI(TAG, "Tag selected: %s", this->current_uid_.c_str());
+            ESP_LOGI(TAG, "Tag selected: %s SAK=0x%02X", this->current_uid_.c_str(), sak);
 
-            // Read tag data on first detection only (auth + NDEF read if Mifare)
-            if (!this->present_tags_.count(this->current_uid_)) {
+            // For ISO-DEP devices (phones, smart-cards), always call read_tag_() so
+            // we can activate ISO 14443-4 and read the NDEF token that serves as a
+            // stable identifier even when the phone's UID is randomised each tap.
+            // For other devices only read on first detection.
+            bool is_iso_dep = (sak & 0x20) != 0;
+            std::string tag_key = this->current_uid_;
+
+            if (is_iso_dep || !this->present_tags_.count(this->current_uid_)) {
               std::vector<uint8_t> uid_bytes;
               for (size_t i = 0; i < this->current_uid_.length(); i += 2)
                 uid_bytes.push_back((uint8_t) strtol(this->current_uid_.substr(i, 2).c_str(), nullptr, 16));
-              this->tags_data_[this->current_uid_] = this->read_tag_(uid_bytes);
+              this->iso_dep_token_.clear();
+              auto tag_data = this->read_tag_(uid_bytes, sak);
+              // If read_tag_() derived a stable NDEF token (ISO-DEP path), use it as
+              // the tracking key so the same phone is not treated as a new tag on
+              // every scan despite having a different random UID each time.
+              if (!this->iso_dep_token_.empty()) {
+                tag_key = this->iso_dep_token_;
+                this->iso_dep_token_.clear();
+              }
+              this->tags_data_[tag_key] = std::move(tag_data);
             }
 
-            this->tags_this_scan_.insert(this->current_uid_);
+            this->tags_this_scan_.insert(tag_key);
 
             // HALT: send [0x50, 0x00] + CRC; tag has no response. Don't use
             // transceive_() here — it blocks 150ms waiting for a non-existent SAK.

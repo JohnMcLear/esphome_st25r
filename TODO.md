@@ -4,6 +4,7 @@
 - [ ] **ST25R300 hardware validation** — component compiles clean; needs X-NUCLEO-NFC12A1 board to verify init sequence, tag detection, and NDEF read
 
 ## Protocol
+- [x] **ISO-DEP / NFC Type 4 Tag (ISO 14443-4)** — Android/Apple Wallet pass support: RATS activation, APDU exchange, NFC Forum T4T NDEF read; stable NDEF-derived token used as tracking key for phones with random UIDs (issue #27)
 - [ ] **ISO14443B** — ST25R3916 supports it; needs MODE register change and Type B state machine
 - [ ] **ISO15693 (NFC-V)** — ST25R3916 supports it; needs MODE change and ISO15693 protocol layer
 - [ ] **FeliCa (NFC-F)** — ST25R3916 supports it; needs NFC-F protocol layer

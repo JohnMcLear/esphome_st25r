@@ -162,7 +162,21 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
                             const uint8_t *uid, uint8_t uid_len,
                             struct Crypto1State *cs);
   bool mifare_read_block_(uint8_t block, uint8_t *data, struct Crypto1State *cs);
-  std::unique_ptr<nfc::NfcTag> read_tag_(std::vector<uint8_t> &uid);
+  // ISO-DEP (ISO 14443-4) support for NFC-enabled phones and smart-cards.
+  // iso_dep_activate_: sends RATS (E0 50) and returns the ATS from the device.
+  bool iso_dep_activate_(uint8_t *ats, uint8_t &ats_len);
+  // iso_dep_transceive_: wraps an APDU in an ISO-DEP I-block, sends it, and
+  // returns the APDU response (PCB byte stripped).  Toggles the block number.
+  bool iso_dep_transceive_(const uint8_t *apdu, uint8_t apdu_len,
+                           uint8_t *resp, uint8_t &resp_len,
+                           uint32_t timeout_ms = 500);
+  // iso_dep_deselect_: sends S(DESELECT) to close the ISO-DEP session.
+  void iso_dep_deselect_();
+  // read_nfc_type4_ndef_: reads an NDEF message from an NFC Forum Type 4 Tag
+  // using the CC-file / NDEF-file APDU sequence over an active ISO-DEP session.
+  bool read_nfc_type4_ndef_(std::vector<uint8_t> &ndef_data);
+  // read_tag_: sak is the SAK byte from SELECT; used to detect ISO-DEP devices.
+  std::unique_ptr<nfc::NfcTag> read_tag_(std::vector<uint8_t> &uid, uint8_t sak);
   static void isr(ST25R *arg);
   
   GPIOPin *reset_pin_{nullptr};
@@ -182,6 +196,12 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   uint8_t reinitialization_attempts_{0};
   volatile bool irq_triggered_{false};
   volatile uint8_t irq_status_{0};
+  // ISO-DEP session state: block number toggles between 0/1 per I-block sent.
+  uint8_t iso_dep_block_num_{0};
+  // Stable NDEF-derived token for ISO-DEP devices (phones with random UIDs).
+  // Set by read_tag_() when NDEF is successfully read; consumed and cleared by
+  // process_state_() immediately after the read_tag_() call.
+  std::string iso_dep_token_{};
 
   // Multi-tag tracking
   // present_tags_: UID → consecutive miss count (0 = seen this or prior scan)
