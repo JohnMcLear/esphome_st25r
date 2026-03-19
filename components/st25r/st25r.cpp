@@ -637,14 +637,15 @@ void ST25R::process_state_() {
           this->send_anticol_frame_();
           this->state_ = STATE_ANTICOL;
           this->last_state_change_ = millis();
+      } else if (this->irq_status_ & IRQ_NRE) {
+          // NRT expired: no tag response — fast path to idle (set by derived class read_chip_irq_())
+          ESP_LOGD(TAG, "WUPA NRE (no tag): IRQ=0x%02X", this->irq_status_);
+          this->irq_status_ = 0;
+          this->state_ = STATE_IDLE;
+          this->finalize_scan_();
       } else if (millis() - this->last_state_change_ > 100) {
-          uint8_t irq_t = this->read_register(IRQ_TIMER);
-          uint8_t irq_e = this->read_register(IRQ_ERROR);
-          this->write_command(ST25R_CMD_MEASURE_AMPLITUDE);
-          uint8_t amp = this->read_register(AD_CONV_RESULT);
-          uint8_t op = this->read_register(OP_CONTROL);
-          ESP_LOGD(TAG, "WUPA timeout: IRQ_MAIN=0x%02X IRQ_TIMER=0x%02X IRQ_ERR=0x%02X FIFO=%u AMP=%u OP=0x%02X",
-                   this->irq_status_, irq_t, irq_e, this->read_register(FIFO_STATUS1), amp, op);
+          ESP_LOGD(TAG, "WUPA timeout: IRQ=0x%02X FIFO=%u", this->irq_status_, this->read_fifo_status1_());
+          this->irq_status_ = 0;
           this->state_ = STATE_IDLE;
           this->finalize_scan_();
       }
@@ -659,13 +660,8 @@ void ST25R::process_state_() {
           this->apply_anticol_prefix_();
           // Send WUPA before each new prefix attempt — some cards (e.g. Mifare Classic) leave
           // the READY state quickly after responding to an anticol they don't match.
-          this->write_command(ST25R_CMD_CLEAR_FIFO);
-          this->read_register(IRQ_MAIN);
-          this->read_register(IRQ_TIMER);
-          this->read_register(IRQ_ERROR);
-          this->irq_triggered_ = false;
           this->anticol_resume_ = true;
-          this->write_command(ST25R_CMD_TRANSMIT_WUPA);
+          this->start_wupa_();
           this->state_ = STATE_WUPA;
           this->last_state_change_ = millis();
           return;
@@ -677,12 +673,11 @@ void ST25R::process_state_() {
 
       if (this->irq_status_ != 0 && (this->irq_status_ & (IRQ_RXE | IRQ_COL | IRQ_TXE))) {
         delay(5);
-        uint8_t f1 = this->read_register(FIFO_STATUS1);
+        uint8_t f1 = this->read_fifo_status1_();
         bool has_collision = (this->irq_status_ & IRQ_COL) != 0;
 
         if (has_collision) {
-          // Read collision position from COLLISION_DISPLAY (0x20)
-          uint8_t col_raw = this->read_register(COLLISION_DISPLAY);
+          uint8_t col_raw = this->read_collision_display_();
           uint8_t c_byte = (col_raw >> 4) & 0x0F;
           uint8_t c_bit  = (col_raw >> 1) & 0x07;
           // col_pos_abs is from start of TX frame (SEL + NVB = 2 bytes = 16 bits)
@@ -704,8 +699,7 @@ void ST25R::process_state_() {
           uint8_t resp[5];
           this->read_fifo(resp, 5);
 
-          // ST25R3916 FIFO behaviour with prefix bits:
-          // The tag only sends the bits NOT covered by the prefix. The FIFO stores the
+          // The tag only sends bits NOT covered by the prefix. The FIFO stores the
           // tag's response bits with zeros in the first anticol_prefix_bits_ positions.
           // Reconstruct the full UID by OR-ing the prefix bits back in.
           uint8_t full_uid[4];
@@ -735,7 +729,10 @@ void ST25R::process_state_() {
             }
           }
 
-          this->write_register(ISO14443A_CONF, 0x00);  // clear antcl — SELECT uses CRC
+          // Clear anticollision mode before SELECT (ST25R3916: ISO14443A_CONF=0x00;
+          // ST25R300: no-op here — handled via RX_PROTOCOL1 inside transceive_ex_()).
+          this->pre_select_();
+
           uint8_t sak_buf[3];
           uint8_t sak_len = 0;
           if (!this->transceive_(sel_pk, 7, sak_buf, sak_len) || sak_len == 0) {
@@ -789,20 +786,8 @@ void ST25R::process_state_() {
 
             this->tags_this_scan_.insert(this->current_uid_);
 
-            // HALT: send [0x50, 0x00] + CRC; tag has no response. Don't use
-            // transceive_() here — it blocks 150ms waiting for a non-existent SAK.
-            {
-              uint8_t halt_cmd[2] = {0x50, 0x00};
-              this->write_command(ST25R_CMD_CLEAR_FIFO);
-              this->read_register(IRQ_MAIN);
-              this->read_register(IRQ_TIMER);
-              this->read_register(IRQ_ERROR);
-              this->write_fifo(halt_cmd, 2);
-              this->write_register(NUM_TX_BYTES1, 0x00);
-              this->write_register(NUM_TX_BYTES2, 0x10);  // 2 bytes
-              this->write_command(ST25R_CMD_TRANSMIT_WITH_CRC);
-              delay(10);  // wait for HALT frame to be transmitted (~2ms for 4 bytes)
-            }
+            // HALT: send [0x50, 0x00] + CRC via chip-specific send_halt_()
+            this->send_halt_();
 
             // Determine the CL1 collision state so we can resume the multi-tag tree traversal.
             // If we went through cascade (CL2), restore the saved CL1 state.
@@ -821,13 +806,6 @@ void ST25R::process_state_() {
               can_resume = (this->anticol_col_pos_ > 0 || this->anticol_prefix_bits_ > 0);
             }
 
-            // STOP_ALL to reset chip RX state
-            this->write_command(ST25R_CMD_CLEAR_FIFO);
-            this->read_register(IRQ_MAIN);
-            this->read_register(IRQ_TIMER);
-            this->read_register(IRQ_ERROR);
-            this->irq_triggered_ = false;
-
             if (can_resume) {
               // Advance to the next branch in the collision tree
               this->cascade_level_ = 0;
@@ -839,15 +817,15 @@ void ST25R::process_state_() {
               uint8_t max_val = (1 << (resume_col_pos + 1)) - 1;
               if (this->anticol_prefix_val_ > max_val) {
                 // All branches at this collision level exhausted — done
-              this->state_ = STATE_IDLE;
+                this->state_ = STATE_IDLE;
                 this->finalize_scan_();
                 return;
               }
               // Send WUPA (not REQA) so all tags — including those in HALT — wake up.
               // Some cards (e.g. Mifare Classic) return to HALT after a non-matching SELECT,
               // so REQA would not wake them.
-                  this->anticol_resume_ = true;
-              this->write_command(ST25R_CMD_TRANSMIT_WUPA);
+              this->anticol_resume_ = true;
+              this->start_wupa_();
             } else {
               // No prior collision: this was the only tag — scan complete
               this->state_ = STATE_IDLE;
@@ -1061,6 +1039,47 @@ void ST25R::send_anticol_frame_() {
   this->write_register(NUM_TX_BYTES2, ((ntx_n & 0x1F) << 3) | (ntx_b & 0x07));
   this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);
 
+}
+
+// ── Default virtual helpers (ST25R3916 implementations) ──────────────────────
+
+void ST25R::pre_select_() {
+  // ST25R3916: clear antcl bit in ISO14443A_CONF so SELECT uses normal (non-anticol) framing
+  this->write_register(ISO14443A_CONF, 0x00);
+}
+
+uint8_t ST25R::read_fifo_status1_() {
+  return this->read_register(FIFO_STATUS1);
+}
+
+uint8_t ST25R::read_collision_display_() {
+  return this->read_register(COLLISION_DISPLAY);
+}
+
+void ST25R::send_halt_() {
+  // HALT: send [0x50, 0x00] + CRC; tag has no response.
+  // Don't use transceive_() here — it blocks waiting for a non-existent response.
+  uint8_t halt_cmd[2] = {0x50, 0x00};
+  this->write_command(ST25R_CMD_CLEAR_FIFO);
+  this->read_register(IRQ_MAIN);
+  this->read_register(IRQ_TIMER);
+  this->read_register(IRQ_ERROR);
+  this->write_fifo(halt_cmd, 2);
+  this->write_register(NUM_TX_BYTES1, 0x00);
+  this->write_register(NUM_TX_BYTES2, 0x10);  // 2 bytes
+  this->write_command(ST25R_CMD_TRANSMIT_WITH_CRC);
+  delay(10);  // wait for HALT frame to be transmitted (~2ms for 4 bytes)
+}
+
+void ST25R::start_wupa_() {
+  // Clear FIFO + IRQs, then transmit WUPA.
+  this->write_command(ST25R_CMD_CLEAR_FIFO);
+  this->read_register(IRQ_MAIN);
+  this->read_register(IRQ_TIMER);
+  this->read_register(IRQ_ERROR);
+  this->irq_triggered_ = false;
+  this->irq_status_ = 0;
+  this->write_command(ST25R_CMD_TRANSMIT_WUPA);
 }
 
 void ST25R::field_on_() {

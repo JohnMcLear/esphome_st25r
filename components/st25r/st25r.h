@@ -143,16 +143,26 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   virtual void write_fifo(const uint8_t *data, size_t len) = 0;
   virtual void read_fifo(uint8_t *data, size_t len) = 0;
 
-  bool reset_();
+  // Chip-specific overrides — each uses the ST25R3916 default or can be overridden
+  virtual bool reset_();
+  virtual void reinitialize_();
+  virtual void send_anticol_frame_();
+  virtual bool transceive_ex_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, bool with_crc, uint32_t timeout_ms = 150);
+  virtual std::unique_ptr<nfc::NfcTag> read_tag_(std::vector<uint8_t> &uid);
+
+  // Virtual helpers used by the shared process_state_() to abstract chip differences
+  virtual void send_halt_();                  // encode and transmit the ISO14443A HALT command
+  virtual void start_wupa_();                 // clear chip state and transmit WUPA
+  virtual void pre_select_();                 // clear anticol mode before SELECT (chip-specific register)
+  virtual uint8_t read_fifo_status1_();       // read the chip's FIFO byte count register
+  virtual uint8_t read_collision_display_();  // read the chip's collision position register
+
   void field_on_();
   void finalize_scan_();
-  void send_anticol_frame_();
   void apply_anticol_prefix_();
   bool wait_for_irq_(uint8_t mask, uint32_t timeout_ms);
-  void reinitialize_();
   bool transceive_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, uint32_t timeout_ms = 150);
   bool transceive_no_crc_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, uint32_t timeout_ms = 150);
-  bool transceive_ex_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, bool with_crc, uint32_t timeout_ms = 150);
   // Mifare Classic — raw transceive with manual parity (no chip CRC/parity).
   // Adapted from mf1.c (MIT, github.com/suut/rfal-mifare-classic)
   bool transceive_mifare_(const uint8_t *data, const uint8_t *parity, uint8_t len,
@@ -162,7 +172,6 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
                             const uint8_t *uid, uint8_t uid_len,
                             struct Crypto1State *cs);
   bool mifare_read_block_(uint8_t block, uint8_t *data, struct Crypto1State *cs);
-  std::unique_ptr<nfc::NfcTag> read_tag_(std::vector<uint8_t> &uid);
   static void isr(ST25R *arg);
   
   GPIOPin *reset_pin_{nullptr};
@@ -197,8 +206,8 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   static const uint8_t IRQ_TXE     = 0x08;  // bit3: end of transmission
   static const uint8_t IRQ_COL     = 0x04;  // bit2: bit collision ← anticollision
   static const uint8_t IRQ_RX_REST = 0x02;  // bit1: automatic reception restart
-  // NRE (no-response timer expired) is bit6 of IRQ_TIMER (0x1B), not IRQ_MAIN;
-  // millis() timeouts are used instead — this constant is a placeholder that won't match
+  // NRE (no-response timer expired): set in irq_status_ by derived class overrides
+  // (e.g. ST25R300 translates its IRQ_STATUS2 NRE bit here). ST25R3916 uses millis() timeout.
   static const uint8_t IRQ_NRE = 0x01;
 
   State state_{STATE_IDLE};
