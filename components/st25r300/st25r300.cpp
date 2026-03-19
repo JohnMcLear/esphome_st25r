@@ -394,7 +394,8 @@ void ST25R300::send_anticol_frame_() {
                        ST25R300_RX_PROT1_A_RX_PAR | ST25R300_RX_PROT1_ANTCL);  // 0x39
   this->write_register(ST25R300_REG_TX_PROTOCOL1, ST25R300_TX_PROT1_A_TX_PAR);  // parity, no CRC
 
-  this->write_command(ST25R300_CMD_STOP_ALL);  // reset receiver + clear FIFO + clear IRQs
+  // CLEAR_FIFO (not STOP_ALL): STOP_ALL disables the RX decoder, preventing collision detection.
+  this->write_command(ST25R300_CMD_CLEAR_FIFO);
   this->read_register(ST25R300_REG_IRQ_STATUS1);
   this->read_register(ST25R300_REG_IRQ_STATUS2);
   this->read_register(ST25R300_REG_IRQ_STATUS3);

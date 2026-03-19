@@ -20,6 +20,7 @@ jobs:
         config:
           - tests/ci-test-spi.yaml
           - tests/ci-test-i2c.yaml
+          - tests/ci-test-st25r300-spi.yaml
 
     steps:
       - name: Checkout repository
