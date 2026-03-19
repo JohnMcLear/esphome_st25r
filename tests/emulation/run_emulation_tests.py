@@ -857,3 +857,82 @@ class TestRxConf3Selection:
         time.sleep(0.6)  # one more update interval
         val = ctrl1.get_reg("0D")
         assert val == 0xE2, f"Expected RX_CONF3=0xE2 for non-B sim (boost=false), got 0x{val:02X}"
+
+
+class TestHealthCheck:
+    """
+    Health check verifies IC identity at a separate slow interval (2s in
+    test-emulation.yaml), distinct from the 500ms tag scan rate.
+
+    test-emulation.yaml sets for reader1:
+      health_check_enabled: true
+      health_check_interval: 2s
+      max_failed_checks: 2
+      auto_reset_on_failure: true
+
+    Simulates SPI/I2C connectivity loss via SET_IC_IDENTITY socket command,
+    which makes the sim return a bad IC identity register value, causing the
+    firmware's health check to fail exactly as it would on a real bus failure.
+    """
+
+    def test_health_check_detects_failure(self, sim):
+        """Bad IC identity is detected; status binary sensor goes false."""
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        # Simulate connectivity loss: IC identity returns 0x00
+        ctrl1.set_ic_identity("00")
+        proc.wait_for(r"Health check failed", timeout=10)
+        proc.wait_for(r"READER1_STATUS 0", timeout=5)
+
+    def test_health_check_recovers_before_reinit(self, sim):
+        """
+        If connectivity is restored before max_failed_checks, reinit is not
+        triggered and status returns true on the next successful health check.
+        max_failed_checks=2: after 1 failure, restore → next check passes.
+        """
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        # Restore connectivity after exactly 1 failure (max_failed_checks=2,
+        # so reinit not yet triggered)
+        ctrl1.set_ic_identity("28")
+        # Next health check (within 2s) must pass and publish status true
+        proc.wait_for(r"READER1_STATUS 1", timeout=10)
+        # Confirm reinit was NOT triggered in this window
+        with proc._lock:
+            for line in proc.log_lines:
+                assert "max failures reached" not in line, (
+                    f"Reinit triggered unexpectedly after only 1 failure: {line}"
+                )
+
+    def test_persistent_failure_triggers_reinit(self, sim):
+        """
+        Persistent bad IC identity accumulates max_failed_checks failures and
+        triggers reinitialize_().  After restoring connectivity, reinit succeeds
+        (possibly on a retry) and status returns true.
+        """
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        # Simulate persistent loss
+        ctrl1.set_ic_identity("00")
+        # Wait for 2 consecutive failures → reinit triggered
+        proc.wait_for(r"max failures reached, triggering reinit", timeout=15)
+        # Restore IC identity so reinit (or next health check) succeeds
+        ctrl1.set_ic_identity("28")
+        # Status must recover.  Reinit may fail once due to timing (race between
+        # restoring identity and reinit reading IC_IDENTITY), but the subsequent
+        # health check cycle will detect the good identity and publish true.
+        proc.wait_for(r"READER1_STATUS 1", timeout=15)
+
+    def test_tag_scanning_resumes_after_recovery(self, sim):
+        """After health check recovery, normal tag detection still works."""
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        uid = "12345678"
+        ctrl1.add_tag(uid)
+        proc.wait_for(rf"READER1_ON_TAG {uid}", timeout=10)
+        ctrl1.remove_tag(uid)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {uid}", timeout=10)
