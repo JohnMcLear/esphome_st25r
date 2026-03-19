@@ -89,6 +89,43 @@ static const char *const TAG = "st25r";
 // not yet in ESPHome's nfc.h so we define it here).
 static const char *const NFC_FORUM_TYPE_4 = "NFC Forum Type 4";
 
+// ── BER-TLV helpers ───────────────────────────────────────────────────────────
+// Used to parse Google Smart Tap 2.0 and Apple VAS responses.
+// Placed in an anonymous namespace so they are local to this translation unit.
+namespace {
+
+// Read a BER-TLV length field at *pos; advance *pos past the length bytes.
+// Returns the decoded length, or 0 for unsupported indefinite-length encoding.
+size_t ber_read_len(const uint8_t *data, size_t data_len, size_t *pos) {
+  if (*pos >= data_len) return 0;
+  size_t l = data[(*pos)++];
+  if (l <= 0x7F) return l;       // short-form: length encoded directly
+  if (l == 0x80) return 0;       // indefinite length — not used in Smart Tap / VAS
+  size_t nb = l & 0x7F;          // number of following length bytes
+  l = 0;
+  for (; nb > 0 && *pos < data_len; nb--)
+    l = (l << 8) | data[(*pos)++];
+  return l;
+}
+
+// Find the first TLV entry with a 1-byte tag within [data, data+data_len).
+// Sets *val_len to the value's length and returns a pointer to the value bytes.
+// Returns nullptr if the tag is not found or the TLV is malformed.
+const uint8_t *ber_find(const uint8_t *data, size_t data_len,
+                        uint8_t tag, size_t *val_len) {
+  size_t i = 0;
+  while (i < data_len) {
+    uint8_t t = data[i++];
+    size_t l = ber_read_len(data, data_len, &i);
+    if (i + l > data_len) break;
+    if (t == tag) { *val_len = l; return &data[i]; }
+    i += l;
+  }
+  return nullptr;
+}
+
+}  // anonymous namespace
+
 void ST25R::isr(ST25R *arg) {
   arg->irq_triggered_ = true;
 }
@@ -494,6 +531,198 @@ void ST25R::iso_dep_deselect_() {
   this->transceive_(&deselect, 1, resp, resp_len, 50);
 }
 
+// ── iso_dep_smart_tap_ ───────────────────────────────────────────────────────
+// Reads a stable credential from a Google Wallet pass via Google Smart Tap 2.0.
+//
+// HOW IT WORKS:
+//   The pass owner creates a Google Wallet generic pass (free Google Wallet API
+//   issuer account) with Smart Tap enabled and a person-specific string as the
+//   smartTapRedemptionValue (e.g. "alice@home").  The pass is configured to NOT
+//   require reader authentication, so the redemption value is returned in
+//   cleartext.  When the phone is tapped, the reader:
+//     1. SELECTs the Smart Tap 2.0 application (AID "OSE.GST")
+//     2. Sends NEGOTIATE without a reader public key — this signals no-encryption
+//     3. Sends GET SMART TAP DATA
+//     4. Parses BER-TLV: E2 → E3 → tag 0x82 = redemption value
+//
+// WHAT FAILS (returns false):
+//   • Phone has no Smart-Tap-enabled Google Wallet pass (SW=6A82 on SELECT)
+//   • Pass requires merchant authentication  (SW≠90 on NEGOTIATE)
+//   • Pass response is encrypted (0x82 absent in cleartext E2>E3)
+//
+// Passes that require reader authentication need the operator to register with
+// Google as a certified Smart Tap reader — out of scope for this DIY component.
+bool ST25R::iso_dep_smart_tap_(std::string &token) {
+  token.clear();
+  uint8_t resp[64];
+  uint8_t resp_len;
+
+  // ── Step 1: SELECT OSE.GST ────────────────────────────────────────────────
+  // AID = "OSE.GST" = 4F 53 45 2E 47 53 54
+  const uint8_t sel_gst[13] = {
+    0x00, 0xA4, 0x04, 0x00,
+    0x07, 0x4F, 0x53, 0x45, 0x2E, 0x47, 0x53, 0x54,
+    0x00
+  };
+  resp_len = 0;
+  if (!this->iso_dep_transceive_(sel_gst, sizeof(sel_gst), resp, resp_len, 300))
+    return false;
+  if (resp_len < 2 || resp[resp_len - 2] != 0x90 || resp[resp_len - 1] != 0x00) {
+    ESP_LOGV(TAG, "Smart Tap: no pass (SW=%02X%02X)",
+             resp_len >= 2 ? resp[resp_len - 2] : 0,
+             resp_len >= 1 ? resp[resp_len - 1] : 0);
+    return false;
+  }
+  ESP_LOGD(TAG, "Smart Tap: SELECT OSE.GST OK");
+
+  // ── Step 2: NEGOTIATE SECURE SESSIONS (no reader public key = cleartext) ──
+  // TLV structure: E0 (merchant data) → 81 (version 2.0) + 82 (merchant ID,
+  // 8 zero bytes = anonymous) + 83 (nonce, 8 bytes).  Omitting tag 0x84
+  // (reader public key) requests cleartext response for no-auth passes.
+  // Total APDU data: E0 18 | 81 02 01 02 | 82 08 00*8 | 83 08 [nonce]
+  //   = 2 + 4 + 10 + 10 = 26 bytes → Lc = 0x1A
+  uint8_t neg[31];
+  neg[0]  = 0x80; neg[1]  = 0x50;  // CLA INS
+  neg[2]  = 0x01; neg[3]  = 0x00;  // P1 = 1 merchant, P2 = 0
+  neg[4]  = 0x1A;                   // Lc = 26 bytes
+  neg[5]  = 0xE0; neg[6]  = 0x18;  // E0 merchant-data TLV: 24 bytes follow
+  neg[7]  = 0x81; neg[8]  = 0x02; neg[9]  = 0x01; neg[10] = 0x02;  // version 2.0
+  neg[11] = 0x82; neg[12] = 0x08;  // merchant ID TLV (8 zero bytes = anonymous)
+  memset(neg + 13, 0x00, 8);
+  neg[21] = 0x83; neg[22] = 0x08;  // nonce TLV (8 bytes)
+  // Use ESPHome's random_uint32() for unpredictable nonces.
+  for (int i = 0; i < 2; i++) {
+    uint32_t r = random_uint32();
+    neg[23 + i * 4 + 0] = (uint8_t)(r >> 24);
+    neg[23 + i * 4 + 1] = (uint8_t)(r >> 16);
+    neg[23 + i * 4 + 2] = (uint8_t)(r >>  8);
+    neg[23 + i * 4 + 3] = (uint8_t)(r);
+  }
+  resp_len = 0;
+  if (!this->iso_dep_transceive_(neg, sizeof(neg), resp, resp_len, 500))
+    return false;
+  if (resp_len < 2 || resp[resp_len - 2] != 0x90 || resp[resp_len - 1] != 0x00) {
+    ESP_LOGD(TAG, "Smart Tap: NEGOTIATE SW=%02X%02X (pass may require merchant auth)",
+             resp_len >= 2 ? resp[resp_len - 2] : 0,
+             resp_len >= 1 ? resp[resp_len - 1] : 0);
+    return false;
+  }
+
+  // ── Step 3: GET SMART TAP DATA ────────────────────────────────────────────
+  const uint8_t get_data[4] = {0x80, 0xCA, 0x01, 0x00};
+  resp_len = 0;
+  if (!this->iso_dep_transceive_(get_data, sizeof(get_data), resp, resp_len, 500))
+    return false;
+  if (resp_len < 2 || resp[resp_len - 2] != 0x90 || resp[resp_len - 1] != 0x00) {
+    ESP_LOGD(TAG, "Smart Tap: GET DATA SW=%02X%02X",
+             resp_len >= 2 ? resp[resp_len - 2] : 0,
+             resp_len >= 1 ? resp[resp_len - 1] : 0);
+    return false;
+  }
+
+  // ── Step 4: Parse BER-TLV response: E2 → E3 → 0x82 (redemption value) ───
+  const size_t data_len = (size_t)(resp_len - 2);  // strip SW bytes
+  size_t e2_len = 0, e3_len = 0, v82_len = 0;
+  const uint8_t *e2 = ber_find(resp, data_len, 0xE2, &e2_len);
+  if (!e2) { ESP_LOGD(TAG, "Smart Tap: E2 missing in response"); return false; }
+  const uint8_t *e3 = ber_find(e2, e2_len, 0xE3, &e3_len);
+  if (!e3) { ESP_LOGD(TAG, "Smart Tap: E3 missing in E2"); return false; }
+  const uint8_t *v82 = ber_find(e3, e3_len, 0x82, &v82_len);
+  if (!v82 || v82_len == 0) {
+    ESP_LOGD(TAG, "Smart Tap: redemption value (0x82) absent in E3 — pass is encrypted");
+    return false;
+  }
+  token.assign(reinterpret_cast<const char *>(v82), v82_len);
+  ESP_LOGI(TAG, "Smart Tap: redemption value = %s", token.c_str());
+  return true;
+}
+
+// ── iso_dep_apple_vas_ ───────────────────────────────────────────────────────
+// Reads a stable credential from an Apple Wallet pass via Apple VAS (Value
+// Added Services) protocol, URL-based mode.
+//
+// HOW IT WORKS:
+//   The pass owner creates an Apple Wallet pass (.pkpass) with an NFC section
+//   that uses URL-based VAS.  The pass URL serves as the stable credential.
+//   The reader SELECTs the VAS AID ("OSE.VAS") and sends GET VAS DATA without
+//   a reader public key, requesting plaintext.  For passes configured without
+//   mandatory reader authentication the phone returns the pass URL in a TLV.
+//
+// WHAT FAILS (returns false):
+//   • No Apple Wallet pass with VAS present  (SW=6A82 on SELECT)
+//   • Pass requires merchant authentication  (SW≠90 on GET VAS DATA)
+//   • VAS response contains no URL tag (0x82) in cleartext
+//
+// Apple VAS passes need an Apple Developer account ($99/year) or a compatible
+// third-party pass issuer.  The pass URL scheme must be registered with Apple.
+bool ST25R::iso_dep_apple_vas_(std::string &token) {
+  token.clear();
+  uint8_t resp[64];
+  uint8_t resp_len;
+
+  // ── Step 1: SELECT OSE.VAS ────────────────────────────────────────────────
+  // AID = "OSE.VAS" = 4F 53 45 2E 56 41 53
+  const uint8_t sel_vas[13] = {
+    0x00, 0xA4, 0x04, 0x00,
+    0x07, 0x4F, 0x53, 0x45, 0x2E, 0x56, 0x41, 0x53,
+    0x00
+  };
+  resp_len = 0;
+  if (!this->iso_dep_transceive_(sel_vas, sizeof(sel_vas), resp, resp_len, 300))
+    return false;
+  if (resp_len < 2 || resp[resp_len - 2] != 0x90 || resp[resp_len - 1] != 0x00) {
+    ESP_LOGV(TAG, "Apple VAS: no pass (SW=%02X%02X)",
+             resp_len >= 2 ? resp[resp_len - 2] : 0,
+             resp_len >= 1 ? resp[resp_len - 1] : 0);
+    return false;
+  }
+  ESP_LOGD(TAG, "Apple VAS: SELECT OSE.VAS OK");
+
+  // ── Step 2: GET VAS DATA (URL-mode, no reader public key = cleartext) ─────
+  // TLV data: 81 00 (empty URL filter = return all URL-based passes) +
+  //           82 10 [16-byte nonce].
+  // Omitting tag 0x83 (reader ephemeral public key) requests plaintext.
+  uint8_t get_vas[26];
+  get_vas[0]  = 0x80; get_vas[1]  = 0xCA;  // CLA INS
+  get_vas[2]  = 0x01; get_vas[3]  = 0x00;  // P1 = get VAS data, P2 = 0
+  get_vas[4]  = 0x14;                       // Lc = 20
+  get_vas[5]  = 0x81; get_vas[6]  = 0x00;  // pass type filter: empty = all URL passes
+  get_vas[7]  = 0x82; get_vas[8]  = 0x10;  // nonce TLV (16 bytes)
+  // Use ESPHome's random_uint32() for unpredictable nonces.
+  for (int i = 0; i < 4; i++) {
+    uint32_t r = random_uint32();
+    get_vas[9 + i * 4 + 0] = (uint8_t)(r >> 24);
+    get_vas[9 + i * 4 + 1] = (uint8_t)(r >> 16);
+    get_vas[9 + i * 4 + 2] = (uint8_t)(r >>  8);
+    get_vas[9 + i * 4 + 3] = (uint8_t)(r);
+  }
+  get_vas[25] = 0x00;                       // Le = 0 (return all)
+  resp_len = 0;
+  // Send with Le byte — pass 26 bytes total including Le
+  if (!this->iso_dep_transceive_(get_vas, sizeof(get_vas), resp, resp_len, 500))
+    return false;
+  if (resp_len < 2 || resp[resp_len - 2] != 0x90 || resp[resp_len - 1] != 0x00) {
+    ESP_LOGD(TAG, "Apple VAS: GET VAS DATA SW=%02X%02X",
+             resp_len >= 2 ? resp[resp_len - 2] : 0,
+             resp_len >= 1 ? resp[resp_len - 1] : 0);
+    return false;
+  }
+
+  // ── Step 3: Parse BER-TLV response: E2 → 0x82 (pass URL / data) ─────────
+  const size_t data_len = (size_t)(resp_len - 2);
+  size_t e2_len = 0, v82_len = 0;
+  const uint8_t *e2 = ber_find(resp, data_len, 0xE2, &e2_len);
+  if (!e2) { ESP_LOGD(TAG, "Apple VAS: E2 missing in response"); return false; }
+  const uint8_t *v82 = ber_find(e2, e2_len, 0x82, &v82_len);
+  if (!v82 || v82_len == 0) {
+    ESP_LOGD(TAG, "Apple VAS: pass URL (0x82) absent — pass may be encrypted");
+    return false;
+  }
+  token.assign(reinterpret_cast<const char *>(v82), v82_len);
+  ESP_LOGI(TAG, "Apple VAS: pass URL = %s", token.c_str());
+  return true;
+}
+
 // ── read_nfc_type4_ndef_ ─────────────────────────────────────────────────────
 // Reads an NDEF message from an NFC Forum Type 4 Tag over an active ISO-DEP
 // session.  Protocol per NFC Forum T4T Technical Specification V2.0:
@@ -702,11 +931,33 @@ std::unique_ptr<nfc::NfcTag> ST25R::read_tag_(std::vector<uint8_t> &uid, uint8_t
         this->iso_dep_deselect_();
         return tag;
       }
-      // SELECT NDEF Application failed (SW=6A82) — device does not serve NFC
-      // Forum T4T NDEF.  This is normal for payment-only phones, Apple Wallet,
-      // Google Pay, and DESFire cards with non-NDEF applications.  The ISO-DEP
-      // session is still valid; we just cannot get a meaningful stable token.
-      ESP_LOGD(TAG, "ISO-DEP: NFC Forum T4T NDEF not available (phone needs HCE app, or payment-only device)");
+
+      // NFC Forum T4T NDEF not available.  The ISO-DEP session is still active —
+      // try the wallet protocols in order before giving up.
+      //
+      // Order: Google Smart Tap → Apple VAS → fall back to UID.
+      // The ISO-DEP block number continues toggling correctly across all attempts
+      // because iso_dep_transceive_() always increments it, and each new SELECT
+      // starts a fresh application context within the same ISO-DEP session.
+
+      // ── Google Wallet (Smart Tap 2.0) ──────────────────────────────────────
+      std::string wallet_token;
+      if (this->iso_dep_smart_tap_(wallet_token) && !wallet_token.empty()) {
+        this->iso_dep_token_ = wallet_token;
+        this->iso_dep_deselect_();
+        return make_unique<nfc::NfcTag>(nfc_uid, NFC_FORUM_TYPE_4);
+      }
+
+      // ── Apple Wallet (VAS) ─────────────────────────────────────────────────
+      if (this->iso_dep_apple_vas_(wallet_token) && !wallet_token.empty()) {
+        this->iso_dep_token_ = wallet_token;
+        this->iso_dep_deselect_();
+        return make_unique<nfc::NfcTag>(nfc_uid, NFC_FORUM_TYPE_4);
+      }
+
+      // No wallet credential readable — device either has payment-only passes
+      // (require merchant auth) or is a DESFire/smart-card with custom apps.
+      ESP_LOGD(TAG, "ISO-DEP: no T4T NDEF, Smart Tap, or VAS credential available");
       this->iso_dep_deselect_();
     } else {
       ESP_LOGW(TAG, "ISO-DEP: activation failed despite T=CL SAK");

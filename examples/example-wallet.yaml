@@ -1,91 +1,98 @@
 # ST25R NFC Reader — Phone & Wallet Pass Example
 #
-# This configuration documents how to use a phone as a stable NFC credential
-# with the ST25R reader, and explains the important limitations and trade-offs.
+# How to use Google Wallet or Apple Wallet as a stable NFC credential —
+# no special app required, no HCE configuration needed.
 #
 # ══════════════════════════════════════════════════════════════════════════════
-# THE CORE PROBLEM
+# HOW IT WORKS
 # ══════════════════════════════════════════════════════════════════════════════
-# Phones randomise their ISO 14443A UID on every tap for privacy.  Tracking a
-# phone by its UID is therefore impossible.
+# Phones randomise their ISO 14443A UID on every tap for privacy.  Instead of
+# relying on the UID, the reader reads a stable credential directly from the
+# wallet pass that lives inside Google Wallet or Apple Wallet.
+#
+# The reader attempts three protocols in order, stopping at the first success:
+#   1. NFC Forum T4T NDEF   (standard NFC tags / Android HCE apps)
+#   2. Google Smart Tap 2.0 (Google Wallet generic/loyalty passes)
+#   3. Apple VAS URL mode   (Apple Wallet .pkpass passes)
+#
+# For wallet passes the reader sends the protocol's SELECT + GET DATA commands
+# WITHOUT including a reader public key, requesting plaintext data.  Passes
+# configured for no-reader-authentication return their credential in cleartext.
+# Payment passes (Google Pay, Apple Pay) always require merchant authentication
+# and will therefore return an error — this is expected and handled gracefully.
 #
 # ══════════════════════════════════════════════════════════════════════════════
-# HOW THE READER TRIES TO FIND A STABLE TOKEN
+# DOES THE TOKEN REPRESENT THE PERSON OR THE PHONE?
 # ══════════════════════════════════════════════════════════════════════════════
-# When a phone is tapped, the reader detects ISO-DEP capability (SAK bit 5)
-# and attempts to read NDEF data over ISO 14443-4:
-#   1. Sends RATS → phone responds with ATS (ISO 14443-4 activation)
-#   2. Sends SELECT Application (AID D2 76 00 00 85 01 01, the NFC Forum T4T AID)
-#   3. If accepted: reads the CC file, then the NDEF file
-#   4. Extracts a stable token from the NDEF content:
-#        • HA tag UUID  — https://www.home-assistant.io/tag/<UUID> → just the UUID
-#        • First-record payload — URI or text string from the first NDEF record
-#        • Hex fallback — raw NDEF bytes if no printable payload
+# The wallet pass is tied to the person's Google or Apple account, NOT to the
+# phone hardware.  When Alice gets a new phone:
+#   • She signs into her Google / Apple account on the new phone.
+#   • Her passes re-appear in Google Wallet / Apple Wallet automatically.
+#   • She taps the new phone — the reader reads the same credential as before.
+#   • No re-enrollment needed.
+#
+# The credential IS person-specific because the user chooses what string to put
+# in the pass as the Smart Tap / VAS redemption value.  Using a meaningful string
+# (e.g. "alice@home") makes it obvious who the pass belongs to.
 #
 # ══════════════════════════════════════════════════════════════════════════════
-# CRITICAL: THE NDEF DATA IS NOT AUTO-POPULATED
+# GOOGLE WALLET SETUP
 # ══════════════════════════════════════════════════════════════════════════════
-# The NFC Forum T4T AID (D2 76 00 00 85 01 01) is NOT served by phones by
-# default.  Without a specific app, the phone will respond to RATS (step 1
-# above), but return SW=6A82 "Application Not Found" for the SELECT (step 2).
+# Cost: FREE — requires a Google account only.
 #
-# To serve NDEF to this reader, the user must install a dedicated Android HCE
-# (Host Card Emulation) app that:
-#   • Registers for the NFC Forum T4T AID (D2 76 00 00 85 01 01)
-#   • Is running in the foreground or has an enabled HCE service
-#   • Has been configured with the credential payload (see below)
+# 1. Create a Google Wallet Issuer account:
+#    a. Go to https://console.cloud.google.com/ and create a project.
+#    b. Enable the "Google Wallet API" on that project.
+#    c. Go to https://pay.google.com/business/console/ and create an issuer
+#       (takes ~24 hours to approve, but you can test immediately in DEMO mode).
 #
-# Popular apps that support this:
-#   • "NFC Card Emulator" (Android, some versions require root)
-#   • "CardEmulator" (Android)
-#   • A custom Android app with HostApduService (developer option)
+# 2. Create a "Generic" pass class and object via the Wallet REST API.
+#    The key fields for Smart Tap:
+#      "smartTapRedemptionValue": "alice@home"   ← your person-specific token
+#      "redemptionIssuers": []                   ← empty = no reader auth needed
+#    Set the same "alice@home" value for every pass you issue to Alice.
 #
-# ══════════════════════════════════════════════════════════════════════════════
-# DOES THE TOKEN REPRESENT THE PERSON OR THE HARDWARE?
-# ══════════════════════════════════════════════════════════════════════════════
-# The short answer: IT DEPENDS ON WHAT YOU PUT IN THE NDEF PAYLOAD.
+# 3. Generate a "Save to Google Wallet" JWT link and send it to the user.
+#    When they click it, the pass is added to their Google Wallet.
 #
-# Scenario A — Auto-generated UUID (hardware-tied, NOT recommended):
-#   Some HCE apps auto-generate a UUID per installation.
-#   When the user gets a new phone, the UUID changes → access breaks → re-enroll.
-#   The token represents the phone installation, not the person.
+# 4. Tap the phone — check ESPHome logs for:
+#      [I][st25r:???]: Smart Tap: redemption value = alice@home
 #
-# Scenario B — User-chosen credential string (person-tied, RECOMMENDED):
-#   Configure the HCE app with a string the person chooses and remembers, e.g.:
-#     "alice@home" or "https://yoursite.com/person/alice"
-#   When Alice gets a new phone:
-#     1. Install the HCE app on the new phone
-#     2. Configure the same credential string "alice@home"
-#     3. No re-enrollment needed — the same token → same access
-#   The token represents the person, not the hardware.
+# 5. Use "alice@home" as the uid in the binary_sensor below.
 #
-# RECOMMENDATION: always choose a manually-configured, person-specific string
-# as the credential in the HCE app.  Treat it like a password for your NFC
-# access system — document it somewhere safe.
+# Quick-start tool: https://developers.google.com/wallet/generic/web/  (pass builder)
 #
 # ══════════════════════════════════════════════════════════════════════════════
-# APPLE WALLET / GOOGLE PAY / CONTACTLESS PAYMENT APPS
+# APPLE WALLET SETUP
 # ══════════════════════════════════════════════════════════════════════════════
-# Standard wallet apps (Apple Wallet, Google Pay) do NOT use the NFC Forum T4T
-# AID.  They use proprietary protocols:
-#   • Apple Wallet passes → Apple VAS (Value Added Services) protocol
-#   • Google Wallet / Android Pay → Google Smart Tap protocol
-#   • Contactless payment → EMVCo protocol
-# None of these are supported by this reader yet.  Implementing VAS or Smart Tap
-# requires registration with Apple/Google and cryptographic key management.
+# Cost: requires an Apple Developer account ($99/year) OR a third-party pass
+#       issuer service (many have free tiers: PassKit.com, WalletPasses.com, etc.)
+#
+# 1. Create a .pkpass file with an NFC section configured for URL-based VAS:
+#      "nfc": {
+#        "message": "https://yoursite.com/pass/alice",  ← stable pass URL
+#        "requiresAuthentication": false                 ← no reader auth = cleartext
+#      }
+#
+# 2. Sign the .pkpass with your Pass Type Certificate and distribute it to the
+#    user (email, web download, or AirDrop).
+#
+# 3. The user adds the pass to Apple Wallet by opening the .pkpass file on iOS.
+#
+# 4. Tap the phone — check ESPHome logs for:
+#      [I][st25r:???]: Apple VAS: pass URL = https://yoursite.com/pass/alice
+#
+# 5. Use "https://yoursite.com/pass/alice" as the uid in the binary_sensor.
+#
+# Third-party pass issuers: https://passkit.com , https://walletpasses.com
 #
 # ══════════════════════════════════════════════════════════════════════════════
-# PRACTICAL SETUP WORKFLOW
+# WHAT DOES NOT WORK (expected limitations)
 # ══════════════════════════════════════════════════════════════════════════════
-# 1. Install a supported Android HCE app on the phone
-# 2. In the app, create a URI record or Text record with a PERSON-SPECIFIC string,
-#    e.g.: "https://home.example.com/access/alice"
-#    (This is the credential Alice carries.  It should be stable and unique.)
-# 3. Enable the HCE service in the app
-# 4. Tap the phone to the ST25R reader
-# 5. Check ESPHome logs for the detected token:
-#      [I][st25r:???]: ISO-DEP: NDEF payload token: https://home.example.com/access/alice
-# 6. Use that string as the 'uid' in the binary sensor below
+# • Google Pay / Apple Pay (payment passes): require certified merchant
+#   authentication — SW=6985 is returned and the reader falls back gracefully.
+# • Transit passes, airline boarding passes: often require reader auth too.
+# • Passes with requiresAuthentication:true (Google) / without "nfc" key (Apple).
 # ══════════════════════════════════════════════════════════════════════════════
 
 esphome:
@@ -97,7 +104,8 @@ esp32:
   variant: esp32c6
 
 logger:
-  level: INFO  # Set DEBUG to trace the full ISO-DEP / NDEF exchange on first setup
+  # Set DEBUG to trace every APDU exchange — useful during initial wallet setup.
+  level: INFO
 
 wifi:
   ssid: "WIFI_SSID"
@@ -123,7 +131,7 @@ st25r_spi:
       - logger.log:
           format: "NFC token: %s"
           args: ['x.c_str()']
-      # Optionally forward the token to Home Assistant for use in automations:
+      # Forward token to Home Assistant for automations:
       - homeassistant.event:
           event: esphome.nfc_token
           data:
@@ -135,23 +143,21 @@ st25r_spi:
           format: "NFC removed: %s"
           args: ['x.c_str()']
 
-# Binary sensors — set uid to the person-specific credential string you
-# configured in the HCE app.  Use the exact string that appears in the logs.
+# binary_sensor uid is exactly the string that appears in logs after first tap.
 #
-# For a URI record: uid is the full URI, e.g.:
-#   uid: "https://home.example.com/access/alice"
-# For a text record: uid is the exact text, e.g.:
+# Google Wallet pass with smartTapRedemptionValue = "alice@home":
 #   uid: "alice@home"
-# For an HA tag URL: uid is just the UUID portion, e.g.:
-#   uid: "abc12345-0000-1234-abcd-ef1234567890"
+#
+# Apple Wallet pass with VAS URL = "https://yoursite.com/pass/alice":
+#   uid: "https://yoursite.com/pass/alice"
 #
 binary_sensor:
   - platform: st25r
     st25r_id: nfc_reader
     name: "Alice's Phone"
-    uid: "https://home.example.com/access/alice"
+    uid: "alice@home"
 
   - platform: st25r
     st25r_id: nfc_reader
     name: "Bob's Phone"
-    uid: "bob@home"
+    uid: "https://yoursite.com/pass/bob"

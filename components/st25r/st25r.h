@@ -175,6 +175,14 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   // read_nfc_type4_ndef_: reads an NDEF message from an NFC Forum Type 4 Tag
   // using the CC-file / NDEF-file APDU sequence over an active ISO-DEP session.
   bool read_nfc_type4_ndef_(std::vector<uint8_t> &ndef_data);
+  // iso_dep_smart_tap_: reads a Google Wallet pass credential via Smart Tap 2.0.
+  // Sends NEGOTIATE without a reader public key (cleartext mode).
+  // Returns true and fills token when the pass is configured for no-auth.
+  bool iso_dep_smart_tap_(std::string &token);
+  // iso_dep_apple_vas_: reads an Apple Wallet pass credential via Apple VAS.
+  // URL-mode, no reader public key (cleartext).  Returns true and fills token
+  // when the pass is configured without mandatory reader authentication.
+  bool iso_dep_apple_vas_(std::string &token);
   // read_tag_: sak is the SAK byte from SELECT; used to detect ISO-DEP devices.
   std::unique_ptr<nfc::NfcTag> read_tag_(std::vector<uint8_t> &uid, uint8_t sak);
   static void isr(ST25R *arg);

@@ -296,7 +296,7 @@ class TestIsodepTokenExtraction:
         """HA URL takes priority even if a non-HA URI record appears first."""
         uuid = "deadbeef-dead-beef-dead-beefdeadbeef"
         records = ["https://otherprovider.com/token/xyz", HA_TAG_ID_PREFIX + uuid]
-        assert extract_iso_dep_token(records, b"\x01\x02\x03")
+        assert extract_iso_dep_token(records, b"\x01\x02\x03") == uuid
 
     # ── Priority 2: first record payload ────────────────────────────────────
 
@@ -338,3 +338,189 @@ class TestIsodepTokenExtraction:
         raw = bytes(range(16))
         expected = "".join(f"{b:02X}" for b in raw)
         assert extract_iso_dep_token([], raw) == expected
+
+
+# ── BER-TLV parser + Smart Tap / Apple VAS token extraction ──────────────────
+# Mirrors st25r_ber_read_len(), st25r_ber_find(), iso_dep_smart_tap_(), and
+# iso_dep_apple_vas_() from st25r.cpp.  Tests verify the BER-TLV parsing logic
+# and the protocol-specific tag-path extraction without requiring a C++ build.
+
+def ber_read_len(data: bytes, pos: int):
+    """Read a BER-TLV length field; return (length, new_pos)."""
+    if pos >= len(data):
+        return 0, pos
+    l = data[pos]; pos += 1
+    if l <= 0x7F:
+        return l, pos                       # short-form
+    if l == 0x80:
+        return 0, pos                       # indefinite (not supported)
+    nb = l & 0x7F
+    l = 0
+    for _ in range(nb):
+        if pos >= len(data):
+            return 0, pos
+        l = (l << 8) | data[pos]; pos += 1
+    return l, pos
+
+
+def ber_find(data: bytes, tag: int):
+    """Find first TLV with 1-byte tag; return value bytes or None."""
+    i = 0
+    while i < len(data):
+        t = data[i]; i += 1
+        l, i = ber_read_len(data, i)
+        if i + l > len(data):
+            break
+        if t == tag:
+            return data[i:i + l]
+        i += l
+    return None
+
+
+def smart_tap_extract_token(response_body: bytes) -> str:
+    """
+    Python mirror of ST25R::iso_dep_smart_tap_() TLV parsing.
+    Expects raw GET SMART TAP DATA response bytes (SW stripped).
+    Returns redemption value string or empty string on failure.
+    """
+    e2 = ber_find(response_body, 0xE2)
+    if e2 is None:
+        return ""
+    e3 = ber_find(e2, 0xE3)
+    if e3 is None:
+        return ""
+    v82 = ber_find(e3, 0x82)
+    if not v82:
+        return ""
+    return v82.decode("utf-8", errors="replace")
+
+
+def apple_vas_extract_token(response_body: bytes) -> str:
+    """
+    Python mirror of ST25R::iso_dep_apple_vas_() TLV parsing.
+    Expects raw GET VAS DATA response bytes (SW stripped).
+    Returns pass URL string or empty string on failure.
+    """
+    e2 = ber_find(response_body, 0xE2)
+    if e2 is None:
+        return ""
+    v82 = ber_find(e2, 0x82)
+    if not v82:
+        return ""
+    return v82.decode("utf-8", errors="replace")
+
+
+def make_tlv(tag: int, value: bytes) -> bytes:
+    """Build a simple BER-TLV (short-form length only)."""
+    return bytes([tag, len(value)]) + value
+
+
+class TestBerTlv:
+    """Unit tests for the BER-TLV helpers (mirrors st25r_ber_find)."""
+
+    def test_find_single_tag(self):
+        tlv = make_tlv(0x82, b"hello")
+        assert ber_find(tlv, 0x82) == b"hello"
+
+    def test_find_second_tag(self):
+        tlv = make_tlv(0x81, b"first") + make_tlv(0x82, b"second")
+        assert ber_find(tlv, 0x82) == b"second"
+
+    def test_tag_not_found_returns_none(self):
+        tlv = make_tlv(0x81, b"data")
+        assert ber_find(tlv, 0x99) is None
+
+    def test_empty_value(self):
+        tlv = make_tlv(0x82, b"")
+        assert ber_find(tlv, 0x82) == b""
+
+    def test_nested_find(self):
+        inner = make_tlv(0x82, b"token")
+        outer = make_tlv(0xE3, inner)
+        e3 = ber_find(outer, 0xE3)
+        assert e3 is not None
+        assert ber_find(e3, 0x82) == b"token"
+
+    def test_multibyte_length(self):
+        """Length > 127 uses long-form encoding (0x81, len_byte)."""
+        payload = b"x" * 200
+        tlv = bytes([0x82, 0x81, 200]) + payload
+        assert ber_find(tlv, 0x82) == payload
+
+
+class TestSmartTapParsing:
+    """Tests for Smart Tap 2.0 redemption value extraction."""
+
+    def _build_response(self, redemption_value: bytes) -> bytes:
+        """Build a minimal Smart Tap GET DATA response body (E2 > E3 > 82)."""
+        status = make_tlv(0x81, b"\x00")      # status = success
+        rdm_val = make_tlv(0x82, redemption_value)
+        e3 = make_tlv(0xE3, rdm_val)
+        e2 = make_tlv(0xE2, status + e3)
+        return e2
+
+    def test_simple_string(self):
+        body = self._build_response(b"alice@home")
+        assert smart_tap_extract_token(body) == "alice@home"
+
+    def test_url_as_redemption_value(self):
+        body = self._build_response(b"https://yoursite.com/nfc/alice")
+        assert smart_tap_extract_token(body) == "https://yoursite.com/nfc/alice"
+
+    def test_status_tag_does_not_shadow_redemption(self):
+        """tag 0x82 inside E2 directly is the status; only 0x82 inside E3 is the token."""
+        rdm_val = make_tlv(0x82, b"real-token")
+        e3 = make_tlv(0xE3, rdm_val)
+        # Put a 0x82 at E2 level BEFORE E3 to make sure we don't pick it up
+        e2_payload = make_tlv(0x82, b"not-token") + e3
+        e2 = make_tlv(0xE2, e2_payload)
+        # Parser must navigate into E3 specifically
+        assert smart_tap_extract_token(e2) == "real-token"
+
+    def test_missing_e2_returns_empty(self):
+        assert smart_tap_extract_token(make_tlv(0x81, b"other")) == ""
+
+    def test_missing_e3_returns_empty(self):
+        e2 = make_tlv(0xE2, make_tlv(0x81, b"only-status"))
+        assert smart_tap_extract_token(e2) == ""
+
+    def test_missing_0x82_returns_empty(self):
+        e3 = make_tlv(0xE3, make_tlv(0x83, b"type-only"))
+        e2 = make_tlv(0xE2, e3)
+        assert smart_tap_extract_token(e2) == ""
+
+    def test_unicode_redemption_value(self):
+        body = self._build_response("café".encode("utf-8"))
+        assert smart_tap_extract_token(body) == "café"
+
+
+class TestAppleVasParsing:
+    """Tests for Apple VAS URL token extraction."""
+
+    def _build_response(self, pass_url: bytes) -> bytes:
+        """Build a minimal VAS GET VAS DATA response body (E2 > 82)."""
+        v82 = make_tlv(0x82, pass_url)
+        e2 = make_tlv(0xE2, v82)
+        return e2
+
+    def test_simple_url(self):
+        body = self._build_response(b"https://yoursite.com/pass/alice")
+        assert apple_vas_extract_token(body) == "https://yoursite.com/pass/alice"
+
+    def test_short_identifier(self):
+        body = self._build_response(b"alice@home")
+        assert apple_vas_extract_token(body) == "alice@home"
+
+    def test_missing_e2_returns_empty(self):
+        assert apple_vas_extract_token(make_tlv(0x81, b"other")) == ""
+
+    def test_missing_0x82_returns_empty(self):
+        e2 = make_tlv(0xE2, make_tlv(0x83, b"nonce-only"))
+        assert apple_vas_extract_token(e2) == ""
+
+    def test_multiple_tags_before_82(self):
+        """Other tags before 0x82 should be skipped."""
+        other = make_tlv(0x81, b"metadata")
+        url = make_tlv(0x82, b"https://example.com/pass/bob")
+        e2 = make_tlv(0xE2, other + url)
+        assert apple_vas_extract_token(e2) == "https://example.com/pass/bob"

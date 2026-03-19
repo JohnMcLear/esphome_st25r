@@ -140,48 +140,53 @@ st25r_i2c:
 
 ## Phone & Wallet Pass Support
 
-### What actually happens when you tap a phone
+### How it works
 
-Phones randomise their ISO 14443A UID on every tap for privacy, so the UID cannot be used as a stable identifier. When the reader detects ISO-DEP capability (SAK bit 5), it attempts to read a stable credential by:
+Phones randomise their ISO 14443A UID on every tap. The reader bypasses this by reading a stable credential from the wallet pass itself. When an ISO-DEP device (SAK bit 5) is detected, three protocols are tried in order:
 
-1. Sending RATS to open an ISO 14443-4 session
-2. Sending SELECT Application for the NFC Forum Type 4 Tag AID (`D2 76 00 00 85 01 01`)
-3. If accepted: reading the CC file, then the NDEF file
-4. Extracting a stable token from the NDEF content (HA tag UUID → first-record URI/text → hex fallback)
-
-**Important: the NDEF data is not served automatically.** Without a specific Android HCE app installed and configured, step 2 returns `SW=6A82` (Application Not Found). The reader handles this gracefully — `on_tag` will not fire for that phone because no stable token could be extracted.
-
-### What you need on the phone
-
-A dedicated **Android HCE (Host Card Emulation) app** that:
-- Registers for AID `D2 76 00 00 85 01 01` (NFC Forum T4T)
-- Has been configured with the credential payload
-- Has its HCE service enabled
-
-Example apps: *NFC Card Emulator*, *CardEmulator*, or a custom `HostApduService` Android app.
-
-### Person vs hardware — configure a person-specific credential
-
-This is the key design decision:
-
-| What you configure in the HCE app | What the token represents |
-|---|---|
-| App auto-generates a UUID | Phone hardware/installation — changes when user gets a new phone |
-| User-chosen string: `alice@home` | The person — survives phone changes |
-
-**Recommendation:** always manually set a person-specific credential string in the HCE app (e.g. `alice@home` or a URL like `https://yoursite.com/nfc/alice`). When Alice gets a new phone, she installs the same HCE app, enters the same string, and her access works without any re-configuration on the reader side.
-
-### Apple Wallet, Google Pay, contactless payment
-
-These do **not** work with this reader today. They use proprietary protocols that are entirely separate from NFC Forum NDEF:
-
-| App | Protocol | Status |
+| Order | Protocol | For |
 |---|---|---|
-| Apple Wallet passes | Apple VAS | ❌ Not implemented |
-| Google Wallet | Google Smart Tap | ❌ Not implemented |
-| Contactless payment (any) | EMVCo | ❌ Not implemented |
+| 1 | NFC Forum T4T NDEF | Standard NFC tags and Android HCE apps |
+| 2 | Google Smart Tap 2.0 | Google Wallet generic / loyalty passes |
+| 3 | Apple VAS (URL mode) | Apple Wallet `.pkpass` passes |
 
-The reader correctly detects these devices as ISO-DEP but receives `SW=6A82` and logs `ISO-DEP: NFC Forum T4T NDEF not available`.
+Each protocol is attempted with no reader public key, requesting **cleartext** data. Passes configured without mandatory reader authentication return their credential in plaintext. Payment passes (Google Pay, Apple Pay) always require certified merchant authentication and are skipped gracefully.
+
+### Is the token tied to the person or the phone?
+
+The pass credential is tied to the person's **Google or Apple account**, not to the phone hardware. When a user gets a new phone, they sign into their account, their passes automatically re-appear in Google/Apple Wallet, and the same credential is read by the reader — **no re-enrollment needed**.
+
+The user chooses what string goes in the pass (e.g. `alice@home`). That string represents Alice, not her phone.
+
+### Google Wallet setup (free)
+
+1. Create a Google Cloud project, enable the **Google Wallet API**, and create a Wallet Issuer account at <https://pay.google.com/business/console/>
+2. Create a **Generic** pass with Smart Tap fields:
+   ```json
+   {
+     "smartTapRedemptionValue": "alice@home",
+     "redemptionIssuers": []
+   }
+   ```
+   Empty `redemptionIssuers` = no reader auth required = cleartext response.
+3. Generate a "Save to Google Wallet" link and send it to the user
+4. Tap phone — logs show `Smart Tap: redemption value = alice@home`
+5. Use `alice@home` as `uid` in the binary sensor
+
+### Apple Wallet setup
+
+Requires an Apple Developer account ($99/year) or a third-party pass service (PassKit.com, WalletPasses.com — both have free tiers).
+
+1. Create a `.pkpass` with:
+   ```json
+   "nfc": {
+     "message": "https://yoursite.com/pass/alice",
+     "requiresAuthentication": false
+   }
+   ```
+2. Sign it with your Pass Type Certificate and send to the user
+3. Tap phone — logs show `Apple VAS: pass URL = https://yoursite.com/pass/alice`
+4. Use that URL as `uid`
 
 ### Minimal example
 
@@ -195,18 +200,17 @@ st25r_spi:
           format: "NFC token: %s"
           args: ['x.c_str()']
 
-# uid is the person-specific string you programmed into the HCE app
 binary_sensor:
   - platform: st25r
     name: "Alice's Phone"
-    uid: "https://yoursite.com/nfc/alice"
+    uid: "alice@home"          # Google Wallet smartTapRedemptionValue
 
   - platform: st25r
     name: "Bob's Phone"
-    uid: "bob@home"
+    uid: "https://yoursite.com/pass/bob"  # Apple Wallet VAS URL
 ```
 
-See `examples/example-wallet.yaml` for a full configuration with detailed setup notes.
+See `examples/example-wallet.yaml` for a complete configuration with full setup instructions.
 
 ---
 
