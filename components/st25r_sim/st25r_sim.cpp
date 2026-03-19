@@ -420,7 +420,11 @@ void ST25RSim::on_wupa_() {
     ESP_LOGW(TAG, "SIM WUPA rejected: TX_DRIVER_CONF=0x%02X has non-zero am_mod "
              "(bits[7:4]=0x%X); ISO14443A requires am_mod=0 (100%% ASK). "
              "Tags will not respond.", tx_conf, (tx_conf >> 4) & 0xF);
-    pending_irq_timer_ = 0x40;  // NRE — no response
+    // Signal NRE in both IRQ_MAIN (for base-class fast-path) and IRQ_TIMER
+    // (for ST25R300 compatibility).  The base-class loop() reads IRQ_MAIN only,
+    // so pending_irq_timer_ alone would cause a 100ms millis() timeout fallback.
+    pending_irq_main_  = 0x01;  // IRQ_NRE bit — fast path in base-class loop()
+    pending_irq_timer_ = 0x40;  // NRE in hardware timer register (ST25R300 compat)
     return;
   }
 
@@ -440,7 +444,10 @@ void ST25RSim::on_wupa_() {
     ESP_LOGV(TAG, "SIM WUPA → ATQA 0x%02X (%u tag(s))", atqa0,
              (unsigned)virtual_tags_.size());
   } else {
-    pending_irq_timer_ = 0x40;  // NRE
+    // Signal NRE in both IRQ_MAIN (base-class fast-path, skips 100ms timeout)
+    // and IRQ_TIMER (hardware register for ST25R300 derived-class compatibility).
+    pending_irq_main_  = 0x01;  // IRQ_NRE bit
+    pending_irq_timer_ = 0x40;  // NRE in timer register
     ESP_LOGV(TAG, "SIM WUPA → no tags");
   }
 }

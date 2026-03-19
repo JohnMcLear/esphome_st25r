@@ -3,6 +3,7 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import binary_sensor as binary_sensor_
 from esphome.components import sensor as sensor_
+from esphome.components import st25r as st25r_
 from esphome.const import (
     CONF_ID,
     CONF_ON_TAG,
@@ -14,7 +15,7 @@ from esphome.const import (
 )
 
 CODEOWNERS = ["@JohnMcLear"]
-AUTO_LOAD = ["binary_sensor", "sensor", "nfc"]
+AUTO_LOAD = ["st25r", "binary_sensor", "sensor", "nfc"]
 MULTI_CONF = True
 
 CONF_ST25R300_ID = "st25r300_id"
@@ -39,7 +40,7 @@ def _validate_mifare_key(value):
 
 
 st25r300_ns = cg.esphome_ns.namespace("st25r300")
-ST25R300 = st25r300_ns.class_("ST25R300", cg.PollingComponent)
+ST25R300 = st25r300_ns.class_("ST25R300", st25r_.ST25R)
 
 ST25R300TagTrigger = st25r300_ns.class_(
     "ST25R300TagTrigger", automation.Trigger.template(cg.std_string)

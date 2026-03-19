@@ -20,7 +20,7 @@ external_components:
   - source:
       type: local
       path: ../components
-    components: [st25r300, st25r300_spi]
+    components: [st25r, st25r300, st25r300_spi]
 
 spi:
   clk_pin: GPIO19
