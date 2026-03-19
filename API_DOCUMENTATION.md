@@ -67,10 +67,14 @@ Erase all NDEF content from the tag currently in field.
 void set_reset_pin(GPIOPin *reset_pin)
 void set_irq_pin(InternalGPIOPin *irq_pin)
 void set_rf_field_enabled(bool enabled)
-void set_rf_power(uint8_t power)          // 0–15; 15 = max driver strength
+void set_rf_power(uint8_t power)                  // 0–15; 15 = max driver strength
 void set_supply_3v3(bool supply_3v3)
-void set_mifare_key_a(uint64_t key)       // 48-bit key, e.g. 0xFFFFFFFFFFFFULL
+void set_mifare_key_a(uint64_t key)               // 48-bit key, e.g. 0xFFFFFFFFFFFFULL
 void set_mifare_key_b(uint64_t key)
+void set_health_check_enabled(bool enabled)       // enable/disable IC liveness check
+void set_health_check_interval(uint32_t ms)       // milliseconds between checks (default 60000)
+void set_max_failed_checks(uint8_t n)             // failures before reinit (default 3)
+void set_auto_reset_on_failure(bool enabled)      // auto-reinit on max failures
 ```
 
 ### Trigger Registration
@@ -155,13 +159,37 @@ binary_sensor:
     uid: "04-1A-A7-67-5F-61-80"
 ```
 
+### Health check
+
+The health check reads the `IC_IDENTITY` register (0x3F) at a configurable interval — independently of the tag scan rate — to verify the chip is still alive on the bus. This detects SPI/I2C connectivity loss, brownout, or chip hang that would otherwise silently stop tag detection.
+
+```yaml
+st25r_spi:
+  # ...
+  # Check chip identity every 60 s (default). After 3 consecutive failures,
+  # reinitialize_() is called. The 500 ms tag scan rate is unaffected.
+  health_check_enabled: true       # default: true
+  health_check_interval: 60s       # default: 60s — independent of update_interval
+  max_failed_checks: 3             # default: 3 — consecutive failures before reinit
+  auto_reset_on_failure: true      # default: true — call reinitialize_() on failure
+```
+
+**How it works:**
+1. Every `health_check_interval`, `update()` reads `IC_IDENTITY` (0x3F).
+2. If `(identity & 0xF8) != 0x28` and `!= 0x30`, the check fails and `health_check_failures_` is incremented.
+3. The `status` binary sensor publishes `false` on any failure.
+4. Once `health_check_failures_ >= max_failed_checks` and `auto_reset_on_failure` is set, `state_` is set to `STATE_REINITIALIZING`.
+5. `reinitialize_()` performs a GPIO reset (if `reset_pin` configured) then calls `reset_()`.
+6. On success: `health_check_failures_` is cleared, `last_health_check_ms_` is zeroed (forcing an immediate re-check), and the `status` sensor publishes `true`.
+7. After up to 5 failed reinit attempts, the component calls `mark_failed()`.
+
 ### Optional sensors
 
 ```yaml
 st25r_spi:
   # ...
   status:
-    name: "NFC Reader Health"   # binary_sensor: true=OK, false=hardware fault
+    name: "NFC Reader Health"   # binary_sensor: true=OK, false=hardware fault or recovering
   field_strength:
     name: "NFC Field Strength"  # sensor: raw amplitude ADC value
 ```

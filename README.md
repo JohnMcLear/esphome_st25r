@@ -60,7 +60,11 @@ Flash, open logs — you should see `ST25R initialized successfully` and then a 
 | `supply_3v3` | `true` | Set `true` for 3.3V supply |
 | `mifare_key_a` | `FFFFFFFFFFFF` | Mifare Classic Key A (12 hex chars) |
 | `mifare_key_b` | `FFFFFFFFFFFF` | Mifare Classic Key B (12 hex chars) |
-| `status` | — | Binary sensor: chip health (`true` = OK) |
+| `health_check_enabled` | `true` | Periodically verify chip identity via IC_IDENTITY register |
+| `health_check_interval` | `60s` | How often to run the liveness check (independent of tag scan rate) |
+| `max_failed_checks` | `3` | Consecutive failures before triggering a reinitialise |
+| `auto_reset_on_failure` | `true` | Automatically reinitialise the chip after `max_failed_checks` failures |
+| `status` | — | Binary sensor: chip health (`true` = OK, `false` = fault or recovering) |
 | `field_strength` | — | Sensor: RF amplitude ADC reading |
 
 ---
@@ -78,8 +82,15 @@ st25r_spi:
   rf_power: 15
   mifare_key_a: A0A1A2A3A4A5
 
+  # Health check: verify chip identity every 60 s (independent of 500 ms scan rate).
+  # After 3 consecutive failures the chip is automatically reinitialised.
+  health_check_enabled: true
+  health_check_interval: 60s
+  max_failed_checks: 3
+  auto_reset_on_failure: true
+
   status:
-    name: "NFC Reader Health"
+    name: "NFC Reader Health"   # true = OK, false = chip fault or recovering
 
   field_strength:
     name: "NFC Field Strength"
