@@ -27,6 +27,10 @@ st25r_sim:
     ic_identity: 0x30
     update_interval: 500ms
     mifare_key_a: FFFFFFFFFFFF
+    health_check_enabled: true
+    health_check_interval: 2s
+    max_failed_checks: 2
+    auto_reset_on_failure: true
     status:
       name: "Reader1B Status"
       on_state:

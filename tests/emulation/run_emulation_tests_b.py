@@ -138,6 +138,10 @@ class SimController:
         resp = self._send(f"GET_REG {addr_hex}")
         return int(resp.strip(), 16)
 
+    def set_ic_identity(self, val_hex):
+        resp = self._send(f"SET_IC_IDENTITY {val_hex}")
+        assert "OK" in resp, f"set_ic_identity failed: {resp}"
+
 
 @pytest.fixture(scope="module")
 def sim_b():
@@ -251,3 +255,45 @@ class TestBVersionMifareAuth:
             proc.log_lines.clear()
         ctrl3.remove_tag(self.UID_MFC)
         proc.wait_for(r"READER1_B_ON_TAG_REMOVED CAFEBABE", timeout=10)
+
+
+class TestBVersionHealthCheck:
+    """
+    Health check on the B-version (IC identity 0x30) honours all four config options
+    (health_check_enabled, health_check_interval=2s, max_failed_checks=2,
+    auto_reset_on_failure=true) set in test-emulation-b.yaml.
+
+    Uses SET_IC_IDENTITY to simulate connectivity loss and recovery, same as the
+    main suite's TestHealthCheck.
+    """
+
+    def test_health_check_detects_failure(self, sim_b):
+        """Bad IC identity is detected on B-version; status goes false."""
+        proc, ctrl3, ctrl4 = sim_b
+        with proc._lock:
+            proc.log_lines.clear()
+        ctrl3.set_ic_identity("00")
+        proc.wait_for(r"Health check failed", timeout=10)
+        proc.wait_for(r"READER1_B_STATUS 0", timeout=5)
+
+    def test_persistent_failure_triggers_reinit(self, sim_b):
+        """After max_failed_checks (2) consecutive failures, reinit is triggered and
+        status recovers once IC identity is restored."""
+        proc, ctrl3, ctrl4 = sim_b
+        with proc._lock:
+            proc.log_lines.clear()
+        ctrl3.set_ic_identity("00")
+        proc.wait_for(r"max failures reached, triggering reinit", timeout=15)
+        ctrl3.set_ic_identity("30")
+        proc.wait_for(r"READER1_B_STATUS 1", timeout=15)
+
+    def test_tag_scanning_resumes_after_recovery(self, sim_b):
+        """Tag detection works normally after health check recovery."""
+        proc, ctrl3, ctrl4 = sim_b
+        with proc._lock:
+            proc.log_lines.clear()
+        uid = "AABBCCDD"
+        ctrl3.add_tag(uid)
+        proc.wait_for(rf"READER1_B_ON_TAG {uid}", timeout=10)
+        ctrl3.remove_tag(uid)
+        proc.wait_for(rf"READER1_B_ON_TAG_REMOVED {uid}", timeout=10)

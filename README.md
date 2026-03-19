@@ -185,10 +185,10 @@ All four chips share the same register map (per ST application notes AN6279, AN6
 
 | Chip | Status | Variant notes |
 |------|--------|---------------|
-| ST25R300 | ⚠️ Compiles, untested | X-NUCLEO-NFC12A1; consumer/industrial payment, EMVCo PCD 3.2a |
-| ST25R500 | ⚠️ Compiles, untested | Automotive CCC Digital Key |
-| ST25R501 | ⚠️ Compiles, untested | Compact automotive (QFN24), reader-only |
-| ST25R210 | ⚠️ Compiles, untested | Automotive variant |
+| ST25R300 | ✅ Verified | X-NUCLEO-NFC12A1; consumer/industrial payment, EMVCo PCD 3.2a |
+| ST25R500 | ⚠️ Untested | Automotive CCC Digital Key |
+| ST25R501 | ⚠️ Untested | Compact automotive (QFN24), reader-only |
+| ST25R210 | ⚠️ Untested | Automotive variant |
 
 ---
 
