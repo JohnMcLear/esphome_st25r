@@ -444,11 +444,16 @@ void ST25RSim::on_wupa_() {
     ESP_LOGV(TAG, "SIM WUPA → ATQA 0x%02X (%u tag(s))", atqa0,
              (unsigned)virtual_tags_.size());
   } else {
-    // Signal NRE in both IRQ_MAIN (base-class fast-path, skips 100ms timeout)
-    // and IRQ_TIMER (hardware register for ST25R300 derived-class compatibility).
-    pending_irq_main_  = 0x01;  // IRQ_NRE bit
-    pending_irq_timer_ = 0x40;  // NRE in timer register
-    ESP_LOGV(TAG, "SIM WUPA → no tags");
+    // Signal NRE.  In "hw" mode only IRQ_TIMER is set, mirroring real ST25R3916
+    // hardware (NRE appears in IRQ_TIMER bit6, never in IRQ_MAIN).  This forces
+    // the firmware to take the 100ms millis() timeout path in STATE_WUPA instead
+    // of the IRQ_NRE fast-path.  In default "sim" mode both registers are set so
+    // the fast-path fires immediately and tests run faster.
+    pending_irq_timer_ = 0x40;  // NRE in IRQ_TIMER (both modes)
+    if (!nre_hw_mode_) {
+      pending_irq_main_ = 0x01;  // IRQ_NRE fast-path (sim mode only)
+    }
+    ESP_LOGV(TAG, "SIM WUPA → no tags (hw_mode=%d)", (int)nre_hw_mode_);
   }
 }
 
@@ -1017,6 +1022,25 @@ void ST25RSim::handle_client_(int fd) {
     snprintf(out, sizeof(out), "0x%02X\n", regs_[addr & 0x3F]);
     send(fd, out, strlen(out), 0);
     return;
+
+  // GET_PENDING_TIMER — return pending_irq_timer_ WITHOUT clearing (for tests)
+  } else if (tok[0] == "GET_PENDING_TIMER") {
+    char out[16];
+    snprintf(out, sizeof(out), "0x%02X\n", pending_irq_timer_);
+    send(fd, out, strlen(out), 0);
+    return;
+
+  // SET_NRE_MODE hw|sim — control how NRE is signalled on WUPA with no tags
+  //   hw:  only pending_irq_timer_=0x40 (real ST25R3916 behaviour)
+  //   sim: also pending_irq_main_=0x01  (fast-path, default)
+  } else if (tok[0] == "SET_NRE_MODE" && tok.size() >= 2) {
+    if (tok[1] == "hw") {
+      nre_hw_mode_ = true;
+      ESP_LOGI(TAG, "SIM socket: SET_NRE_MODE hw");
+    } else {
+      nre_hw_mode_ = false;
+      ESP_LOGI(TAG, "SIM socket: SET_NRE_MODE sim");
+    }
 
   } else {
     response = "ERROR unknown command\n";
