@@ -62,6 +62,8 @@ struct AuthState {
 //   LIST
 //   SET_IC_IDENTITY <hex>
 //   GET_REG <addr_hex>
+//   SET_NRE_MODE hw|sim   — hw: NRE only in IRQ_TIMER (real HW); sim: also in IRQ_MAIN (default)
+//   GET_PENDING_TIMER     — return pending_irq_timer_ without clearing (for tests)
 //
 // Tag type names: MIFARE_1K, MIFARE_4K, NTAG213, NTAG215, NTAG216, ULTRALIGHT
 // (default: MIFARE_1K for 4-byte UIDs, NTAG213 for 7-byte UIDs)
@@ -136,6 +138,15 @@ class ST25RSim : public st25r::ST25R {
   std::mutex tags_mutex_;
 
   uint8_t ic_identity_{0x28};
+
+  // ── NRE signalling mode ───────────────────────────────────────────────────
+  // false (default / "sim"): sets both pending_irq_main_=0x01 (IRQ_NRE fast-
+  //   path) AND pending_irq_timer_=0x40 when WUPA fires with no tags.
+  // true ("hw"): sets ONLY pending_irq_timer_=0x40, mirroring real ST25R3916
+  //   hardware where NRE appears in IRQ_TIMER (0x1B) but NOT in IRQ_MAIN.
+  //   Use via socket command SET_NRE_MODE hw|sim to exercise the firmware's
+  //   100ms millis() WUPA timeout path instead of the IRQ_NRE fast-path.
+  bool nre_hw_mode_{false};
 
   // ── Control socket ────────────────────────────────────────────────────────
   std::string socket_path_{"/tmp/st25r_sim.sock"};

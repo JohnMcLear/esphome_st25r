@@ -200,6 +200,24 @@ class SimController:
         resp = self._send(f"SET_IC_IDENTITY {value_hex}")
         assert "OK" in resp, f"set_ic_identity failed: {resp}"
 
+    def set_nre_mode(self, mode: str):
+        """
+        Control NRE signalling on WUPA with no tags.
+        mode='hw'  — only IRQ_TIMER set (real ST25R3916: NRE never in IRQ_MAIN)
+        mode='sim' — also IRQ_MAIN IRQ_NRE fast-path set (default)
+        """
+        resp = self._send(f"SET_NRE_MODE {mode}")
+        assert "OK" in resp, f"set_nre_mode failed: {resp}"
+
+    def get_pending_timer(self) -> int:
+        """
+        Return pending_irq_timer_ value WITHOUT clearing it.
+        Used to verify that the firmware read (and cleared) IRQ_TIMER after a
+        WUPA timeout so the IRQ pin is properly lowered on real hardware.
+        """
+        resp = self._send("GET_PENDING_TIMER")
+        return int(resp.strip(), 16)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Module-scoped fixture — starts binary once for the whole test session
@@ -936,3 +954,90 @@ class TestHealthCheck:
         proc.wait_for(rf"READER1_ON_TAG {uid}", timeout=10)
         ctrl1.remove_tag(uid)
         proc.wait_for(rf"READER1_ON_TAG_REMOVED {uid}", timeout=10)
+
+
+class TestWupaIrqCleanup:
+    """
+    Verifies that the WUPA 100ms timeout path reads and clears IRQ_TIMER.
+
+    On real ST25R3916 hardware NRE (no-response timer expired) appears in
+    IRQ_TIMER (0x1B), NOT in IRQ_MAIN (0x1A).  The IRQ pin reflects the
+    logical OR of ALL unmasked IRQ registers, so an unread NRE in IRQ_TIMER
+    keeps the IRQ pin HIGH after the scan cycle ends.
+
+    The sim's SET_NRE_MODE hw command mimics this: on_wupa_() with no tags sets
+    only pending_irq_timer_=0x40, leaving pending_irq_main_=0.  This forces the
+    firmware to wait through the full 100ms millis() timeout (the IRQ_NRE
+    fast-path in STATE_WUPA never fires because irq_status_ stays 0).
+
+    The fix: the WUPA timeout path must read IRQ_TIMER (and IRQ_ERROR) so that
+    pending_irq_timer_ is cleared and the IRQ pin can go LOW before the next scan.
+
+    BUG: before the fix, the timeout path only resets irq_status_ and calls
+    finalize_scan_(); it never reads IRQ_TIMER, leaving pending_irq_timer_=0x40.
+    GET_PENDING_TIMER exposes this: it returns pending_irq_timer_ without
+    clearing it, so the test can confirm the firmware cleared it.
+    """
+
+    def test_wupa_timeout_clears_irq_timer(self, sim):
+        """
+        After a WUPA 100ms timeout (hw NRE mode), pending_irq_timer_ must be 0.
+
+        FAILS before fix: timeout path omits read_register(IRQ_TIMER) so the
+        pending NRE byte stays at 0x40, leaving the IRQ pin HIGH on real hardware.
+        PASSES after fix: timeout path reads IRQ_TIMER → pending_irq_timer_=0.
+        """
+        proc, ctrl1, ctrl2 = sim
+        # Ensure no tags are present so WUPA produces NRE (no tag response).
+        # The previous TestHealthCheck suite restored state; proceed from clean.
+        with proc._lock:
+            proc.log_lines.clear()
+
+        # Enable hw NRE mode: NRE goes only to IRQ_TIMER (not IRQ_MAIN).
+        # This disables the IRQ_NRE fast-path and forces the 100ms timeout path.
+        ctrl1.set_nre_mode("hw")
+        try:
+            # Wait for the firmware to log the 100ms WUPA timeout.
+            # update_interval=500ms, WUPA timeout=100ms → pattern appears ~100ms
+            # after the next update() fires.  Allow 3s to be safe.
+            proc.wait_for(r"WUPA timeout:", timeout=3)
+
+            # Immediately read pending_irq_timer_ before the NEXT update() fires
+            # (~400ms away).  With the bug: 0x40 (NRE not cleared).
+            # With the fix: 0x00 (firmware read IRQ_TIMER in timeout path).
+            pending = ctrl1.get_pending_timer()
+            assert pending == 0, (
+                f"IRQ_TIMER not cleared by WUPA timeout path: pending=0x{pending:02X} "
+                "(expected 0x00). The timeout path must call read_register(IRQ_TIMER) "
+                "so the NRE bit is consumed and the IRQ pin can go LOW on real hardware."
+            )
+        finally:
+            ctrl1.set_nre_mode("sim")  # always restore default
+
+    def test_wupa_timeout_resets_irq_triggered(self, sim):
+        """
+        After a WUPA 100ms timeout, irq_triggered_ must be False so the ISR
+        rising-edge detection is not confused by stale state.
+
+        This is verified indirectly: after restoring sim mode and adding a tag,
+        the tag must be detected without extra delay (confirming clean IRQ state).
+        """
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+
+        ctrl1.set_nre_mode("hw")
+        try:
+            # Let one hw-NRE scan cycle complete (WUPA timeout fires).
+            proc.wait_for(r"WUPA timeout:", timeout=3)
+        finally:
+            ctrl1.set_nre_mode("sim")
+
+        # After restoring sim mode, the next scan should detect a new tag normally.
+        with proc._lock:
+            proc.log_lines.clear()
+        uid = "AABBCCDD"
+        ctrl1.add_tag(uid)
+        proc.wait_for(rf"READER1_ON_TAG {uid}", timeout=5)
+        ctrl1.remove_tag(uid)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {uid}", timeout=5)

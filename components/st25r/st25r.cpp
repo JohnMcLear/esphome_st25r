@@ -656,8 +656,16 @@ void ST25R::process_state_() {
           this->state_ = STATE_IDLE;
           this->finalize_scan_();
       } else if (millis() - this->last_state_change_ > 100) {
-          ESP_LOGD(TAG, "WUPA timeout: IRQ=0x%02X FIFO=%u", this->irq_status_, this->read_fifo_status1_());
+          // No tag responded and NRE fast-path didn't fire (real ST25R3916:
+          // NRE is in IRQ_TIMER, not IRQ_MAIN).  Read ALL IRQ registers so the
+          // IRQ pin goes LOW before the next scan — otherwise the pin stays HIGH
+          // from the pending NRE and the ISR rising-edge never fires again.
+          uint8_t irq_t = this->read_register(IRQ_TIMER);
+          uint8_t irq_e = this->read_register(IRQ_ERROR);
+          ESP_LOGD(TAG, "WUPA timeout: IRQ=0x%02X IRQ_T=0x%02X IRQ_E=0x%02X FIFO=%u",
+                   this->irq_status_, irq_t, irq_e, this->read_fifo_status1_());
           this->irq_status_ = 0;
+          this->irq_triggered_ = false;
           this->state_ = STATE_IDLE;
           this->finalize_scan_();
       }
