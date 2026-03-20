@@ -70,7 +70,7 @@ ST25R_SCHEMA = cv.Schema(
         cv.Optional(CONF_MIFARE_KEY_B, default="FFFFFFFFFFFF"): _validate_mifare_key,
         cv.Optional(CONF_MISS_THRESHOLD, default=3): cv.int_range(min=1, max=255),
         cv.Optional(CONF_ANT_TUNE_A, default=0x80): cv.int_range(min=0, max=255),
-        cv.Optional(CONF_ANT_TUNE_B, default=0x80): cv.int_range(min=0, max=255),
+        cv.Optional(CONF_ANT_TUNE_B, default=0x40): cv.int_range(min=0, max=255),
         cv.Optional(CONF_HEALTH_CHECK_ENABLED, default=True): cv.boolean,
         cv.Optional(CONF_HEALTH_CHECK_INTERVAL, default="60s"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_MAX_FAILED_CHECKS, default=3): cv.int_range(min=1, max=255),
