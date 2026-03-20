@@ -188,8 +188,8 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   uint64_t mifare_key_a_{0xFFFFFFFFFFFFULL};
   uint64_t mifare_key_b_{0xFFFFFFFFFFFFULL};
   uint8_t miss_threshold_{3};
-  uint8_t ant_tune_a_{0x80};  // AAT DAC A: 0x80 = mid-range (~0.48V on 3.3V / ~0.87V on 5V)
-  uint8_t ant_tune_b_{0x80};  // AAT DAC B: same
+  uint8_t ant_tune_a_{0x80};  // AAT DAC A: 0x80 = mid-range; RFAL Elechouse default = 0x80
+  uint8_t ant_tune_b_{0x40};  // AAT DAC B: RFAL Elechouse default = 0x40 (was 0x80; shifts antenna resonance)
   bool is_b_version_{false};
   bool has_aat_{false};  // Automatic Antenna Tuning / varicap DAC (ANT_TUNE_A/B) available
   // Health check (chip liveness check, separate from tag scan interval)

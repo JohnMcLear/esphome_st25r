@@ -168,15 +168,12 @@ void ST25R::update() {
     this->field_strength_sensor_->publish_state(amplitude);
   }
 
-  // RX_CONF3: 0xE2 = rg1_am=7 (+5.5dB AM boost) + lf_en=1 — needed for non-B Elechouse module
-  //           0xFE = rg1_am=7 + rg1_pm=7 (+5.5dB PM boost too) + lf_en=1 — maximum sensitivity, for weak coupling
-  // B-version (ST25R3916B): lf_en=1 routes receiver away from HF 13.56MHz NFC path → use 0x00 instead
-  uint8_t rx_conf3;
-  if (this->is_b_version_) {
-    rx_conf3 = 0x00;
-  } else {
-    rx_conf3 = this->rx_gain_boost_ ? 0xFE : 0xE2;
-  }
+  // RX_CONF3: RFAL NFC-A 106 analog config uses 0x00 for both B and non-B silicon.
+  // Previously non-B used 0xE2 (lf_en=1 + rg1_am boost); Elechouse reports RFAL
+  // gets longer range on the same non-B module without that setting.
+  // lf_en=1 may route the receiver toward the LF path even on non-B, hurting HF
+  // sensitivity.  rx_gain_boost_ retains the 0xFE override as a last-resort option.
+  uint8_t rx_conf3 = this->rx_gain_boost_ ? 0xFE : 0x00;
   this->write_register(RX_CONF3, rx_conf3);
 
   this->saved_anticol_valid_ = false;
@@ -961,9 +958,15 @@ bool ST25R::reset_() {
   this->write_register(IO_CONF2, this->supply_3v3_ ? 0x80 : 0x00); 
   this->write_register(MODE, 0x08); 
   this->write_register(BIT_RATE, 0x00); 
-  this->write_register(RX_CONF1, 0x00); 
-  this->write_register(RX_CONF2, 0x6C); // AGC enabled during complete receive period
-  this->write_register(RX_CONF3, 0x00); // 0 dB (Full gain), no boost
+  // RX analog config — RFAL NFC-A 106 kbps profile (rfalAnalogConfigInitialize + poller Rx).
+  // Previous values: RX_CONF1=0x00, RX_CONF2=0x6C, RX_CONF3=0x00.
+  // RFAL default:    RX_CONF1=0x08, RX_CONF2=0x2D, RX_CONF3=0x00.
+  // RX_CONF1=0x08: enable receiver AM path squelch (reduces noise floor).
+  // RX_CONF2=0x2D: AGC with different time-constant/gain settings vs 0x6C.
+  // RX_CONF3=0x00: no LF path, no boost — RFAL leaves this at 0 for NFC-A 106.
+  this->write_register(RX_CONF1, 0x08);
+  this->write_register(RX_CONF2, 0x2D);
+  this->write_register(RX_CONF3, 0x00);
   this->write_register(MASK_MAIN, 0x00);   // unmask all main IRQs
   this->write_register(MASK_TIMER, 0x00);  // unmask all timer IRQs (NRE etc)
   this->write_register(ISO14443A_CONF, 0x00);
@@ -978,6 +981,8 @@ bool ST25R::reset_() {
   if (this->has_aat_) {
     this->write_register(ANT_TUNE_A, this->ant_tune_a_);
     this->write_register(ANT_TUNE_B, this->ant_tune_b_);
+    ESP_LOGI(TAG, "  reset_: ANT_TUNE_A=0x%02X ANT_TUNE_B=0x%02X (RFAL default: A=0x80 B=0x40)",
+             this->ant_tune_a_, this->ant_tune_b_);
   }
 
   if (this->rf_field_enabled_) {
