@@ -195,6 +195,11 @@ class SimController:
         resp = self._send(f"GET_REG {addr_hex}")
         return int(resp.strip(), 16)
 
+    def set_vdd(self, value_hex):
+        """Set the raw VDD measurement value (hex string like 'A0')."""
+        resp = self._send(f"SET_VDD {value_hex}")
+        assert "OK" in resp, f"set_vdd failed: {resp}"
+
     def set_ic_identity(self, value_hex):
         """Change the IC identity the sim reports (hex string like '30')."""
         resp = self._send(f"SET_IC_IDENTITY {value_hex}")
@@ -840,13 +845,15 @@ class TestInitRegisters:
             f"Regression: am_mod!=0 means tags never respond to WUPA/REQA."
         )
 
-    def test_io_conf2_supply_3v3_default(self, sim):
-        """IO_CONF2 must be 0x80 (sup3V=1) when supply_3v3 is default true."""
+    def test_io_conf2_supply_and_aat(self, sim):
+        """IO_CONF2 must have sup3V from VDD auto-detect and aat_en for ST25R3916."""
         proc, ctrl1, ctrl2 = sim
         val = ctrl1.get_reg("01")
-        assert val == 0x80, (
-            f"IO_CONF2 expected 0x80 (supply_3v3=true default), got 0x{val:02X}. "
-            f"Wrong supply mode reduces TX driver output power."
+        # Sim VDD raw=0x80 → ~3000mV < 3600 → sup3V=1 (bit7=0x80)
+        # ST25R3916 has AAT → aat_en=1 (bit5=0x20)
+        assert val == 0xA0, (
+            f"IO_CONF2 expected 0xA0 (sup3V=1 + aat_en=1), got 0x{val:02X}. "
+            f"sup3V is auto-detected from VDD; aat_en enables antenna tuning DACs."
         )
 
     def test_mode_iso14443a(self, sim):
@@ -861,20 +868,118 @@ class TestInitRegisters:
 
 class TestRxConf3Selection:
     """
-    RX_CONF3 depends on IC identity and rx_gain_boost:
-      IC=0x28 (non-B), boost=false → 0xE2  (AM +5.5dB + lf_en=1)
-      IC=0x28 (non-B), boost=true  → 0xFE  (AM +5.5dB + PM +5.5dB + lf_en=1)
-      IC=0x30 (B-version)          → 0x00  (HF path, full gain)
-    test-emulation.yaml does not set rx_gain_boost, so default (false) → 0xE2.
+    RX_CONF3 is now always 0x00 (RFAL NFC-A 106 default) for all silicon variants.
+    Previous code used 0xE2 for non-B (lf_en=1 + AM boost) but this routed
+    the receiver to the LF path, hurting 13.56MHz HF sensitivity.
     """
 
-    def test_non_b_rx_conf3(self, sim):
+    def test_rx_conf3_rfal_default(self, sim):
         proc, ctrl1, ctrl2 = sim
         # Wait for at least one full update cycle to have written RX_CONF3
         proc.wait_for(r"Sent WUPA", timeout=5)
         time.sleep(0.6)  # one more update interval
         val = ctrl1.get_reg("0D")
-        assert val == 0xE2, f"Expected RX_CONF3=0xE2 for non-B sim (boost=false), got 0x{val:02X}"
+        assert val == 0x00, f"Expected RX_CONF3=0x00 (RFAL NFC-A 106 default), got 0x{val:02X}"
+
+
+class TestRfalAnalogProfile:
+    """
+    RFAL NFC-A 106 kbps analog profile must be applied after reset.
+    Register values from ST RFAL analog config table.
+    """
+
+    def test_rx_conf1_rfal(self, sim):
+        """RX_CONF1 must be 0x08 (AM path squelch, HPF=60-400kHz)."""
+        proc, ctrl1, ctrl2 = sim
+        proc.wait_for(r"Sent WUPA", timeout=5)
+        val = ctrl1.get_reg("0B")
+        assert val == 0x08, f"RX_CONF1 expected 0x08 (RFAL default), got 0x{val:02X}"
+
+    def test_rx_conf2_rfal(self, sim):
+        """RX_CONF2 must be 0x2D (mixer demod, AGC on, 61ns pulse)."""
+        proc, ctrl1, ctrl2 = sim
+        val = ctrl1.get_reg("0C")
+        assert val == 0x2D, f"RX_CONF2 expected 0x2D (RFAL default), got 0x{val:02X}"
+
+    def test_rx_conf4_rfal(self, sim):
+        """RX_CONF4 must be 0x00 (no RG2 gain)."""
+        proc, ctrl1, ctrl2 = sim
+        val = ctrl1.get_reg("0E")
+        assert val == 0x00, f"RX_CONF4 expected 0x00 (RFAL default), got 0x{val:02X}"
+
+    def test_corr_conf1_rfal(self, sim):
+        """CORR_CONF1 (Space B 0x4C) must be 0x51 (correlator thresholds)."""
+        proc, ctrl1, ctrl2 = sim
+        val = ctrl1.get_reg("4C")
+        assert val == 0x51, f"CORR_CONF1 expected 0x51 (RFAL default), got 0x{val:02X}"
+
+    def test_corr_conf2_rfal(self, sim):
+        """CORR_CONF2 (Space B 0x4D) must be 0x00."""
+        proc, ctrl1, ctrl2 = sim
+        val = ctrl1.get_reg("4D")
+        assert val == 0x00, f"CORR_CONF2 expected 0x00 (RFAL default), got 0x{val:02X}"
+
+
+class TestOvershootUndershootProtection:
+    """
+    RFAL NFC-A 106 TX enables overshoot and undershoot protection (Space B).
+    """
+
+    def test_overshoot_conf1(self, sim):
+        proc, ctrl1, ctrl2 = sim
+        proc.wait_for(r"Sent WUPA", timeout=5)
+        val = ctrl1.get_reg("70")
+        assert val == 0x40, f"OVERSHOOT_CONF1 expected 0x40, got 0x{val:02X}"
+
+    def test_overshoot_conf2(self, sim):
+        proc, ctrl1, ctrl2 = sim
+        val = ctrl1.get_reg("71")
+        assert val == 0x03, f"OVERSHOOT_CONF2 expected 0x03, got 0x{val:02X}"
+
+    def test_undershoot_conf1(self, sim):
+        proc, ctrl1, ctrl2 = sim
+        val = ctrl1.get_reg("72")
+        assert val == 0x40, f"UNDERSHOOT_CONF1 expected 0x40, got 0x{val:02X}"
+
+    def test_undershoot_conf2(self, sim):
+        proc, ctrl1, ctrl2 = sim
+        val = ctrl1.get_reg("73")
+        assert val == 0x03, f"UNDERSHOOT_CONF2 expected 0x03, got 0x{val:02X}"
+
+
+class TestVddAutoDetect:
+    """
+    VDD auto-detection measures supply voltage (cmd 0xDF) and sets sup3V.
+    Sim defaults: vdd_raw=0x80 (~3000mV) → sup3V=1 (3.3V mode).
+    """
+
+    def test_sup3v_set_for_low_vdd(self, sim):
+        """With VDD ~3000mV (raw=0x80), sup3V must be 1 (3.3V mode)."""
+        proc, ctrl1, ctrl2 = sim
+        val = ctrl1.get_reg("01")
+        assert val & 0x80 == 0x80, (
+            f"IO_CONF2 sup3V bit expected 1 for VDD ~3000mV, got 0x{val:02X}"
+        )
+
+    def test_ant_tune_a_default(self, sim):
+        """ANT_TUNE_A must be 0x80 (RFAL default mid-range)."""
+        proc, ctrl1, ctrl2 = sim
+        val = ctrl1.get_reg("26")
+        assert val == 0x80, f"ANT_TUNE_A expected 0x80, got 0x{val:02X}"
+
+    def test_ant_tune_b_default(self, sim):
+        """ANT_TUNE_B must be 0x40 (RFAL default, shifted from chip default 0x80)."""
+        proc, ctrl1, ctrl2 = sim
+        val = ctrl1.get_reg("27")
+        assert val == 0x40, f"ANT_TUNE_B expected 0x40, got 0x{val:02X}"
+
+    def test_aat_enabled(self, sim):
+        """IO_CONF2 aat_en (bit5) must be set for ST25R3916 (has AAT hardware)."""
+        proc, ctrl1, ctrl2 = sim
+        val = ctrl1.get_reg("01")
+        assert val & 0x20 == 0x20, (
+            f"IO_CONF2 aat_en expected 1 for ST25R3916, got IO_CONF2=0x{val:02X}"
+        )
 
 
 class TestHealthCheck:

@@ -168,16 +168,9 @@ void ST25R::update() {
     this->field_strength_sensor_->publish_state(amplitude);
   }
 
-  // RX_CONF3: 0xE2 = rg1_am=7 (+5.5dB AM boost) + lf_en=1 — needed for non-B Elechouse module
-  //           0xFE = rg1_am=7 + rg1_pm=7 (+5.5dB PM boost too) + lf_en=1 — maximum sensitivity, for weak coupling
-  // B-version (ST25R3916B): lf_en=1 routes receiver away from HF 13.56MHz NFC path → use 0x00 instead
-  uint8_t rx_conf3;
-  if (this->is_b_version_) {
-    rx_conf3 = 0x00;
-  } else {
-    rx_conf3 = this->rx_gain_boost_ ? 0xFE : 0xE2;
-  }
-  this->write_register(RX_CONF3, rx_conf3);
+  // RX_CONF3: RFAL NFC-A 106 uses 0x00 for all silicon variants.
+  // lf_en=1 (0xE2/0xFE) routes receiver to LF path, hurting 13.56MHz HF sensitivity.
+  this->write_register(RX_CONF3, 0x00);
 
   this->saved_anticol_valid_ = false;
   this->anticol_resume_ = false;
@@ -960,33 +953,64 @@ bool ST25R::reset_() {
   this->has_aat_ = true;
   ESP_LOGI(TAG, "IC identity match: 0x%02X (ST25R3916%s)", ic_identity, is_b_version ? "B" : "");
 
-  ESP_LOGV(TAG, "  reset_: Enabling Ready mode");
-  this->write_register(OP_CONTROL, 0x80); // en=1: Ready mode (enable oscillator and regulators)
-  delay(10); // Wait for oscillator to stabilize
+  // RFAL sequence: oscillator on → measure VDD → configure registers
+  ESP_LOGV(TAG, "  reset_: Enabling oscillator");
+  this->write_register(OP_CONTROL, 0x80); // en=1: enable oscillator and regulators
+  delay(10); // Wait for oscillator to stabilize (~700µs typical)
+
+  // Measure VDD and auto-detect supply voltage (RFAL: st25r3916MeasureVoltage)
+  // REGULATOR_CONTROL mpsv bits[2:0] select measurement source; 0 = VDD
+  uint8_t reg_ctrl = this->read_register(REGULATOR_CONTROL);
+  this->write_register(REGULATOR_CONTROL, (reg_ctrl & ~0x07) | 0x00); // mpsv=VDD
+  this->write_command(ST25R_CMD_MEASURE_VDD);  // 0xDF
+  delay(5);
+  uint8_t vdd_raw = this->read_register(AD_CONV_RESULT);
+  uint16_t vdd_mV = (uint16_t)vdd_raw * 23U + (((uint16_t)vdd_raw * 4U + 5U) / 10U);
+  bool sup3v = (vdd_mV < 3600);
+  ESP_LOGI(TAG, "  reset_: VDD measured: %u mV (raw=0x%02X) → sup3V=%s",
+           vdd_mV, vdd_raw, sup3v ? "3.3V" : "5V");
 
   ESP_LOGV(TAG, "  reset_: Configuring registers");
   this->write_register(IO_CONF1, 0x00);  // single=0: differential antenna driving (full power)
-  this->write_register(IO_CONF2, this->supply_3v3_ ? 0x80 : 0x00); 
-  this->write_register(MODE, 0x08); 
-  this->write_register(BIT_RATE, 0x00); 
-  this->write_register(RX_CONF1, 0x00); 
-  this->write_register(RX_CONF2, 0x6C); // AGC enabled during complete receive period
-  this->write_register(RX_CONF3, 0x00); // 0 dB (Full gain), no boost
+  uint8_t io_conf2 = sup3v ? 0x80 : 0x00;  // sup3V based on measured VDD
+  if (this->has_aat_)
+    io_conf2 |= 0x20;  // aat_en: enable AAT module so ANT_TUNE_A/B drive varicaps
+  this->write_register(IO_CONF2, io_conf2);
+  this->write_register(MODE, 0x08);
+  this->write_register(BIT_RATE, 0x00);
+  // RFAL NFC-A 106 kbps RX analog profile
+  this->write_register(RX_CONF1, 0x08);  // AM path squelch, HPF=60-400kHz
+  this->write_register(RX_CONF2, 0x2D);  // Mixer demod, AGC on, 61ns pulse
+  this->write_register(RX_CONF3, 0x00);  // HF mode, no LF routing (same for B and non-B)
+  this->write_register(RX_CONF4, 0x00);
   this->write_register(MASK_MAIN, 0x00);   // unmask all main IRQs
   this->write_register(MASK_TIMER, 0x00);  // unmask all timer IRQs (NRE etc)
   this->write_register(ISO14443A_CONF, 0x00);
 
   uint8_t d_res = (15 - this->rf_power_) & 0x0F;
-  // am_mod (bits[7:4]) MUST be 0 for ISO14443A — 100% ASK (OOK) required; tags cannot demodulate REQA/WUPA with partial AM.
-  // Do NOT set am_mod=7 (0x70|d_res): that is for ISO14443B (type B uses ~10% ASK). Applies equally to non-B and B chip variants.
+  // am_mod (bits[7:4]) MUST be 0 for ISO14443A — 100% ASK (OOK) required.
   this->write_register(TX_DRIVER_CONF, d_res);
   // ANT_TUNE_A/B (0x26/0x27): varicap DAC outputs for antenna resonance tuning (AAT).
   // Only write on chips that have AAT hardware — ST25R3916/3916B do; ST25R300/500/501 do not.
-  // V_AAT = (0.044 + 0.868 * value / 255) * VDD_A; 0x80 = mid-range (chip default).
   if (this->has_aat_) {
     this->write_register(ANT_TUNE_A, this->ant_tune_a_);
     this->write_register(ANT_TUNE_B, this->ant_tune_b_);
+    ESP_LOGI(TAG, "  reset_: ANT_TUNE_A=0x%02X ANT_TUNE_B=0x%02X",
+             this->ant_tune_a_, this->ant_tune_b_);
   }
+
+  // RFAL NFC-A 106 TX: overshoot/undershoot protection
+  this->write_register(OVERSHOOT_CONF1, 0x40);
+  this->write_register(OVERSHOOT_CONF2, 0x03);
+  this->write_register(UNDERSHOOT_CONF1, 0x40);
+  this->write_register(UNDERSHOOT_CONF2, 0x03);
+  // RFAL NFC-A 106 RX: correlator receiver + thresholds
+  uint8_t aux_val = this->read_register(AUX);
+  aux_val &= ~0x04;  // Clear dis_corr → enable correlator receiver
+  this->write_register(AUX, aux_val);
+  this->write_register(RX_CONF4, 0x00);
+  this->write_register(CORR_CONF1, 0x51);
+  this->write_register(CORR_CONF2, 0x00);
 
   if (this->rf_field_enabled_) {
     ESP_LOGV(TAG, "  reset_: Enabling RF field");

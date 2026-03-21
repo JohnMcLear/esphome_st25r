@@ -115,6 +115,9 @@ class ST25RSim : public st25r::ST25R {
 
   // ── Simulated hardware state ──────────────────────────────────────────────
   uint8_t regs_[0x40]{};
+  uint8_t space_b_regs_[0x40]{};  // Space B registers (addr >= 0x40 → index = addr & 0x3F)
+  uint8_t vdd_raw_{0x80};  // Raw VDD measurement (0x80 = ~3000mV < 3600 → sup3V=1)
+  uint8_t ad_conv_result_{0x80};  // AD converter output (field strength or VDD)
   std::vector<uint8_t> fifo_in_;
   std::vector<uint8_t> fifo_out_;
 
