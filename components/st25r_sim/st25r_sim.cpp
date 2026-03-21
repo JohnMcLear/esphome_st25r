@@ -136,7 +136,9 @@ static TagType parse_type(const std::string &name,
   if (name == "NTAG215")     return TAG_NTAG215;
   if (name == "NTAG216")     return TAG_NTAG216;
   if (name == "ULTRALIGHT")  return TAG_MIFARE_ULTRALIGHT;
+  if (name == "ISO15693")    return TAG_ISO15693;
   // Auto-detect from UID length
+  if (uid.size() == 8) return TAG_ISO15693;
   return (uid.size() == 4) ? TAG_MIFARE_CLASSIC_1K : TAG_NTAG213;
 }
 
@@ -302,8 +304,12 @@ void ST25RSim::write_command(uint8_t command) {
       on_wupa_();
       break;
 
-    case 0xC5:  // TRANSMIT_WITHOUT_CRC (anticol, Mifare NR+AR, block read)
-      on_anticol_();
+    case 0xC5:  // TRANSMIT_WITHOUT_CRC (anticol, Mifare NR+AR, block read, NFC-V stream)
+      if ((regs_[0x03] & 0x78) == 0x70) {  // MODE om=0x0E → subcarrier_stream (NFC-V)
+        on_nfcv_transmit_();
+      } else {
+        on_anticol_();
+      }
       break;
 
     case 0xC4:  // TRANSMIT_WITH_CRC (SELECT, HALT, Mifare auth cmd)
@@ -442,24 +448,28 @@ void ST25RSim::on_wupa_() {
   std::lock_guard<std::mutex> lk(tags_mutex_);
   for (auto &t : virtual_tags_) t.halted = false;
 
-  if (!virtual_tags_.empty()) {
-    // ATQA — use first tag's type for the response byte
-    // (In reality each tag contributes its ATQA in parallel; for the
-    // state machine all that matters is that a response arrives.)
-    const VirtualTag &first = virtual_tags_[0];
+  // Find first NFC-A tag (ISO15693 tags only respond to NFC-V inventory, not WUPA)
+  const VirtualTag *first_nfca = nullptr;
+  size_t nfca_count = 0;
+  for (const auto &t : virtual_tags_) {
+    if (t.type != TAG_ISO15693) {
+      if (!first_nfca) first_nfca = &t;
+      nfca_count++;
+    }
+  }
+
+  if (first_nfca) {
     uint8_t atqa0 = 0x44;  // default (NTAG / Ultralight)
-    if (first.type == TAG_MIFARE_CLASSIC_1K) atqa0 = 0x04;
-    if (first.type == TAG_MIFARE_CLASSIC_4K) atqa0 = 0x02;
+    if (first_nfca->type == TAG_MIFARE_CLASSIC_1K) atqa0 = 0x04;
+    if (first_nfca->type == TAG_MIFARE_CLASSIC_4K) atqa0 = 0x02;
     fifo_out_ = {atqa0, 0x00};
     pending_irq_main_ = IRQ_RXE;
-    ESP_LOGV(TAG, "SIM WUPA → ATQA 0x%02X (%u tag(s))", atqa0,
-             (unsigned)virtual_tags_.size());
+    ESP_LOGV(TAG, "SIM WUPA → ATQA 0x%02X (%u NFC-A tag(s))", atqa0,
+             (unsigned)nfca_count);
   } else {
-    // Signal NRE in both IRQ_MAIN (base-class fast-path, skips 100ms timeout)
-    // and IRQ_TIMER (hardware register for ST25R300 derived-class compatibility).
     pending_irq_main_  = 0x01;  // IRQ_NRE bit
     pending_irq_timer_ = 0x40;  // NRE in timer register
-    ESP_LOGV(TAG, "SIM WUPA → no tags");
+    ESP_LOGV(TAG, "SIM WUPA → no NFC-A tags");
   }
 }
 
@@ -881,6 +891,162 @@ void ST25RSim::on_transmit_crc_() {
   // ── Unknown / other commands ──────────────────────────────────────────────
   pending_irq_main_ = IRQ_TXE;
   ESP_LOGV(TAG, "SIM TRANSMIT_WITH_CRC: unhandled cmd=0x%02X", cmd);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NFC-V (ISO 15693) streaming mode handler
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ISO 15693 CRC-16 CCITT (same algorithm as in st25r.cpp)
+static uint16_t sim_iso15693_crc(const uint8_t *data, size_t len) {
+  uint16_t crc = 0xFFFF;
+  for (size_t i = 0; i < len; i++) {
+    uint8_t d = data[i] ^ (uint8_t)(crc & 0xFF);
+    d ^= (d << 4);
+    crc = (crc >> 8) ^ ((uint16_t)d << 8) ^ ((uint16_t)d << 3) ^ ((uint16_t)d >> 4);
+  }
+  return ~crc;
+}
+
+// Decode 1-of-4 VCD encoded FIFO data back to raw bytes
+static size_t sim_decode_1of4(const uint8_t *coded, size_t coded_len, uint8_t *out, size_t out_max) {
+  // Skip SOF (first byte = 0x21), read 4 coded bytes per data byte, stop at EOF (0x04)
+  size_t pos = 0;
+  size_t out_pos = 0;
+  if (coded_len < 2 || coded[0] != 0x21) return 0;  // No SOF
+  pos = 1;  // skip SOF
+
+  while (pos + 3 < coded_len && out_pos < out_max) {
+    if (coded[pos] == 0x04) break;  // EOF
+    uint8_t byte = 0;
+    for (int j = 0; j < 4 && pos < coded_len; j++, pos++) {
+      if (coded[pos] == 0x04) goto done;
+      uint8_t bits = 0;
+      if (coded[pos] == 0x02) bits = 0;
+      else if (coded[pos] == 0x08) bits = 1;
+      else if (coded[pos] == 0x20) bits = 2;
+      else if (coded[pos] == 0x80) bits = 3;
+      byte |= (bits << (j * 2));
+    }
+    out[out_pos++] = byte;
+  }
+done:
+  return out_pos;
+}
+
+// Manchester-encode response bytes for NFC-V streaming mode FIFO
+static size_t sim_manchester_encode(const uint8_t *data, size_t len, uint8_t *out, size_t out_max) {
+  // SOF: 5 bits = 10111 = 0x17 in bits[4:0] of first byte
+  // Then: 2 Manchester bits per payload bit (bit 0 → 01, bit 1 → 10)
+  // EOF: 10111000 pattern at byte boundary
+  if (out_max < (1 + len * 2 + 2)) return 0;
+
+  memset(out, 0, out_max);
+  size_t bp = 0;  // bit position in output
+
+  // SOF: bits 10111 (LSB first in the byte)
+  out[0] = 0x17;
+  bp = 5;
+
+  // Manchester encode each data bit
+  for (size_t i = 0; i < len; i++) {
+    for (int b = 0; b < 8; b++) {
+      int bit = (data[i] >> b) & 1;
+      if (bit == 0) {
+        // man=1: first bit = 1, second bit = 0 → decoded as 0
+        out[bp / 8] |= (1 << (bp % 8));
+        // bit at bp+1 = 0 (already 0)
+      } else {
+        // man=2: first bit = 0, second bit = 1 → decoded as 1
+        // bit at bp+0 = 0 (already 0)
+        out[(bp + 1) / 8] |= (1 << ((bp + 1) % 8));
+      }
+      bp += 2;
+    }
+  }
+
+  // EOF: pattern 10111000 = 0xA0 in current byte + 0x03 in next byte
+  // Pad to byte boundary first (should already be aligned after whole bytes)
+  size_t eof_byte = bp / 8;
+  out[eof_byte] |= 0xA0;  // top 3 bits of EOF pattern
+  if (eof_byte + 1 < out_max)
+    out[eof_byte + 1] = 0x03;  // next byte of EOF
+
+  return eof_byte + 2;  // total output bytes
+}
+
+void ST25RSim::on_nfcv_transmit_() {
+  std::vector<uint8_t> coded_frame;
+  coded_frame.swap(fifo_in_);
+  fifo_out_.clear();
+
+  // Decode 1-of-4 encoded frame to get raw ISO 15693 command
+  uint8_t raw[32];
+  size_t raw_len = sim_decode_1of4(coded_frame.data(), coded_frame.size(), raw, sizeof(raw));
+
+  if (raw_len < 3) {
+    // Too short or decode failed — just signal TXE + NRE
+    pending_irq_main_ = IRQ_TXE;
+    pending_irq_timer_ = 0x40;  // NRE
+    return;
+  }
+
+  // Strip CRC (last 2 bytes are CRC-16 appended by firmware)
+  if (raw_len >= 3) raw_len -= 2;
+
+  uint8_t flags = raw[0];
+  uint8_t cmd = raw[1];
+
+  ESP_LOGV(TAG, "SIM NFC-V: decoded %u bytes, flags=0x%02X cmd=0x%02X", (unsigned)raw_len, flags, cmd);
+
+  // Check for INVENTORY command (0x01)
+  if (cmd == 0x01 && (flags & 0x04)) {
+    std::lock_guard<std::mutex> lk(tags_mutex_);
+
+    // Find first ISO15693 tag that isn't halted
+    const VirtualTag *v_tag = nullptr;
+    for (const auto &t : virtual_tags_) {
+      if (t.type == TAG_ISO15693 && !t.halted) {
+        v_tag = &t;
+        break;
+      }
+    }
+
+    if (v_tag && v_tag->uid.size() == 8) {
+      // Build response: flags(1) + DSFID(1) + UID(8) = 10 bytes, then CRC
+      uint8_t resp[12];
+      resp[0] = 0x00;  // flags: no error
+      resp[1] = 0x00;  // DSFID
+      // UID in LSB-first order (reverse of how it's stored in our UID vector which is MSB-first)
+      for (int i = 0; i < 8; i++)
+        resp[2 + i] = v_tag->uid[7 - i];
+      // Append CRC-16
+      uint16_t crc = sim_iso15693_crc(resp, 10);
+      resp[10] = crc & 0xFF;
+      resp[11] = (crc >> 8) & 0xFF;
+
+      // Manchester-encode the response
+      uint8_t encoded[64];
+      size_t enc_len = sim_manchester_encode(resp, 12, encoded, sizeof(encoded));
+
+      fifo_out_.assign(encoded, encoded + enc_len);
+      pending_irq_main_ = IRQ_TXE | IRQ_RXE;
+
+      ESP_LOGV(TAG, "SIM NFC-V INVENTORY → UID %02X%02X%02X%02X%02X%02X%02X%02X (enc=%u bytes)",
+               v_tag->uid[0], v_tag->uid[1], v_tag->uid[2], v_tag->uid[3],
+               v_tag->uid[4], v_tag->uid[5], v_tag->uid[6], v_tag->uid[7],
+               (unsigned)enc_len);
+    } else {
+      // No ISO15693 tags — NRE
+      pending_irq_main_ = IRQ_TXE;
+      pending_irq_timer_ = 0x40;  // NRE
+      ESP_LOGV(TAG, "SIM NFC-V INVENTORY → no ISO15693 tags");
+    }
+  } else {
+    // Unknown NFC-V command — just TXE + NRE
+    pending_irq_main_ = IRQ_TXE;
+    pending_irq_timer_ = 0x40;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
