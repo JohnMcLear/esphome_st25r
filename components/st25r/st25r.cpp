@@ -169,7 +169,6 @@ void ST25R::update() {
   }
 
   // RX_CONF3: RFAL NFC-A 106 uses 0x00 for all silicon variants.
-  // lf_en=1 (0xE2/0xFE) routes receiver to LF path, hurting 13.56MHz HF sensitivity.
   this->write_register(RX_CONF3, 0x00);
 
   this->saved_anticol_valid_ = false;
@@ -963,8 +962,9 @@ bool ST25R::reset_() {
            vdd_mV, vdd_raw, sup3v ? "3.3V" : "5V");
 
   ESP_LOGV(TAG, "  reset_: Configuring registers");
-  this->write_register(IO_CONF1, 0x00);  // single=0: differential antenna driving (full power)
+  this->write_register(IO_CONF1, 0x07);  // Disable MCU_CLK + LF clock (RFAL default)
   uint8_t io_conf2 = sup3v ? 0x80 : 0x00;  // sup3V based on measured VDD
+  io_conf2 |= 0x18;  // SPI pull-downs (miso_pd1 | miso_pd2)
   if (this->has_aat_)
     io_conf2 |= 0x20;  // aat_en: enable AAT module so ANT_TUNE_A/B drive varicaps
   this->write_register(IO_CONF2, io_conf2);
@@ -990,6 +990,15 @@ bool ST25R::reset_() {
     ESP_LOGI(TAG, "  reset_: ANT_TUNE_A=0x%02X ANT_TUNE_B=0x%02X",
              this->ant_tune_a_, this->ant_tune_b_);
   }
+
+  // RFAL chip-init registers
+  this->write_register(AUX_MOD, 0x10);           // lm_ext=0, lm_dri=1 (external load mod)
+  this->write_register(RES_AM_MOD, 0x80);        // Minimum non-overlap
+  this->write_register(FIELD_THRESHOLD_ACTV, 0x11);   // trg=105mV, rfe=105mV
+  this->write_register(FIELD_THRESHOLD_DEACTV, 0x00); // trg=75mV, rfe=75mV
+  this->write_register(PASSIVE_TARGET, 0x50);    // fdel=5 (FDT aligned to bitgrid)
+  this->write_register(PT_MOD, 0x51);            // Reduce RFO resistance in modulated state
+  this->write_register(EMD_SUP_CONF, 0x40);      // rx_start_emv: start RX on first 4 bits
 
   // RFAL NFC-A 106 TX: overshoot/undershoot protection
   this->write_register(OVERSHOOT_CONF1, 0x40);
