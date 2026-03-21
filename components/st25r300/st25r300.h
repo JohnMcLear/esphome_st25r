@@ -47,6 +47,13 @@ class ST25R300 : public st25r::ST25R {
   bool transceive_no_crc_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len,
                            uint32_t timeout_ms = 150);
 
+  // NFC-V (ISO 15693) blocking inventory scan — called from update() before NFC-A
+  void nfcv_scan_();
+  void configure_nfcv_mode_();
+  void configure_nfca_mode_();
+  bool transceive_nfcv_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len,
+                        uint32_t timeout_ms = 25);
+
   static void isr(ST25R300 *arg);
 
   // ST25R300-specific accumulated IRQ state (3 registers → 2 bytes).
