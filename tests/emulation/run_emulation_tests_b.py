@@ -257,6 +257,55 @@ class TestBVersionMifareAuth:
         proc.wait_for(r"READER1_B_ON_TAG_REMOVED CAFEBABE", timeout=10)
 
 
+class TestBVersionRfalAnalogProfile:
+    """
+    B-version must also get the full RFAL NFC-A 106 analog profile.
+    Same register values as non-B — RFAL doesn't differentiate.
+    """
+
+    def test_rx_conf1_rfal(self, sim_b):
+        proc, ctrl3, ctrl4 = sim_b
+        proc.wait_for(r"Sent WUPA", timeout=5)
+        val = ctrl3.get_reg("0B")
+        assert val == 0x08, f"RX_CONF1 expected 0x08 (RFAL), got 0x{val:02X}"
+
+    def test_rx_conf2_rfal(self, sim_b):
+        proc, ctrl3, ctrl4 = sim_b
+        val = ctrl3.get_reg("0C")
+        assert val == 0x2D, f"RX_CONF2 expected 0x2D (RFAL), got 0x{val:02X}"
+
+    def test_corr_conf1_rfal(self, sim_b):
+        proc, ctrl3, ctrl4 = sim_b
+        val = ctrl3.get_reg("4C")
+        assert val == 0x51, f"CORR_CONF1 expected 0x51 (RFAL), got 0x{val:02X}"
+
+    def test_overshoot_conf1(self, sim_b):
+        proc, ctrl3, ctrl4 = sim_b
+        val = ctrl3.get_reg("70")
+        assert val == 0x40, f"OVERSHOOT_CONF1 expected 0x40, got 0x{val:02X}"
+
+    def test_undershoot_conf1(self, sim_b):
+        proc, ctrl3, ctrl4 = sim_b
+        val = ctrl3.get_reg("72")
+        assert val == 0x40, f"UNDERSHOOT_CONF1 expected 0x40, got 0x{val:02X}"
+
+    def test_aat_enabled(self, sim_b):
+        proc, ctrl3, ctrl4 = sim_b
+        val = ctrl3.get_reg("01")
+        assert val & 0x20 == 0x20, (
+            f"IO_CONF2 aat_en expected 1 for ST25R3916B, got IO_CONF2=0x{val:02X}"
+        )
+
+    def test_vdd_auto_detect(self, sim_b):
+        """B-version must also auto-detect VDD — verify via sup3V register bit."""
+        proc, ctrl3, ctrl4 = sim_b
+        proc.wait_for(r"Sent WUPA", timeout=10)
+        val = ctrl3.get_reg("01")
+        assert val & 0x80 == 0x80, (
+            f"IO_CONF2 sup3V expected 1 for VDD ~3000mV on B-version, got 0x{val:02X}"
+        )
+
+
 class TestBVersionHealthCheck:
     """
     Health check on the B-version (IC identity 0x30) honours all four config options

@@ -240,8 +240,11 @@ uint8_t ST25RSim::read_register(uint8_t reg) {
     case REG_FIFO_STATUS1:  return (uint8_t)std::min(fifo_out_.size(), (size_t)255);
     case REG_FIFO_STATUS2:  { uint8_t v = fifo_status2_; fifo_status2_ = 0; return v; }
     case REG_COLLISION_DISPLAY: return collision_display_;
-    case REG_AD_CONV_RESULT:    return 0x80;
-    default:                    return regs_[reg & 0x3F];
+    case REG_AD_CONV_RESULT:    return ad_conv_result_;
+    default:
+      if (reg & 0x40)
+        return space_b_regs_[reg & 0x3F];
+      return regs_[reg & 0x3F];
   }
 }
 
@@ -250,7 +253,10 @@ uint8_t ST25RSim::read_register(uint8_t reg) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void ST25RSim::write_register(uint8_t reg, uint8_t value) {
-  regs_[reg & 0x3F] = value;
+  if (reg & 0x40)
+    space_b_regs_[reg & 0x3F] = value;
+  else
+    regs_[reg & 0x3F] = value;
 }
 
 void ST25RSim::write_fifo(const uint8_t *data, size_t len) {
@@ -274,6 +280,7 @@ void ST25RSim::write_command(uint8_t command) {
   switch (command) {
     case 0xC1:  // SET_DEFAULT
       memset(regs_, 0, sizeof(regs_));
+      memset(space_b_regs_, 0, sizeof(space_b_regs_));
       pending_irq_main_  = 0;
       pending_irq_timer_ = 0;
       fifo_in_.clear();
@@ -306,6 +313,10 @@ void ST25RSim::write_command(uint8_t command) {
     // No-ops
     case 0xC8: case 0xC9: case 0xCD: case 0xCE:
     case 0xD3: case 0xD5: case 0xD6:
+      break;
+
+    case 0xDF:  // MEASURE_VDD — store vdd_raw_ so next read of AD_CONV_RESULT returns it
+      ad_conv_result_ = vdd_raw_;
       break;
 
     default:
@@ -1010,11 +1021,18 @@ void ST25RSim::handle_client_(int fd) {
     ic_identity_ = (uint8_t)val;
     ESP_LOGI(TAG, "SIM socket: SET_IC_IDENTITY 0x%02X", ic_identity_);
 
+  } else if (tok[0] == "SET_VDD" && tok.size() >= 2) {
+    char *end;
+    unsigned long val = strtoul(tok[1].c_str(), &end, 16);
+    vdd_raw_ = (uint8_t)val;
+    ESP_LOGI(TAG, "SIM socket: SET_VDD 0x%02X", vdd_raw_);
+
   } else if (tok[0] == "GET_REG" && tok.size() >= 2) {
     char *end;
     unsigned long addr = strtoul(tok[1].c_str(), &end, 16);
+    uint8_t val = (addr & 0x40) ? space_b_regs_[addr & 0x3F] : regs_[addr & 0x3F];
     char out[16];
-    snprintf(out, sizeof(out), "0x%02X\n", regs_[addr & 0x3F]);
+    snprintf(out, sizeof(out), "0x%02X\n", val);
     send(fd, out, strlen(out), 0);
     return;
 
