@@ -306,6 +306,43 @@ class TestBVersionRfalAnalogProfile:
         )
 
 
+class TestBVersionChipInitRegisters:
+    """B-version must also get the full RFAL chip-init registers."""
+
+    def test_io_conf1(self, sim_b):
+        proc, ctrl3, ctrl4 = sim_b
+        proc.wait_for(r"Sent WUPA", timeout=5)
+        val = ctrl3.get_reg("00")
+        assert val == 0x07, f"IO_CONF1 expected 0x07, got 0x{val:02X}"
+
+    def test_io_conf2_spi_pulldowns(self, sim_b):
+        proc, ctrl3, ctrl4 = sim_b
+        val = ctrl3.get_reg("01")
+        assert val & 0x18 == 0x18, (
+            f"IO_CONF2 SPI pulldowns (bits[4:3]) expected set, got 0x{val:02X}"
+        )
+
+    def test_pt_mod(self, sim_b):
+        proc, ctrl3, ctrl4 = sim_b
+        val = ctrl3.get_reg("29")
+        assert val == 0x51, f"PT_MOD expected 0x51, got 0x{val:02X}"
+
+    def test_emd_sup_conf(self, sim_b):
+        proc, ctrl3, ctrl4 = sim_b
+        val = ctrl3.get_reg("45")
+        assert val == 0x40, f"EMD_SUP_CONF expected 0x40, got 0x{val:02X}"
+
+    def test_aux_mod(self, sim_b):
+        proc, ctrl3, ctrl4 = sim_b
+        val = ctrl3.get_reg("68")
+        assert val == 0x10, f"AUX_MOD expected 0x10, got 0x{val:02X}"
+
+    def test_res_am_mod(self, sim_b):
+        proc, ctrl3, ctrl4 = sim_b
+        val = ctrl3.get_reg("6A")
+        assert val == 0x80, f"RES_AM_MOD expected 0x80, got 0x{val:02X}"
+
+
 class TestBVersionHealthCheck:
     """
     Health check on the B-version (IC identity 0x30) honours all four config options
