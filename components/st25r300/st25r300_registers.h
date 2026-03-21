@@ -135,5 +135,12 @@ static const uint8_t ST25R300_FIFO_READ_BYTE  = 0xDF; // SPI byte to start FIFO 
 static const uint8_t ST25R300_IC_TYPE_MASK    = 0xF8; // ic_type[7:3]
 static const uint8_t ST25R300_IC_TYPE_VAL     = 0xB0; // 10110_000b = 0xB0 for ST25R300
 
+// ── NFC-V (ISO 15693) protocol constants ─────────────────────────────────────
+static const uint8_t NFCV_CMD_INVENTORY   = 0x01;
+static const uint8_t NFCV_CMD_STAY_QUIET  = 0x02;
+static const uint8_t NFCV_INV_FLAG_1SLOT  = 0x26;  // high data rate + inventory + 1-slot
+static const uint8_t NFCV_SLPV_FLAG       = 0x22;  // high data rate + addressed
+static const uint8_t NFCV_UID_LEN         = 8;
+
 }  // namespace st25r300
 }  // namespace esphome

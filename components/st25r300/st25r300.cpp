@@ -94,6 +94,9 @@ void ST25R300::update() {
     this->field_strength_sensor_->publish_state(sense);
   }
 
+  // NFC-V (ISO 15693) blocking inventory — fast (~25ms), runs before NFC-A scan
+  this->nfcv_scan_();
+
   this->saved_anticol_valid_ = false;
   this->anticol_resume_ = false;
 
@@ -557,6 +560,165 @@ void ST25R300::dump_config() {
   uint8_t ic_id = this->read_register(ST25R300_REG_IC_IDENTITY);
   ESP_LOGCONFIG(TAG, "  IC Identity (live): 0x%02X (chip_type=0x%02X)", ic_id,
                 ic_id & ST25R300_IC_TYPE_MASK);
+}
+
+// ── NFC-V (ISO 15693) support ────────────────────────────────────────────────
+
+void ST25R300::configure_nfcv_mode_() {
+  this->write_register(ST25R300_REG_GENERAL_CONF, 0x02);    // nfc_n=2 (NFC-V subcarrier config)
+  this->write_register(ST25R300_REG_PROTOCOL1, 0x05);      // om=5: NFC-V/ISO15693
+  this->write_register(ST25R300_REG_TX_PROTOCOL1, 0x20);   // tx_crc only (no parity)
+  this->write_register(ST25R300_REG_RX_PROTOCOL1,
+                       ST25R300_RX_PROT1_B_RX_SOF | ST25R300_RX_PROT1_B_RX_EOF |
+                       ST25R300_RX_PROT1_RX_CRC);  // 0x34: SOF+EOF+CRC (no parity, no antcl)
+  // TX modulation: OOK (97% ASK) for NFC-V 26kbps — RFAL analogConfigTbl
+  this->write_register(ST25R300_REG_TX_MOD1, 0x00);  // am_mod=0 → OOK
+  // RX analog + correlator: RFAL ST25R500 NFC-V 26kbps profile
+  this->write_register(ST25R300_REG_RX_ANALOG1, 0x71);  // dig_clk_dly=7, hpf_ctrl=1
+  this->write_register(0x0D, 0x50);  // RX_DIG: lpf_coef + hpf_coef for NFC-V
+  this->write_register(0x0E, 0xD0);  // CORR1
+  this->write_register(0x0F, 0x2A);  // CORR2
+  this->write_register(0x10, 0x08);  // CORR3: start_wait=8
+  this->write_register(0x11, 0xAA);  // CORR4: coll_lvl=A, data_lvl=A
+  this->write_register(0x12, 0xCC);  // CORR5
+  this->write_register(0x13, 0x10);  // CORR6
+  // NRT: ~20ms for NFC-V (4233 steps at 4.72µs/step)
+  this->write_register(ST25R300_REG_NRT_CONF2, 0x10);
+  this->write_register(ST25R300_REG_NRT_CONF3, 0x89);
+}
+
+void ST25R300::configure_nfca_mode_() {
+  this->write_register(ST25R300_REG_GENERAL_CONF, 0x00);    // nfc_n=0 (NFC-A)
+  this->write_register(ST25R300_REG_PROTOCOL1, 0x01);      // om=1: NFC-A
+  this->write_register(ST25R300_REG_TX_PROTOCOL1,
+                       ST25R300_TX_PROT1_A_TX_PAR | ST25R300_TX_PROT1_TX_CRC);  // 0x60
+  this->write_register(ST25R300_REG_RX_PROTOCOL1,
+                       ST25R300_RX_PROT1_B_RX_SOF | ST25R300_RX_PROT1_B_RX_EOF |
+                       ST25R300_RX_PROT1_A_RX_PAR | ST25R300_RX_PROT1_RX_CRC);  // 0x3C
+  // Restore NFC-A TX modulation + RX analog + correlator
+  this->write_register(ST25R300_REG_TX_MOD1, 0x70);  // am_mod=7 (20% ASK)
+  uint8_t rx_ana1 = 0x73 | (this->rx_gain_boost_ ? 0x04 : 0x00);
+  this->write_register(ST25R300_REG_RX_ANALOG1, rx_ana1);
+  this->write_register(0x0D, 0xCC);
+  this->write_register(0x0E, 0xF8);
+  this->write_register(0x0F, 0x2E);
+  this->write_register(0x10, 0x0F);
+  this->write_register(0x11, 0x88);
+  this->write_register(0x12, 0x32);
+  this->write_register(0x13, 0x20);
+  // NRT: ~5ms for NFC-A
+  this->write_register(ST25R300_REG_NRT_CONF2, 0x04);
+  this->write_register(ST25R300_REG_NRT_CONF3, 0x23);
+}
+
+bool ST25R300::transceive_nfcv_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len,
+                                 uint32_t timeout_ms) {
+  this->write_command(ST25R300_CMD_CLEAR_FIFO);
+  this->write_command(ST25R300_CMD_CLEAR_RX_GAIN);
+
+  // Set TX frame length (full bytes, 0 partial bits)
+  this->write_register(ST25R300_REG_TX_FRAME1, len >> 5);
+  this->write_register(ST25R300_REG_TX_FRAME2, (len & 0x1F) << 3);
+
+  // Load FIFO and transmit
+  this->write_fifo(data, len);
+
+  this->read_register(ST25R300_REG_IRQ_STATUS1);
+  this->read_register(ST25R300_REG_IRQ_STATUS2);
+  this->irq_triggered_ = false;
+  this->write_command(ST25R300_CMD_TRANSMIT_DATA);
+
+  // Wait for response
+  uint32_t start = millis();
+  while (millis() - start < timeout_ms) {
+    if (this->irq_triggered_) {
+      this->irq_triggered_ = false;
+      uint8_t r1 = this->read_register(ST25R300_REG_IRQ_STATUS1);
+      uint8_t r2 = this->read_register(ST25R300_REG_IRQ_STATUS2);
+      ESP_LOGV(TAG, "NFC-V IRQ: r1=0x%02X r2=0x%02X", r1, r2);
+      if (r1 & ST25R300_IRQ1_RXE) {
+        // Read FIFO
+        uint8_t fifo_len = this->read_register(ST25R300_REG_FIFO_STATUS1);
+        if (fifo_len > 0 && fifo_len <= 64) {
+          resp_len = fifo_len;
+          this->read_fifo(resp, fifo_len);
+          return true;
+        }
+        return false;
+      }
+      if (r2 & ST25R300_IRQ2_NRE) {
+        return false;  // No response
+      }
+    }
+    delay(1);
+  }
+  return false;
+}
+
+void ST25R300::nfcv_scan_() {
+  // Switch to NFC-V mode
+  this->configure_nfcv_mode_();
+
+  ESP_LOGV(TAG, "NFC-V: starting inventory scan");
+
+  // 1-slot INVENTORY: [flags=0x26, cmd=0x01, mask_len=0x00]
+  uint8_t inv_req[] = {NFCV_INV_FLAG_1SLOT, NFCV_CMD_INVENTORY, 0x00};
+  uint8_t resp[12];
+  uint8_t resp_len = 0;
+
+  // Loop: inventory → record UID → stay quiet → repeat until no response
+  for (int i = 0; i < 16; i++) {  // max 16 NFC-V tags per scan
+    resp_len = 0;
+    if (!this->transceive_nfcv_(inv_req, sizeof(inv_req), resp, resp_len, 25)) {
+      break;  // No more tags
+    }
+
+    // Response (CRC stripped by chip): flags(1) + DSFID(1) + UID(8) = 10 bytes
+    if (resp_len < 10) {
+      ESP_LOGW(TAG, "NFC-V: short inventory response (%u bytes)", resp_len);
+      break;
+    }
+
+    // Check flags byte — bit0=error
+    if (resp[0] & 0x01) {
+      ESP_LOGD(TAG, "NFC-V: inventory error flag set (0x%02X)", resp[0]);
+      break;
+    }
+
+    // UID is bytes 2-9, transmitted LSB-first — reverse for display
+    char uid_str[17];
+    for (int j = 0; j < 8; j++) {
+      snprintf(uid_str + j * 2, 3, "%02X", resp[9 - j]);  // reverse: resp[9]..resp[2]
+    }
+    uid_str[16] = '\0';
+    ESP_LOGI(TAG, "NFC-V tag: %s (DSFID=0x%02X)", uid_str, resp[1]);
+
+    // Add to this scan's tag set (shared with NFC-A tags)
+    std::string uid_string(uid_str);
+    this->tags_this_scan_.insert(uid_string);
+
+    // Fire on_tag if this is a new tag
+    if (this->present_tags_.find(uid_string) == this->present_tags_.end()) {
+      this->present_tags_[uid_string] = 0;
+
+      std::vector<uint8_t> uid_bytes;
+      for (int j = 0; j < 8; j++)
+        uid_bytes.push_back(resp[9 - j]);
+
+      auto tag = make_unique<nfc::NfcTag>(nfc::NfcTagUid(uid_bytes.begin(), uid_bytes.end()));
+      for (auto *listener : this->tag_listeners_)
+        listener->tag_on(*tag);
+      for (auto *trigger : this->on_tag_triggers_)
+        trigger->trigger(uid_string);
+    }
+
+    // For single-tag MVP, skip STAY_QUIET — tag stays responsive across scans.
+    // Multi-tag requires STAY_QUIET + field cycling between update() cycles.
+    break;  // One tag per scan for now
+  }
+
+  // Switch back to NFC-A mode for the main scan
+  this->configure_nfca_mode_();
 }
 
 }  // namespace st25r300

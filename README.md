@@ -3,7 +3,7 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![ESPHome](https://img.shields.io/badge/ESPHome-compatible-green.svg)](https://esphome.io)
 
-ESPHome external component for STMicroelectronics ST25R family NFC readers. Detects ISO14443A tags, fires automations on tag present/removed, reads NDEF, and exposes sensors to Home Assistant.
+ESPHome external component for STMicroelectronics ST25R family NFC readers. Detects ISO 14443A (NFC-A) and ISO 15693 (NFC-V) tags, fires automations on tag present/removed, reads NDEF, and exposes sensors to Home Assistant.
 
 ---
 
@@ -57,7 +57,7 @@ Flash, open logs — you should see `ST25R initialized successfully` and then a 
 | `update_interval` | `1s` | Tag polling rate |
 | `rf_power` | `15` | TX driver strength 0–15 (15 = max range) |
 | `rf_field_enabled` | `true` | Keep RF field on between scans |
-| `supply_3v3` | `true` | Set `true` for 3.3V supply |
+| `supply_3v3` | `true` | Set `true` for 3.3V supply (ST25R3916 auto-detects VDD and overrides) |
 | `mifare_key_a` | `FFFFFFFFFFFF` | Mifare Classic Key A (12 hex chars) |
 | `mifare_key_b` | `FFFFFFFFFFFF` | Mifare Classic Key B (12 hex chars) |
 | `health_check_enabled` | `true` | Periodically verify chip identity via IC_IDENTITY register |
@@ -151,12 +151,16 @@ st25r_i2c:
 
 ## Features
 
-- ISO14443A: 4-byte, 7-byte, and 10-byte UIDs (Cascade Levels 1–3)
-- Multi-tag detection — anticollision loop finds all tags simultaneously
+- **ISO 14443A (NFC-A):** 4-byte, 7-byte, and 10-byte UIDs (Cascade Levels 1–3)
+- **ISO 15693 (NFC-V):** 8-byte UID detection, dual-protocol with NFC-A
+  - ST25R3916: software 1-of-4 encoding + Manchester decoding (streaming mode)
+  - ST25R300: built-in hardware NFC-V codec
+- Multi-tag detection — anticollision loop finds all NFC-A tags simultaneously
 - Mifare Classic Crypto1 authentication and block read
 - NDEF read/write for Type 2 tags (NTAG / Ultralight)
 - Tag presence/removal triggers with 3-miss debounce
 - Binary sensor platform for specific-tag tracking
+- VDD auto-detection for optimal regulator configuration
 - Chip health monitoring with automatic recovery
 - RF field strength sensor
 - Configurable RF power and Mifare Classic keys

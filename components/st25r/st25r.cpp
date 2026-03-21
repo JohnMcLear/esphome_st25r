@@ -168,6 +168,9 @@ void ST25R::update() {
     this->field_strength_sensor_->publish_state(amplitude);
   }
 
+  // NFC-V (ISO 15693) blocking inventory via streaming mode — runs before NFC-A
+  this->nfcv_scan_();
+
   // RX_CONF3: RFAL NFC-A 106 uses 0x00 for all silicon variants.
   this->write_register(RX_CONF3, 0x00);
 
@@ -1157,6 +1160,234 @@ void ST25R::field_on_() {
   delay(10);
   this->write_register(OP_CONTROL, 0xC8); // en=1, rx_en=1, tx_en=1
   this->write_command(ST25R_CMD_ADJUST_REGULATORS);
+}
+
+// ── NFC-V (ISO 15693) streaming mode for ST25R3916 ──────────────────────────
+
+// ISO 15693 CRC-16 CCITT (preset=0xFFFF, poly=0x8408, result inverted)
+uint16_t ST25R::iso15693_crc_(const uint8_t *data, size_t len) {
+  uint16_t crc = 0xFFFF;
+  for (size_t i = 0; i < len; i++) {
+    uint8_t d = data[i] ^ (uint8_t)(crc & 0xFF);
+    d ^= (d << 4);
+    crc = (crc >> 8) ^ ((uint16_t)d << 8) ^ ((uint16_t)d << 3) ^ ((uint16_t)d >> 4);
+  }
+  return ~crc;
+}
+
+// 1-of-4 VCD encoding: each byte → 4 output bytes (SOF + data + CRC + EOF)
+static const uint8_t ISO15693_1OF4_SOF = 0x21;
+static const uint8_t ISO15693_1OF4_EOF = 0x04;
+static const uint8_t ISO15693_1OF4_MAP[4] = {0x02, 0x08, 0x20, 0x80};
+
+size_t ST25R::iso15693_encode_1of4_(const uint8_t *data, size_t len, bool add_crc,
+                                     uint8_t *out, size_t out_max) {
+  size_t pos = 0;
+  if (out_max < 1 + (len + 2) * 4 + 1) return 0;
+
+  // SOF
+  out[pos++] = ISO15693_1OF4_SOF;
+
+  // Encode data bytes
+  for (size_t i = 0; i < len; i++) {
+    uint8_t b = data[i];
+    for (int j = 0; j < 4; j++) {
+      out[pos++] = ISO15693_1OF4_MAP[b & 0x03];
+      b >>= 2;
+    }
+  }
+
+  // Encode CRC
+  if (add_crc) {
+    uint16_t crc = iso15693_crc_(data, len);
+    uint8_t crc_bytes[2] = {(uint8_t)(crc & 0xFF), (uint8_t)(crc >> 8)};
+    for (int c = 0; c < 2; c++) {
+      uint8_t b = crc_bytes[c];
+      for (int j = 0; j < 4; j++) {
+        out[pos++] = ISO15693_1OF4_MAP[b & 0x03];
+        b >>= 2;
+      }
+    }
+  }
+
+  // EOF
+  out[pos++] = ISO15693_1OF4_EOF;
+  return pos;
+}
+
+// Manchester VICC decoding: subcarrier stream → payload bytes
+size_t ST25R::iso15693_decode_manchester_(const uint8_t *in, size_t in_len, uint8_t *out, size_t out_max) {
+  if (in_len == 0 || out_max == 0) return 0;
+
+  // Check SOF: first 5 bits should be 0x17 (10111 = 3 unmodulated + 2 modulated)
+  if ((in[0] & 0x1F) != 0x17) return 0;
+
+  memset(out, 0, out_max);
+  size_t mp = 5;  // Manchester bit position (after SOF)
+  size_t bp = 0;  // Output bit position
+
+  for (; mp < (in_len * 8 - 2); mp += 2) {
+    uint8_t man = (in[mp / 8] >> (mp % 8)) & 0x01;
+    man |= ((in[(mp + 1) / 8] >> ((mp + 1) % 8)) & 0x01) << 1;
+
+    if (man == 1) {
+      bp++;  // bit = 0
+    } else if (man == 2) {
+      out[bp / 8] |= (1 << (bp % 8));  // bit = 1
+      bp++;
+    } else {
+      // Check for EOF: 10111000 pattern
+      if ((bp % 8) == 0 && (in[mp / 8] & 0xE0) == 0xA0 && in[mp / 8 + 1] == 0x03) {
+        break;  // EOF found
+      }
+      break;  // collision or invalid
+    }
+
+    if (bp >= out_max * 8) break;
+  }
+
+  return bp / 8;  // return complete bytes
+}
+
+void ST25R::configure_nfcv_stream_mode_() {
+  // RFAL NFC-V analog config: RX_CONF1=0x13, RX_CONF2=0x2D, CORR_CONF1=0x13, CORR_CONF2=0x01
+  this->write_register(RX_CONF1, 0x13);
+  this->write_register(RX_CONF2, 0x2D);
+  this->write_register(RX_CONF3, 0x00);
+  this->write_register(RX_CONF4, 0x00);
+  this->write_register(CORR_CONF1, 0x13);
+  this->write_register(CORR_CONF2, 0x01);
+
+  // STREAM_MODE register: din=5 (423.75kHz subcarrier), dout=7 (105.9kHz TX), report_period=3 (8 clocks)
+  // smd = ((6-din) << 5) | ((7-dout) << 0) | (report_period << 3)
+  uint8_t smd = ((6 - 5) << 5) | ((7 - 7) << 0) | (3 << 3);  // = 0x38
+  this->write_register(STREAM_MODE, smd);
+
+  // MODE: om=0x0E (subcarrier_stream) → bits[6:3] = 0x70
+  // Preserve other MODE bits (targ=0 for initiator, tr_am from current config)
+  this->write_register(MODE, 0x70);  // om=subcarrier_stream, initiator
+
+  // Disable overshoot/undershoot for NFC-V TX (RFAL CHIP_POLL_COMMON)
+  this->write_register(OVERSHOOT_CONF1, 0x00);
+  this->write_register(OVERSHOOT_CONF2, 0x00);
+  this->write_register(UNDERSHOOT_CONF1, 0x00);
+  this->write_register(UNDERSHOOT_CONF2, 0x00);
+}
+
+void ST25R::restore_nfca_mode_() {
+  // Restore NFC-A 106 settings
+  this->write_register(MODE, 0x08);
+  this->write_register(RX_CONF1, 0x08);
+  this->write_register(RX_CONF2, 0x2D);
+  this->write_register(RX_CONF3, 0x00);
+  this->write_register(RX_CONF4, 0x00);
+  this->write_register(CORR_CONF1, 0x51);
+  this->write_register(CORR_CONF2, 0x00);
+  // Restore overshoot/undershoot protection
+  this->write_register(OVERSHOOT_CONF1, 0x40);
+  this->write_register(OVERSHOOT_CONF2, 0x03);
+  this->write_register(UNDERSHOOT_CONF1, 0x40);
+  this->write_register(UNDERSHOOT_CONF2, 0x03);
+}
+
+bool ST25R::transceive_nfcv_stream_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len,
+                                     uint32_t timeout_ms) {
+  // Encode command using 1-of-4 coding with CRC
+  uint8_t coded[128];
+  // Set high data rate flag and clear dual subcarrier
+  uint8_t cmd_buf[16];
+  if (len > sizeof(cmd_buf)) return false;
+  memcpy(cmd_buf, data, len);
+  cmd_buf[0] |= 0x02;   // high data rate
+  cmd_buf[0] &= ~0x01;  // single subcarrier
+
+  size_t coded_len = iso15693_encode_1of4_(cmd_buf, len, true, coded, sizeof(coded));
+  if (coded_len == 0) return false;
+
+  this->write_command(ST25R_CMD_STOP_ALL);
+  this->write_command(ST25R_CMD_CLEAR_FIFO);
+
+  // Set TX frame: total sub-bits (not bytes!)
+  // For 1-of-4: each coded byte = 1 sub-bit in stream mode
+  uint16_t subbits = coded_len;
+  this->write_register(NUM_TX_BYTES1, subbits >> 5);
+  this->write_register(NUM_TX_BYTES2, (subbits & 0x1F) << 3);
+
+  this->write_fifo(coded, coded_len);
+
+  this->read_register(IRQ_MAIN);
+  this->read_register(IRQ_TIMER);
+  this->irq_triggered_ = false;
+  this->write_command(ST25R_CMD_TRANSMIT_WITHOUT_CRC);  // Manual CRC (already encoded)
+
+  // Wait for response
+  uint32_t start = millis();
+  while (millis() - start < timeout_ms) {
+    uint8_t irq = this->read_register(IRQ_MAIN);
+    uint8_t irq_t = this->read_register(IRQ_TIMER);
+    if (irq & 0x10) {  // RXE
+      uint8_t fifo_len = this->read_register(FIFO_STATUS1);
+      if (fifo_len > 0 && fifo_len <= 64) {
+        uint8_t raw[64];
+        this->read_fifo(raw, fifo_len);
+        // Decode Manchester
+        uint8_t decoded[32];
+        size_t dec_len = iso15693_decode_manchester_(raw, fifo_len, decoded, sizeof(decoded));
+        if (dec_len >= 3) {  // At least flags + CRC(2)
+          // Verify CRC
+          uint16_t crc = iso15693_crc_(decoded, dec_len - 2);
+          if ((crc & 0xFF) == decoded[dec_len - 2] && (crc >> 8) == decoded[dec_len - 1]) {
+            // Strip CRC
+            resp_len = dec_len - 2;
+            memcpy(resp, decoded, resp_len);
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+    if (irq_t & 0x40) {  // NRE
+      return false;
+    }
+    delay(1);
+  }
+  return false;
+}
+
+void ST25R::nfcv_scan_() {
+  this->configure_nfcv_stream_mode_();
+
+  uint8_t inv_req[] = {0x26, 0x01, 0x00};  // flags, INVENTORY, mask_len=0
+  uint8_t resp[16];
+  uint8_t resp_len = 0;
+
+  if (this->transceive_nfcv_stream_(inv_req, sizeof(inv_req), resp, resp_len, 30)) {
+    if (resp_len >= 10 && !(resp[0] & 0x01)) {
+      // Parse UID (bytes 2-9, LSB-first → reverse for display)
+      char uid_str[17];
+      for (int j = 0; j < 8; j++)
+        snprintf(uid_str + j * 2, 3, "%02X", resp[9 - j]);
+      uid_str[16] = '\0';
+      ESP_LOGI(TAG, "NFC-V tag: %s (DSFID=0x%02X)", uid_str, resp[1]);
+
+      std::string uid_string(uid_str);
+      this->tags_this_scan_.insert(uid_string);
+
+      if (this->present_tags_.find(uid_string) == this->present_tags_.end()) {
+        this->present_tags_[uid_string] = 0;
+        std::vector<uint8_t> uid_bytes;
+        for (int j = 0; j < 8; j++)
+          uid_bytes.push_back(resp[9 - j]);
+        auto tag = make_unique<nfc::NfcTag>(nfc::NfcTagUid(uid_bytes.begin(), uid_bytes.end()));
+        for (auto *listener : this->tag_listeners_)
+          listener->tag_on(*tag);
+        for (auto *trigger : this->on_tag_triggers_)
+          trigger->trigger(uid_string);
+      }
+    }
+  }
+
+  this->restore_nfca_mode_();
 }
 
 bool ST25R::ndef_write(nfc::NdefMessage *message, bool format) {
