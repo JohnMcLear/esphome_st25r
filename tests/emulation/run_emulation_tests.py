@@ -845,16 +845,22 @@ class TestInitRegisters:
             f"Regression: am_mod!=0 means tags never respond to WUPA/REQA."
         )
 
-    def test_io_conf2_supply_and_aat(self, sim):
-        """IO_CONF2 must have sup3V from VDD auto-detect and aat_en for ST25R3916."""
+    def test_io_conf2_full(self, sim):
+        """IO_CONF2 must have sup3V + SPI pulldowns + aat_en."""
         proc, ctrl1, ctrl2 = sim
         val = ctrl1.get_reg("01")
         # Sim VDD raw=0x80 → ~3000mV < 3600 → sup3V=1 (bit7=0x80)
+        # SPI pull-downs: miso_pd1|miso_pd2 (bits[4:3]=0x18)
         # ST25R3916 has AAT → aat_en=1 (bit5=0x20)
-        assert val == 0xA0, (
-            f"IO_CONF2 expected 0xA0 (sup3V=1 + aat_en=1), got 0x{val:02X}. "
-            f"sup3V is auto-detected from VDD; aat_en enables antenna tuning DACs."
+        assert val == 0xB8, (
+            f"IO_CONF2 expected 0xB8 (sup3V + spi_pd + aat_en), got 0x{val:02X}"
         )
+
+    def test_io_conf1_rfal(self, sim):
+        """IO_CONF1 must be 0x07 (disable MCU_CLK + LF clock)."""
+        proc, ctrl1, ctrl2 = sim
+        val = ctrl1.get_reg("00")
+        assert val == 0x07, f"IO_CONF1 expected 0x07 (RFAL default), got 0x{val:02X}"
 
     def test_mode_iso14443a(self, sim):
         """MODE register must be 0x08 (ISO14443A initiator)."""
@@ -980,6 +986,56 @@ class TestVddAutoDetect:
         assert val & 0x20 == 0x20, (
             f"IO_CONF2 aat_en expected 1 for ST25R3916, got IO_CONF2=0x{val:02X}"
         )
+
+
+class TestChipInitRegisters:
+    """
+    RFAL chip-init registers that improve range by configuring the RF front-end.
+    These are written once during reset_() and must persist across scan cycles.
+    """
+
+    def test_res_am_mod(self, sim):
+        """RES_AM_MOD (Space B 0x6A) must be 0x80 (minimum non-overlap)."""
+        proc, ctrl1, ctrl2 = sim
+        proc.wait_for(r"Sent WUPA", timeout=5)
+        val = ctrl1.get_reg("6A")
+        assert val == 0x80, f"RES_AM_MOD expected 0x80, got 0x{val:02X}"
+
+    def test_field_threshold_actv(self, sim):
+        """FIELD_THRESHOLD_ACTV must be 0x11 (trg=105mV, rfe=105mV)."""
+        proc, ctrl1, ctrl2 = sim
+        val = ctrl1.get_reg("2A")
+        assert val == 0x11, f"FIELD_THRESHOLD_ACTV expected 0x11, got 0x{val:02X}"
+
+    def test_field_threshold_deactv(self, sim):
+        """FIELD_THRESHOLD_DEACTV must be 0x00 (trg=75mV, rfe=75mV)."""
+        proc, ctrl1, ctrl2 = sim
+        val = ctrl1.get_reg("2B")
+        assert val == 0x00, f"FIELD_THRESHOLD_DEACTV expected 0x00, got 0x{val:02X}"
+
+    def test_aux_mod(self, sim):
+        """AUX_MOD (Space B 0x68) must be 0x10 (external load modulation)."""
+        proc, ctrl1, ctrl2 = sim
+        val = ctrl1.get_reg("68")
+        assert val == 0x10, f"AUX_MOD expected 0x10, got 0x{val:02X}"
+
+    def test_passive_target(self, sim):
+        """PASSIVE_TARGET must be 0x50 (fdel=5, FDT aligned to bitgrid)."""
+        proc, ctrl1, ctrl2 = sim
+        val = ctrl1.get_reg("08")
+        assert val == 0x50, f"PASSIVE_TARGET expected 0x50, got 0x{val:02X}"
+
+    def test_pt_mod(self, sim):
+        """PT_MOD must be 0x51 (reduced RFO resistance in modulated state)."""
+        proc, ctrl1, ctrl2 = sim
+        val = ctrl1.get_reg("29")
+        assert val == 0x51, f"PT_MOD expected 0x51, got 0x{val:02X}"
+
+    def test_emd_sup_conf(self, sim):
+        """EMD_SUP_CONF (Space B 0x45) must be 0x40 (rx_start_emv on first 4 bits)."""
+        proc, ctrl1, ctrl2 = sim
+        val = ctrl1.get_reg("45")
+        assert val == 0x40, f"EMD_SUP_CONF expected 0x40, got 0x{val:02X}"
 
 
 class TestHealthCheck:
