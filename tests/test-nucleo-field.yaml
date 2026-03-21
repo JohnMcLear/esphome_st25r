@@ -1,0 +1,93 @@
+esphome:
+  name: st25r300-field-test
+  friendly_name: ST25R300 Field Test
+
+# X-NUCLEO-NFC12A1 on ESP32-C6
+# Wiring: CLK=GPIO19, MISO=GPIO10, MOSI=GPIO18, CS=GPIO6, IRQ=GPIO7, RESET=GPIO8
+# Flash: esphome run tests/test-nucleo-field.yaml --device /dev/ttyACM0
+
+esp32:
+  board: esp32-c6-devkitc-1
+  variant: esp32c6
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG: "y"
+      CONFIG_ESP_CONSOLE_UART_DEFAULT: "n"
+      CONFIG_ESP_CONSOLE_SECONDARY_NONE: "y"
+
+# VERBOSE to see SAK, tag type decisions, NDEF TLV parsing, auth steps
+logger:
+  level: VERBOSE
+  hardware_uart: USB_SERIAL_JTAG
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [st25r, st25r300, st25r300_spi]
+
+spi:
+  clk_pin: GPIO19
+  miso_pin: GPIO10
+  mosi_pin: GPIO18
+
+output:
+  - platform: gpio
+    pin: GPIO2
+    id: led
+
+st25r300_spi:
+  id: my_st25r
+  cs_pin: GPIO6
+  irq_pin: GPIO7
+  reset_pin: GPIO8
+  rf_power: 15
+  update_interval: 1s
+
+  # Default Mifare Classic key A — covers most factory cards
+  mifare_key_a: FFFFFFFFFFFF
+  mifare_key_b: FFFFFFFFFFFF
+
+  # Health check: verify chip is alive every 30s
+  health_check_enabled: true
+  health_check_interval: 30s
+  max_failed_checks: 3
+  auto_reset_on_failure: true
+
+  status:
+    name: "ST25R300 Status"
+    on_state:
+      - logger.log:
+          format: "=== READER STATUS: %s ==="
+          args: ['x ? "OK" : "FAULT"']
+
+  field_strength:
+    name: "ST25R300 Field Strength"
+    on_value:
+      - logger.log:
+          format: "Field strength: %.0f"
+          args: ['x']
+
+  on_tag:
+    then:
+      - output.turn_on: led
+      - logger.log:
+          format: "============================================"
+      - logger.log:
+          format: "TAG DETECTED: %s"
+          args: ['x.c_str()']
+      - logger.log:
+          format: "  UID length: %d bytes"
+          args: ['(int)(x.length() / 2)']
+      - logger.log:
+          format: "============================================"
+
+  on_tag_removed:
+    then:
+      - output.turn_off: led
+      - logger.log:
+          format: "TAG REMOVED:  %s"
+          args: ['x.c_str()']
+      - logger.log:
+          format: "--------------------------------------------"

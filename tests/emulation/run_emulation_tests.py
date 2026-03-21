@@ -988,6 +988,74 @@ class TestVddAutoDetect:
         )
 
 
+class TestNfcvTagDetection:
+    """
+    ISO 15693 (NFC-V) tag detection via streaming mode.
+
+    The firmware runs nfcv_scan_() before each NFC-A WUPA, switching to
+    streaming mode (MODE=0x70), sending a 1-of-4 encoded INVENTORY, and
+    Manchester-decoding the response. The sim must encode the response
+    in Manchester format for the firmware to decode.
+    """
+
+    NFCV_UID = "E00208024FEFE7E1"  # 8-byte ISO 15693 UID
+
+    def test_nfcv_tag_detected_and_trigger_fires(self, sim):
+        """ISO 15693 tag detected via NFC-V inventory; on_tag trigger fires."""
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        ctrl1.add_tag(self.NFCV_UID, tag_type="ISO15693")
+        proc.wait_for(rf"NFC-V tag: {self.NFCV_UID}", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG {self.NFCV_UID}", timeout=5)
+
+    def test_nfcv_tag_removed(self, sim):
+        """Removing an NFC-V tag fires on_tag_removed."""
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        ctrl1.remove_tag(self.NFCV_UID)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.NFCV_UID}", timeout=10)
+
+    def test_nfcv_no_tag_no_crash(self, sim):
+        """NFC-V inventory with no ISO15693 tags doesn't crash or stall."""
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        # No NFC-V tags present — should see WUPA (NFC-A scan) without issues
+        proc.wait_for(r"Sent WUPA", timeout=5)
+
+
+class TestNfcvDualProtocol:
+    """
+    Dual-protocol: NFC-A and NFC-V tags detected simultaneously.
+    """
+
+    NFCV_UID = "A0B1C2D3E4F50607"
+    NFCA_UID = "CCDD0011"
+
+    def test_both_protocols_detected(self, sim):
+        """NFC-A + NFC-V tags are both detected in the same scan cycle."""
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        ctrl1.add_tag(self.NFCA_UID)
+        ctrl1.add_tag(self.NFCV_UID, tag_type="ISO15693")
+        # Both should fire on_tag triggers
+        proc.wait_for(rf"READER1_ON_TAG {self.NFCA_UID}", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG {self.NFCV_UID}", timeout=10)
+
+    def test_cleanup_dual(self, sim):
+        """Remove tags for subsequent tests."""
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        ctrl1.remove_tag(self.NFCA_UID)
+        ctrl1.remove_tag(self.NFCV_UID)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.NFCA_UID}", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.NFCV_UID}", timeout=10)
+
+
 class TestChipInitRegisters:
     """
     RFAL chip-init registers that improve range by configuring the RF front-end.

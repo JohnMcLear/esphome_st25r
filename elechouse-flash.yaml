@@ -1,0 +1,53 @@
+esphome:
+  name: elechouse-final-stable
+
+esp32:
+  board: esp32-c6-devkitc-1
+  variant: esp32c6
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG: "y"
+      CONFIG_ESP_CONSOLE_UART_DEFAULT: "n"
+      CONFIG_ESP_CONSOLE_SECONDARY_NONE: "y"
+
+logger:
+  level: DEBUG
+  hardware_uart: USB_SERIAL_JTAG
+
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [st25r, st25r_spi]
+
+spi:
+  clk_pin: GPIO19
+  miso_pin: GPIO10
+  mosi_pin: GPIO18
+
+output:
+  - platform: gpio
+    pin: GPIO2
+    id: status_led
+
+st25r_spi:
+  id: my_st25r
+  cs_pin: GPIO6
+  irq_pin: GPIO7
+  # Wilson's recommended tuning
+  ant_tune_a: 0x80
+  ant_tune_b: 0x40
+  update_interval: 2s
+  on_tag:
+    then:
+      - output.turn_on: status_led
+      - logger.log:
+          format: "Tag detected: %s"
+          args: ['x.c_str()']
+  on_tag_removed:
+    then:
+      - output.turn_off: status_led
+      - logger.log:
+          format: "Tag removed: %s"
+          args: ['x.c_str()']

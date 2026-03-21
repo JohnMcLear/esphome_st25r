@@ -257,6 +257,27 @@ class TestBVersionMifareAuth:
         proc.wait_for(r"READER1_B_ON_TAG_REMOVED CAFEBABE", timeout=10)
 
 
+class TestBVersionNfcv:
+    """NFC-V tag detection works on B-version (IC=0x30) via streaming mode."""
+
+    NFCV_UID = "E00208024FEFE7E1"
+
+    def test_nfcv_detected_and_trigger(self, sim_b):
+        proc, ctrl3, ctrl4 = sim_b
+        with proc._lock:
+            proc.log_lines.clear()
+        ctrl3.add_tag(self.NFCV_UID, tag_type="ISO15693")
+        proc.wait_for(rf"NFC-V tag: {self.NFCV_UID}", timeout=10)
+        proc.wait_for(rf"READER1_B_ON_TAG {self.NFCV_UID}", timeout=5)
+
+    def test_nfcv_removed(self, sim_b):
+        proc, ctrl3, ctrl4 = sim_b
+        with proc._lock:
+            proc.log_lines.clear()
+        ctrl3.remove_tag(self.NFCV_UID)
+        proc.wait_for(rf"READER1_B_ON_TAG_REMOVED {self.NFCV_UID}", timeout=10)
+
+
 class TestBVersionRfalAnalogProfile:
     """
     B-version must also get the full RFAL NFC-A 106 analog profile.
