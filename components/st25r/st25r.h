@@ -30,6 +30,7 @@ enum ST25RRegister : uint8_t {
   RX_CONF4 = 0x0E,
   ISO14443A_CONF = 0x05,
   PASSIVE_TARGET = 0x08,  // Passive target definition (Space A): FDT alignment
+  STREAM_MODE = 0x09,     // Stream mode config (Space A): din, dout, report_period
   AUX = 0x0A,             // Auxiliary definition (Space A): dis_corr bit for correlator
   MASK_MAIN = 0x16,
   MASK_TIMER = 0x17,
@@ -180,6 +181,17 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
 
   void field_on_();
   void finalize_scan_();
+
+  // NFC-V (ISO 15693) support for ST25R3916 — streaming mode
+  void nfcv_scan_();
+  void configure_nfcv_stream_mode_();
+  void restore_nfca_mode_();
+  bool transceive_nfcv_stream_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len,
+                               uint32_t timeout_ms = 30);
+  // ISO 15693 encoding/decoding helpers
+  static uint16_t iso15693_crc_(const uint8_t *data, size_t len);
+  static size_t iso15693_encode_1of4_(const uint8_t *data, size_t len, bool add_crc, uint8_t *out, size_t out_max);
+  static size_t iso15693_decode_manchester_(const uint8_t *in, size_t in_len, uint8_t *out, size_t out_max);
   void apply_anticol_prefix_();
   bool wait_for_irq_(uint8_t mask, uint32_t timeout_ms);
   bool transceive_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, uint32_t timeout_ms = 150);
