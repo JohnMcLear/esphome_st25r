@@ -57,7 +57,8 @@ Flash, open logs — you should see `ST25R initialized successfully` and then a 
 | `update_interval` | `1s` | Tag polling rate |
 | `rf_power` | `15` | TX driver strength 0–15 (15 = max range) |
 | `rf_field_enabled` | `true` | Keep RF field on between scans |
-| `supply_3v3` | `true` | Set `true` for 3.3V supply (ST25R3916 auto-detects VDD and overrides) |
+| `supply_3v3` | `true` | *Deprecated on ST25R3916* — VDD is auto-detected. Only used on ST25R300. |
+| `nfcv_enabled` | `true` | Enable ISO 15693 (NFC-V) tag detection alongside NFC-A |
 | `mifare_key_a` | `FFFFFFFFFFFF` | Mifare Classic Key A (12 hex chars) |
 | `mifare_key_b` | `FFFFFFFFFFFF` | Mifare Classic Key B (12 hex chars) |
 | `health_check_enabled` | `true` | Periodically verify chip identity via IC_IDENTITY register |

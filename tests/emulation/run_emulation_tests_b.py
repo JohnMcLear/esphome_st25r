@@ -13,12 +13,11 @@ Requires:
 
 import os
 import re
-import socket
-import subprocess
-import threading
 import time
 
 import pytest
+
+from sim_helpers import SimProcess, SimController
 
 
 YAML_PATH_B = "tests/emulation/test-emulation-b.yaml"
@@ -54,93 +53,6 @@ def find_binary_b():
                         return full
     return None
 
-
-class SimProcess:
-    def __init__(self, binary):
-        self.binary = binary
-        self.proc = None
-        self.log_lines = []
-        self._lock = threading.Lock()
-
-    def start(self):
-        self.proc = subprocess.Popen(
-            [self.binary],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
-        t = threading.Thread(target=self._read_output, daemon=True)
-        t.start()
-
-    def _read_output(self):
-        for line in self.proc.stdout:
-            line = line.rstrip()
-            with self._lock:
-                self.log_lines.append(line)
-            print(f"[FW-B] {line}", flush=True)
-
-    def wait_for(self, pattern, timeout=15):
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            with self._lock:
-                for line in self.log_lines:
-                    if re.search(pattern, line):
-                        return line
-            time.sleep(0.1)
-        raise TimeoutError(f"Pattern {pattern!r} not seen within {timeout}s")
-
-    def stop(self):
-        if self.proc and self.proc.poll() is None:
-            self.proc.terminate()
-            try:
-                self.proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.proc.kill()
-
-
-class SimController:
-    def __init__(self, path):
-        self.path = path
-
-    def _send(self, cmd):
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
-            s.connect(self.path)
-            s.sendall((cmd + "\n").encode())
-            return s.recv(4096).decode()
-
-    def wait_ready(self, timeout=20):
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            if os.path.exists(self.path):
-                try:
-                    self._send("LIST")
-                    return
-                except OSError:
-                    pass
-            time.sleep(0.2)
-        raise TimeoutError(f"Socket {self.path} did not appear")
-
-    def add_tag(self, uid_hex, tag_type=None, key_a=None, key_b=None, ndef=None):
-        parts = [f"ADD_TAG {uid_hex}"]
-        if tag_type: parts.append(f"TYPE={tag_type}")
-        if key_a:    parts.append(f"KEY_A={key_a}")
-        if key_b:    parts.append(f"KEY_B={key_b}")
-        if ndef:     parts.append(f"NDEF={ndef}")
-        resp = self._send(" ".join(parts))
-        assert "OK" in resp, f"add_tag failed: {resp}"
-
-    def remove_tag(self, uid_hex):
-        resp = self._send(f"REMOVE_TAG {uid_hex}")
-        assert "OK" in resp, f"remove_tag failed: {resp}"
-
-    def get_reg(self, addr_hex):
-        resp = self._send(f"GET_REG {addr_hex}")
-        return int(resp.strip(), 16)
-
-    def set_ic_identity(self, val_hex):
-        resp = self._send(f"SET_IC_IDENTITY {val_hex}")
-        assert "OK" in resp, f"set_ic_identity failed: {resp}"
 
 
 @pytest.fixture(scope="module")

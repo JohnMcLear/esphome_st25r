@@ -168,11 +168,9 @@ void ST25R::update() {
     this->field_strength_sensor_->publish_state(amplitude);
   }
 
-  // NFC-V (ISO 15693) blocking inventory via streaming mode — runs before NFC-A
-  this->nfcv_scan_();
-
-  // RX_CONF3: RFAL NFC-A 106 uses 0x00 for all silicon variants.
-  this->write_register(RX_CONF3, 0x00);
+  // NFC-V (ISO 15693) blocking inventory — runs before NFC-A scan
+  if (this->nfcv_enabled_)
+    this->nfcv_scan_();
 
   this->saved_anticol_valid_ = false;
   this->anticol_resume_ = false;
@@ -1370,15 +1368,18 @@ void ST25R::nfcv_scan_() {
       uid_str[16] = '\0';
       ESP_LOGI(TAG, "NFC-V tag: %s (DSFID=0x%02X)", uid_str, resp[1]);
 
+      // Add to tags_this_scan_ — finalize_scan_() handles on_tag/on_tag_removed
       std::string uid_string(uid_str);
       this->tags_this_scan_.insert(uid_string);
 
+      // Fire on_tag immediately for new tags (finalize_scan_ only handles removal)
       if (this->present_tags_.find(uid_string) == this->present_tags_.end()) {
         this->present_tags_[uid_string] = 0;
         std::vector<uint8_t> uid_bytes;
         for (int j = 0; j < 8; j++)
           uid_bytes.push_back(resp[9 - j]);
-        auto tag = make_unique<nfc::NfcTag>(nfc::NfcTagUid(uid_bytes.begin(), uid_bytes.end()));
+        nfc::NfcTagUid nfc_uid(uid_bytes.begin(), uid_bytes.end());
+        auto tag = make_unique<nfc::NfcTag>(nfc_uid);
         for (auto *listener : this->tag_listeners_)
           listener->tag_on(*tag);
         for (auto *trigger : this->on_tag_triggers_)

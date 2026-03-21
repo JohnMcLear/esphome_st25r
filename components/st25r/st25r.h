@@ -147,6 +147,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   void set_health_check_interval(uint32_t ms) { this->health_check_interval_ms_ = ms; }
   void set_max_failed_checks(uint8_t n) { this->max_failed_checks_ = n; }
   void set_auto_reset_on_failure(bool v) { this->auto_reset_on_failure_ = v; }
+  void set_nfcv_enabled(bool v) { this->nfcv_enabled_ = v; }
 
   void register_on_tag_trigger(ST25RTagTrigger *trig) { this->on_tag_triggers_.push_back(trig); }
   void register_on_tag_removed_trigger(ST25RTagRemovedTrigger *trig) {
@@ -227,6 +228,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   uint32_t last_health_check_ms_{0};
   uint8_t max_failed_checks_{3};
   bool auto_reset_on_failure_{true};
+  bool nfcv_enabled_{true};
   uint8_t health_check_failures_{0};
   uint8_t reinitialization_attempts_{0};
   volatile bool irq_triggered_{false};

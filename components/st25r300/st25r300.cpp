@@ -94,8 +94,9 @@ void ST25R300::update() {
     this->field_strength_sensor_->publish_state(sense);
   }
 
-  // NFC-V (ISO 15693) blocking inventory — fast (~25ms), runs before NFC-A scan
-  this->nfcv_scan_();
+  // NFC-V (ISO 15693) blocking inventory — runs before NFC-A scan
+  if (this->nfcv_enabled_)
+    this->nfcv_scan_();
 
   this->saved_anticol_valid_ = false;
   this->anticol_resume_ = false;
@@ -693,11 +694,11 @@ void ST25R300::nfcv_scan_() {
     uid_str[16] = '\0';
     ESP_LOGI(TAG, "NFC-V tag: %s (DSFID=0x%02X)", uid_str, resp[1]);
 
-    // Add to this scan's tag set (shared with NFC-A tags)
+    // Add to tags_this_scan_ — finalize_scan_() handles on_tag_removed
     std::string uid_string(uid_str);
     this->tags_this_scan_.insert(uid_string);
 
-    // Fire on_tag if this is a new tag
+    // Fire on_tag immediately for new tags (finalize_scan_ only handles removal)
     if (this->present_tags_.find(uid_string) == this->present_tags_.end()) {
       this->present_tags_[uid_string] = 0;
 
