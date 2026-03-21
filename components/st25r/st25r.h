@@ -29,6 +29,8 @@ enum ST25RRegister : uint8_t {
   RX_CONF3 = 0x0D,
   RX_CONF4 = 0x0E,
   ISO14443A_CONF = 0x05,
+  PASSIVE_TARGET = 0x08,  // Passive target definition (Space A): FDT alignment
+  AUX = 0x0A,             // Auxiliary definition (Space A): dis_corr bit for correlator
   MASK_MAIN = 0x16,
   MASK_TIMER = 0x17,
   IRQ_MAIN = 0x1A,
@@ -36,14 +38,28 @@ enum ST25RRegister : uint8_t {
   IRQ_ERROR = 0x1C,
   FIFO_STATUS1 = 0x1E,
   FIFO_STATUS2 = 0x1F,
+  COLLISION_DISPLAY = 0x20,
   NUM_TX_BYTES1 = 0x22,
   NUM_TX_BYTES2 = 0x23,
-  COLLISION_DISPLAY = 0x20,
+  AD_CONV_RESULT = 0x25,
   ANT_TUNE_A = 0x26,   // Antenna tuning DAC A (Space A): V = (0.044 + 0.868 * val/255) * VDD_A; default 0x80
   ANT_TUNE_B = 0x27,   // Antenna tuning DAC B (Space A): same formula; default 0x80
   TX_DRIVER_CONF = 0x28,
-  AD_CONV_RESULT = 0x25,
+  PT_MOD = 0x29,        // PT modulation (Space A): RFO resistance in modulated state
+  FIELD_THRESHOLD_ACTV = 0x2A,    // External field detector activation threshold
+  FIELD_THRESHOLD_DEACTV = 0x2B,  // External field detector deactivation threshold
   IC_IDENTITY = 0x3F,
+  // Space B registers (bit 0x40 set → SPI prefix 0xFB before address)
+  EMD_SUP_CONF = 0x45,      // (Space B 0x05) EMD suppression config
+  CORR_CONF1 = 0x4C,        // (Space B 0x0C) Correlator configuration 1
+  CORR_CONF2 = 0x4D,        // (Space B 0x0D) Correlator configuration 2
+  AUX_MOD = 0x68,            // (Space B 0x28) Aux modulation setting
+  RES_AM_MOD = 0x6A,         // (Space B 0x2A) Resistive AM modulation
+  OVERSHOOT_CONF1 = 0x70,   // (Space B 0x30) Overshoot protection config 1
+  OVERSHOOT_CONF2 = 0x71,   // (Space B 0x31) Overshoot protection config 2
+  UNDERSHOOT_CONF1 = 0x72,  // (Space B 0x32) Undershoot protection config 1
+  UNDERSHOOT_CONF2 = 0x73,  // (Space B 0x33) Undershoot protection config 2
+  REGULATOR_CONTROL = 0x2C, // Regulated voltage control (Space A)
 };
 
 // ST25R Commands
@@ -61,6 +77,7 @@ enum ST25RCommand : uint8_t {
   ST25R_CMD_MEASURE_AMPLITUDE = 0xD3,
   ST25R_CMD_RESET_RX_GAIN = 0xD5,
   ST25R_CMD_ADJUST_REGULATORS = 0xD6,
+  ST25R_CMD_MEASURE_VDD = 0xDF,
 };
 
 class ST25R;
@@ -188,8 +205,8 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   uint64_t mifare_key_a_{0xFFFFFFFFFFFFULL};
   uint64_t mifare_key_b_{0xFFFFFFFFFFFFULL};
   uint8_t miss_threshold_{3};
-  uint8_t ant_tune_a_{0x80};  // AAT DAC A: 0x80 = mid-range; RFAL Elechouse default = 0x80
-  uint8_t ant_tune_b_{0x40};  // AAT DAC B: RFAL Elechouse default = 0x40 (was 0x80; shifts antenna resonance)
+  uint8_t ant_tune_a_{0x80};  // AAT DAC A: 0x80 = mid-range (~0.48V on 3.3V / ~0.87V on 5V)
+  uint8_t ant_tune_b_{0x80};  // AAT DAC B: same
   bool is_b_version_{false};
   bool has_aat_{false};  // Automatic Antenna Tuning / varicap DAC (ANT_TUNE_A/B) available
   // Health check (chip liveness check, separate from tag scan interval)
