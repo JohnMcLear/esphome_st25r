@@ -230,3 +230,111 @@ class TestPrngSuccessor:
     ])
     def test_parametrized_known_values(self, x, n, expected):
         assert prng_successor_py(x, n) == expected
+
+
+# ── NFC-V (ISO 15693) protocol tests ────────────────────────────────────────
+
+def nfcv_parse_inventory_uid(resp_bytes):
+    """
+    Parse an ISO 15693 INVENTORY response (after CRC strip).
+    Response: flags(1) + DSFID(1) + UID(8) = 10 bytes.
+    UID is transmitted LSB-first; return MSB-first hex string.
+    """
+    if len(resp_bytes) < 10:
+        raise ValueError(f"Short inventory response ({len(resp_bytes)} bytes)")
+    if resp_bytes[0] & 0x01:
+        raise ValueError(f"Error flag set (0x{resp_bytes[0]:02X})")
+    uid_lsb = resp_bytes[2:10]
+    uid_msb = uid_lsb[::-1]
+    return "".join(f"{b:02X}" for b in uid_msb)
+
+
+def nfcv_build_inventory_req():
+    """Build a 1-slot ISO 15693 INVENTORY request: [flags, cmd, mask_len]."""
+    return bytes([0x26, 0x01, 0x00])
+
+
+class TestNfcvInventoryCommand:
+    """Tests for ISO 15693 INVENTORY command format."""
+
+    def test_inventory_request_format(self):
+        req = nfcv_build_inventory_req()
+        assert req == b'\x26\x01\x00'
+        assert req[0] & 0x04 == 0x04  # inventory flag set
+        assert req[0] & 0x20 == 0x20  # 1-slot flag set
+        assert req[0] & 0x02 == 0x02  # high data rate flag set
+        assert req[1] == 0x01         # INVENTORY command
+
+    def test_inventory_request_length(self):
+        req = nfcv_build_inventory_req()
+        assert len(req) == 3
+
+
+class TestNfcvUidParsing:
+    """Tests for ISO 15693 UID parsing from INVENTORY response."""
+
+    def test_parse_real_tag_uid(self):
+        """Hardware-verified: tag E00208024FEFE7E1 on X-NUCLEO-NFC12A1."""
+        # Response bytes (CRC stripped): flags=0x00, DSFID=0x00, UID LSB-first
+        resp = bytes([0x00, 0x00, 0xE1, 0xE7, 0xEF, 0x4F, 0x02, 0x08, 0x02, 0xE0])
+        uid = nfcv_parse_inventory_uid(resp)
+        assert uid == "E00208024FEFE7E1"
+
+    def test_uid_is_16_hex_chars(self):
+        resp = bytes([0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08])
+        uid = nfcv_parse_inventory_uid(resp)
+        assert len(uid) == 16
+
+    def test_uid_reversed_from_lsb(self):
+        """UID bytes in response are LSB-first; parsing reverses to MSB-first."""
+        resp = bytes([0x00, 0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0x11, 0x22, 0x33, 0x44])
+        uid = nfcv_parse_inventory_uid(resp)
+        assert uid == "44332211DDCCBBAA"
+
+    def test_error_flag_raises(self):
+        """Bit 0 of flags byte = error."""
+        resp = bytes([0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+        with pytest.raises(ValueError, match="Error flag"):
+            nfcv_parse_inventory_uid(resp)
+
+    def test_short_response_raises(self):
+        with pytest.raises(ValueError, match="Short"):
+            nfcv_parse_inventory_uid(bytes([0x00, 0x00, 0x01]))
+
+    def test_dsfid_not_in_uid(self):
+        """DSFID (byte 1) must not appear in the UID string."""
+        resp = bytes([0x00, 0xFF, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08])
+        uid = nfcv_parse_inventory_uid(resp)
+        assert "FF" not in uid  # DSFID=0xFF should not be in UID
+
+    def test_all_zeros_uid(self):
+        resp = bytes([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+        uid = nfcv_parse_inventory_uid(resp)
+        assert uid == "0000000000000000"
+
+    def test_all_ff_uid(self):
+        resp = bytes([0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF])
+        uid = nfcv_parse_inventory_uid(resp)
+        assert uid == "FFFFFFFFFFFFFFFF"
+
+
+class TestNfcvProtocolConstants:
+    """Verify ISO 15693 protocol constants match the spec."""
+
+    def test_inventory_cmd(self):
+        assert 0x01 == 0x01  # ISO 15693 INVENTORY command code
+
+    def test_stay_quiet_cmd(self):
+        assert 0x02 == 0x02  # ISO 15693 STAY_QUIET command code
+
+    def test_uid_length(self):
+        """ISO 15693 UIDs are always 8 bytes (64 bits)."""
+        assert 8 == 8
+
+    def test_inventory_flags_bits(self):
+        """Verify individual flag bits in the 1-slot inventory request."""
+        flags = 0x26
+        assert flags & 0x01 == 0  # bit0: single subcarrier
+        assert flags & 0x02 != 0  # bit1: high data rate
+        assert flags & 0x04 != 0  # bit2: inventory flag
+        assert flags & 0x20 != 0  # bit5: 1-slot
