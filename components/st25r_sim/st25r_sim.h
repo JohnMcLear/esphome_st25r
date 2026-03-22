@@ -96,6 +96,7 @@ class ST25RSim : public st25r::ST25R {
   void on_anticol_();
   void on_transmit_crc_();
   void on_nfcv_transmit_();  // Handle NFC-V streaming mode transceive
+  void on_nfcb_sensb_();    // Handle NFC-B SENSB_REQ
 
   // Mifare sub-handlers (called from on_anticol_ when auth state active)
   void on_mifare_auth_response_(const std::vector<uint8_t> &frame);

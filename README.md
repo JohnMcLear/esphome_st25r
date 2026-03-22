@@ -59,6 +59,7 @@ Flash, open logs — you should see `ST25R initialized successfully` and then a 
 | `rf_field_enabled` | `true` | Keep RF field on between scans |
 | `supply_3v3` | `true` | *Deprecated on ST25R3916* — VDD is auto-detected. Only used on ST25R300. |
 | `nfcv_enabled` | `true` | Enable ISO 15693 (NFC-V) tag detection alongside NFC-A |
+| `nfcb_enabled` | `true` | Enable ISO 14443B (NFC-B) tag detection alongside NFC-A |
 | `aat_enabled` | `true` | Automatic Antenna Tuning — hill-climbing optimizer for max range (requires varicaps) |
 | `mifare_key_a` | `FFFFFFFFFFFF` | Mifare Classic Key A (12 hex chars) |
 | `mifare_key_b` | `FFFFFFFFFFFF` | Mifare Classic Key B (12 hex chars) |
@@ -88,6 +89,7 @@ st25r_spi:
 
   # Protocol options
   nfcv_enabled: true        # ISO 15693 (NFC-V) tag detection alongside NFC-A
+  nfcb_enabled: true        # ISO 14443B (NFC-B) tag detection alongside NFC-A
   aat_enabled: true          # Automatic Antenna Tuning at startup (improves range on varicap boards)
 
   # Antenna tuning DAC values (starting point for AAT, or static if aat_enabled: false)
@@ -176,6 +178,7 @@ st25r_i2c:
 ## Features
 
 - **ISO 14443A (NFC-A):** 4-byte, 7-byte, and 10-byte UIDs (Cascade Levels 1–3)
+- **ISO 14443B (NFC-B):** 4-byte PUPI detection via SENSB_REQ/ATQB (passports, transit cards)
 - **ISO 15693 (NFC-V):** 8-byte UID detection, dual-protocol with NFC-A
   - NDEF read/write for Type 5 tags (READ/WRITE_SINGLE_BLOCK)
   - ST25R3916: software 1-of-4 encoding + Manchester decoding (streaming mode)

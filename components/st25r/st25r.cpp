@@ -172,6 +172,10 @@ void ST25R::update() {
   if (this->nfcv_enabled_)
     this->nfcv_scan_();
 
+  // NFC-B (ISO 14443B) blocking SENSB_REQ — runs before NFC-A scan
+  if (this->nfcb_enabled_)
+    this->nfcb_scan_();
+
   this->saved_anticol_valid_ = false;
   this->anticol_resume_ = false;
 
@@ -1244,6 +1248,91 @@ void ST25R::aat_tune_() {
   this->write_register(ANT_TUNE_B, best_b);
 
   ESP_LOGI(TAG, "AAT: converged A=0x%02X B=0x%02X amp=%u", best_a, best_b, best_amp);
+}
+
+// ── NFC-B (ISO 14443B) for ST25R3916 ─────────────────────────────────────────
+
+void ST25R::configure_nfcb_mode_() {
+  // MODE: om=0x02 (ISO14443B) in bits[6:3] = 0x10, tr_am=1 (AM modulation) bit7 = 0x80
+  this->write_register(MODE, 0x90);
+  this->write_register(BIT_RATE, 0x00);  // 106 kbps
+  // TX: 10% ASK (AM modulation) — NFC-B requires AM, not OOK
+  uint8_t d_res = (15 - this->rf_power_) & 0x0F;
+  this->write_register(TX_DRIVER_CONF, 0x70 | d_res);  // am_mod=7 (12% ASK)
+  // RX: RFAL NFC-B analog profile
+  this->write_register(RX_CONF1, 0x00);  // AM channel
+  this->write_register(RX_CONF2, 0x2D);
+  this->write_register(RX_CONF3, 0x00);
+  this->write_register(RX_CONF4, 0x00);
+  this->write_register(CORR_CONF1, 0x14);  // NFC-B correlator
+  this->write_register(CORR_CONF2, 0x00);
+}
+
+void ST25R::nfcb_scan_() {
+  this->configure_nfcb_mode_();
+
+  // SENSB_REQ (ALLB_REQ): cmd=0x05, AFI=0x00 (any), PARAM=0x08 (1 slot + WUPB)
+  uint8_t sensb_req[] = {0x05, 0x00, 0x08};
+  uint8_t resp[16];
+  uint8_t resp_len = 0;
+
+  // Use standard CRC transceive — NFC-B uses the chip's CRC-B hardware
+  this->write_command(ST25R_CMD_CLEAR_FIFO);
+  this->write_command(ST25R_CMD_RESET_RX_GAIN);
+
+  uint16_t ntx = sizeof(sensb_req);
+  this->write_register(NUM_TX_BYTES1, ntx >> 5);
+  this->write_register(NUM_TX_BYTES2, (ntx & 0x1F) << 3);
+  this->write_fifo(sensb_req, sizeof(sensb_req));
+
+  this->read_register(IRQ_MAIN);
+  this->read_register(IRQ_TIMER);
+  this->irq_triggered_ = false;
+  this->write_command(ST25R_CMD_TRANSMIT_WITH_CRC);
+
+  // Wait for ATQB response
+  uint32_t start = millis();
+  while (millis() - start < 20) {
+    uint8_t irq = this->read_register(IRQ_MAIN);
+    uint8_t irq_t = this->read_register(IRQ_TIMER);
+    if (irq & 0x10) {  // RXE
+      uint8_t fifo_len = this->read_register(FIFO_STATUS1);
+      if (fifo_len >= 12) {  // Minimum ATQB: 0x50 + PUPI(4) + AppData(4) + ProtInfo(3)
+        this->read_fifo(resp, fifo_len);
+        resp_len = fifo_len;
+      }
+      break;
+    }
+    if (irq_t & 0x40) break;  // NRE
+    delay(1);
+  }
+
+  // Restore NFC-A mode
+  this->restore_nfca_mode_();
+  // Also restore TX_DRIVER to OOK (am_mod=0)
+  uint8_t d_res_restore = (15 - this->rf_power_) & 0x0F;
+  this->write_register(TX_DRIVER_CONF, d_res_restore);
+
+  if (resp_len < 12 || resp[0] != 0x50) return;
+
+  // Parse ATQB: byte 0 = 0x50, bytes 1-4 = PUPI
+  char uid_str[9];
+  snprintf(uid_str, sizeof(uid_str), "%02X%02X%02X%02X", resp[1], resp[2], resp[3], resp[4]);
+  ESP_LOGI(TAG, "NFC-B tag: %s (ATQB len=%u)", uid_str, resp_len);
+
+  std::string uid_string(uid_str);
+  this->tags_this_scan_.insert(uid_string);
+
+  if (this->present_tags_.find(uid_string) == this->present_tags_.end()) {
+    this->present_tags_[uid_string] = 0;
+    std::vector<uint8_t> uid_bytes = {resp[1], resp[2], resp[3], resp[4]};
+    nfc::NfcTagUid nfc_uid(uid_bytes.begin(), uid_bytes.end());
+    auto tag = make_unique<nfc::NfcTag>(nfc_uid);
+    for (auto *listener : this->tag_listeners_)
+      listener->tag_on(*tag);
+    for (auto *trigger : this->on_tag_triggers_)
+      trigger->trigger(uid_string);
+  }
 }
 
 // ── NFC-V (ISO 15693) streaming mode for ST25R3916 ──────────────────────────

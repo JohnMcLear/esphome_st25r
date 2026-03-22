@@ -312,8 +312,12 @@ void ST25RSim::write_command(uint8_t command) {
       }
       break;
 
-    case 0xC4:  // TRANSMIT_WITH_CRC (SELECT, HALT, Mifare auth cmd)
-      on_transmit_crc_();
+    case 0xC4:  // TRANSMIT_WITH_CRC (SELECT, HALT, Mifare auth cmd, NFC-B SENSB)
+      if ((regs_[0x03] & 0xF8) == 0x90) {  // MODE om=0x02 + tr_am=1 → NFC-B
+        on_nfcb_sensb_();
+      } else {
+        on_transmit_crc_();
+      }
       break;
 
     // No-ops
@@ -1054,6 +1058,32 @@ void ST25RSim::on_nfcv_transmit_() {
     pending_irq_main_ = IRQ_TXE;
     pending_irq_timer_ = 0x40;
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NFC-B (ISO 14443B) SENSB_REQ handler
+// ─────────────────────────────────────────────────────────────────────────────
+
+void ST25RSim::on_nfcb_sensb_() {
+  std::vector<uint8_t> frame;
+  frame.swap(fifo_in_);
+  fifo_out_.clear();
+
+  // Check for SENSB_REQ: first byte should be 0x05
+  if (frame.size() < 3 || frame[0] != 0x05) {
+    pending_irq_main_ = IRQ_TXE;
+    pending_irq_timer_ = 0x40;  // NRE
+    return;
+  }
+
+  std::lock_guard<std::mutex> lk(tags_mutex_);
+
+  // Find first ISO14443B tag (TAG_ISO14443B type — not yet defined, so use a heuristic:
+  // for now, no NFC-B virtual tags exist, so just return NRE)
+  // TODO: Add TAG_ISO14443B to TagType enum when NFC-B virtual tags are needed
+  pending_irq_main_ = IRQ_TXE;
+  pending_irq_timer_ = 0x40;  // NRE — no NFC-B tags in sim yet
+  ESP_LOGV(TAG, "SIM NFC-B SENSB_REQ → no ISO14443B tags in sim");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

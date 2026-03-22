@@ -50,6 +50,9 @@ class ST25R300 : public st25r::ST25R {
 
   // NFC-V (ISO 15693) blocking inventory scan — called from update() before NFC-A
   void nfcv_scan_();
+  // NFC-B (ISO 14443B) blocking SENSB scan
+  void nfcb_scan_();
+  void configure_nfcb_mode_();
   void configure_nfcv_mode_();
   void configure_nfca_mode_();
   bool transceive_nfcv_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len,
