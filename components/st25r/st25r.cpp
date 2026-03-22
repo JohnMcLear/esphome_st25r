@@ -1031,8 +1031,11 @@ bool ST25R::reset_() {
   delay(10);
 
   // AAT hill-climbing: optimize ANT_TUNE_A/B for maximum field amplitude.
-  // Must run after field_on_() so measurements are meaningful.
-  this->aat_tune_();
+  // Disabled by default — maximizing raw amplitude doesn't necessarily improve
+  // tag coupling range (phase matters too, but ST25R3916 has no phase register).
+  // Enable via YAML: aat_enabled: true
+  if (this->aat_enabled_)
+    this->aat_tune_();
 
   ESP_LOGV(TAG, "  reset_: Complete");
   return true;

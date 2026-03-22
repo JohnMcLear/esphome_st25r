@@ -44,6 +44,7 @@ CONF_HEALTH_CHECK_INTERVAL = "health_check_interval"
 CONF_MAX_FAILED_CHECKS = "max_failed_checks"
 CONF_AUTO_RESET_ON_FAILURE = "auto_reset_on_failure"
 CONF_NFCV_ENABLED = "nfcv_enabled"
+CONF_AAT_ENABLED = "aat_enabled"
 
 st25r_ns = cg.esphome_ns.namespace("st25r")
 ST25R = st25r_ns.class_("ST25R", cg.PollingComponent)
@@ -77,6 +78,7 @@ ST25R_SCHEMA = cv.Schema(
         cv.Optional(CONF_MAX_FAILED_CHECKS, default=3): cv.int_range(min=1, max=255),
         cv.Optional(CONF_AUTO_RESET_ON_FAILURE, default=True): cv.boolean,
         cv.Optional(CONF_NFCV_ENABLED, default=True): cv.boolean,
+        cv.Optional(CONF_AAT_ENABLED, default=False): cv.boolean,
         cv.Optional(CONF_STATUS): binary_sensor_.binary_sensor_schema(),
         cv.Optional(CONF_FIELD_STRENGTH): sensor_.sensor_schema(),
         cv.Optional(CONF_ON_TAG): automation.validate_automation(
@@ -118,6 +120,7 @@ async def setup_st25r(var, config):
     cg.add(var.set_max_failed_checks(config[CONF_MAX_FAILED_CHECKS]))
     cg.add(var.set_auto_reset_on_failure(config[CONF_AUTO_RESET_ON_FAILURE]))
     cg.add(var.set_nfcv_enabled(config[CONF_NFCV_ENABLED]))
+    cg.add(var.set_aat_enabled(config[CONF_AAT_ENABLED]))
 
     if CONF_STATUS in config:
         sens = await binary_sensor_.new_binary_sensor(config[CONF_STATUS])
