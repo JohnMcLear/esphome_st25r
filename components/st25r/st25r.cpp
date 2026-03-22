@@ -1030,6 +1030,10 @@ bool ST25R::reset_() {
   }
   delay(10);
 
+  // AAT hill-climbing: optimize ANT_TUNE_A/B for maximum field amplitude.
+  // Must run after field_on_() so measurements are meaningful.
+  this->aat_tune_();
+
   ESP_LOGV(TAG, "  reset_: Complete");
   return true;
 }
@@ -1160,6 +1164,84 @@ void ST25R::field_on_() {
   delay(10);
   this->write_register(OP_CONTROL, 0xC8); // en=1, rx_en=1, tx_en=1
   this->write_command(ST25R_CMD_ADJUST_REGULATORS);
+}
+
+// ── AAT (Automatic Antenna Tuning) hill-climbing optimizer ───────────────────
+// Based on RFAL st25r3916AatTune() (AN5322). Iteratively adjusts ANT_TUNE_A/B
+// to maximize RF field amplitude (AD_CONV_RESULT). Runs once after field_on_()
+// during reset_() on chips with AAT hardware (ST25R3916/3916B).
+
+void ST25R::aat_tune_() {
+  if (!this->has_aat_) return;
+
+  uint8_t a = this->ant_tune_a_;
+  uint8_t b = this->ant_tune_b_;
+  uint8_t step_a = 16;
+  uint8_t step_b = 16;
+  const uint8_t max_iter = 20;
+
+  // Measure current amplitude
+  auto measure = [this]() -> uint8_t {
+    this->write_command(ST25R_CMD_MEASURE_AMPLITUDE);
+    delay(3);  // VCC settling time
+    return this->read_register(AD_CONV_RESULT);
+  };
+
+  this->write_register(ANT_TUNE_A, a);
+  this->write_register(ANT_TUNE_B, b);
+  delay(3);
+  uint8_t best_amp = measure();
+  uint8_t best_a = a, best_b = b;
+
+  ESP_LOGD(TAG, "AAT: start A=0x%02X B=0x%02X amp=%u", a, b, best_amp);
+
+  for (uint8_t iter = 0; iter < max_iter; iter++) {
+    bool improved = false;
+
+    // Try 4 directions: A±step, B±step
+    struct { int8_t da; int8_t db; } dirs[] = {
+      {(int8_t)step_a, 0}, {-(int8_t)step_a, 0},
+      {0, (int8_t)step_b}, {0, -(int8_t)step_b}
+    };
+
+    for (auto &d : dirs) {
+      int16_t new_a = (int16_t)a + d.da;
+      int16_t new_b = (int16_t)b + d.db;
+      if (new_a < 0 || new_a > 255 || new_b < 0 || new_b > 255) continue;
+
+      this->write_register(ANT_TUNE_A, (uint8_t)new_a);
+      this->write_register(ANT_TUNE_B, (uint8_t)new_b);
+      delay(3);
+      uint8_t amp = measure();
+
+      if (amp > best_amp) {
+        best_amp = amp;
+        best_a = (uint8_t)new_a;
+        best_b = (uint8_t)new_b;
+        improved = true;
+      }
+    }
+
+    if (improved) {
+      a = best_a;
+      b = best_b;
+      this->write_register(ANT_TUNE_A, a);
+      this->write_register(ANT_TUNE_B, b);
+    } else {
+      // No improvement — reduce step size
+      step_a = (step_a > 1) ? step_a / 2 : 0;
+      step_b = (step_b > 1) ? step_b / 2 : 0;
+      if (step_a == 0 && step_b == 0) break;  // Converged
+    }
+  }
+
+  // Store final values
+  this->ant_tune_a_ = best_a;
+  this->ant_tune_b_ = best_b;
+  this->write_register(ANT_TUNE_A, best_a);
+  this->write_register(ANT_TUNE_B, best_b);
+
+  ESP_LOGI(TAG, "AAT: converged A=0x%02X B=0x%02X amp=%u", best_a, best_b, best_amp);
 }
 
 // ── NFC-V (ISO 15693) streaming mode for ST25R3916 ──────────────────────────

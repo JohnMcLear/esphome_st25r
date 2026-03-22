@@ -183,6 +183,9 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   void field_on_();
   void finalize_scan_();
 
+  // Automatic Antenna Tuning — hill-climbing optimizer for ANT_TUNE_A/B
+  void aat_tune_();
+
   // NFC-V (ISO 15693) support for ST25R3916 — streaming mode
   void nfcv_scan_();
   void configure_nfcv_stream_mode_();
