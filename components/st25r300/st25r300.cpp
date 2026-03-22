@@ -699,23 +699,70 @@ void ST25R300::nfcv_scan_() {
     std::string uid_string(uid_str);
     this->tags_this_scan_.insert(uid_string);
 
-    // Fire on_tag immediately for new tags (finalize_scan_ only handles removal)
+    // Try to read NDEF (Type 5 tag) via READ_SINGLE_BLOCK
+    std::vector<uint8_t> uid_bytes;
+    for (int j = 0; j < 8; j++)
+      uid_bytes.push_back(resp[9 - j]);
+
+    // Read block 0 (Capability Container)
+    uint8_t blk_req[] = {0x02, 0x20, 0x00};  // flags, READ_SINGLE_BLOCK, block=0
+    uint8_t blk_resp[8];
+    uint8_t blk_len = 0;
+    std::vector<uint8_t> ndef_data;
+
+    if (this->transceive_nfcv_(blk_req, sizeof(blk_req), blk_resp, blk_len, 20) &&
+        blk_len >= 5 && !(blk_resp[0] & 0x01)) {
+      if (blk_resp[1] == 0xE1) {  // NDEF magic byte in CC
+        uint8_t cc_size = blk_resp[3];
+        uint8_t total_blocks = (cc_size * 8) / 4;
+        if (total_blocks > 64) total_blocks = 64;
+
+        for (uint8_t blk = 1; blk <= total_blocks; blk++) {
+          blk_req[2] = blk;
+          blk_len = 0;
+          if (this->transceive_nfcv_(blk_req, sizeof(blk_req), blk_resp, blk_len, 20) &&
+              blk_len >= 5 && !(blk_resp[0] & 0x01)) {
+            for (int k = 1; k < 5 && k < blk_len; k++)
+              ndef_data.push_back(blk_resp[k]);
+          } else {
+            break;
+          }
+        }
+      }
+    }
+
+    // Fire on_tag immediately for new tags
     if (this->present_tags_.find(uid_string) == this->present_tags_.end()) {
       this->present_tags_[uid_string] = 0;
+      nfc::NfcTagUid nfc_uid(uid_bytes.begin(), uid_bytes.end());
 
-      std::vector<uint8_t> uid_bytes;
-      for (int j = 0; j < 8; j++)
-        uid_bytes.push_back(resp[9 - j]);
+      if (!ndef_data.empty()) {
+        for (size_t i = 0; i < ndef_data.size(); i++) {
+          if (ndef_data[i] == 0x03 && i + 1 < ndef_data.size()) {
+            uint8_t ndef_len = ndef_data[i + 1];
+            size_t ndef_start = i + 2;
+            if (ndef_start + ndef_len <= ndef_data.size()) {
+              ESP_LOGI(TAG, "NFC-V NDEF: %u bytes", ndef_len);
+              auto tag = make_unique<nfc::NfcTag>(nfc_uid);
+              this->tags_data_[uid_string] = std::move(tag);
+            }
+            break;
+          }
+          if (ndef_data[i] == 0xFE) break;
+        }
+      }
 
-      auto tag = make_unique<nfc::NfcTag>(nfc::NfcTagUid(uid_bytes.begin(), uid_bytes.end()));
+      if (this->tags_data_.find(uid_string) == this->tags_data_.end()) {
+        auto tag = make_unique<nfc::NfcTag>(nfc_uid);
+        this->tags_data_[uid_string] = std::move(tag);
+      }
+
       for (auto *listener : this->tag_listeners_)
-        listener->tag_on(*tag);
+        listener->tag_on(*this->tags_data_[uid_string]);
       for (auto *trigger : this->on_tag_triggers_)
         trigger->trigger(uid_string);
     }
 
-    // For single-tag MVP, skip STAY_QUIET — tag stays responsive across scans.
-    // Multi-tag requires STAY_QUIET + field cycling between update() cycles.
     break;  // One tag per scan for now
   }
 
