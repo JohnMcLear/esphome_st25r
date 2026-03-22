@@ -130,6 +130,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   float get_setup_priority() const override { return setup_priority::DATA; }
 
   bool ndef_write(nfc::NdefMessage *message, bool format = false);
+  virtual bool nfcv_ndef_write_(nfc::NdefMessage *message);  // NFC-V Type 5 WRITE_SINGLE_BLOCK path
   bool clean_tag();
 
   void set_reset_pin(GPIOPin *reset_pin) { this->reset_pin_ = reset_pin; }

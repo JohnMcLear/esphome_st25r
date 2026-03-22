@@ -770,5 +770,68 @@ void ST25R300::nfcv_scan_() {
   this->configure_nfca_mode_();
 }
 
+bool ST25R300::nfcv_ndef_write_(nfc::NdefMessage *message) {
+  this->configure_nfcv_mode_();
+
+  std::vector<uint8_t> payload;
+  if (message != nullptr) {
+    std::vector<uint8_t> ndef_data = message->encode();
+    payload.push_back(0x03);
+    if (ndef_data.size() < 255) {
+      payload.push_back((uint8_t)ndef_data.size());
+    } else {
+      payload.push_back(0xFF);
+      payload.push_back((uint8_t)((ndef_data.size() >> 8) & 0xFF));
+      payload.push_back((uint8_t)(ndef_data.size() & 0xFF));
+    }
+    payload.insert(payload.end(), ndef_data.begin(), ndef_data.end());
+  }
+  payload.push_back(0xFE);
+  while (payload.size() % 4 != 0) payload.push_back(0);
+
+  ESP_LOGD(TAG, "NFC-V NDEF write: %zu bytes in %zu blocks", payload.size(), payload.size() / 4);
+
+  // Write CC to block 0
+  uint8_t cc_size = (payload.size() + 4) / 8;
+  if (cc_size == 0) cc_size = 1;
+  uint8_t write_req[7] = {0x02, 0x21, 0x00, 0xE1, 0x40, cc_size, 0x00};
+  uint8_t resp[4];
+  uint8_t resp_len = 0;
+
+  if (!this->transceive_nfcv_(write_req, sizeof(write_req), resp, resp_len, 25)) {
+    ESP_LOGE(TAG, "NFC-V: failed to write CC (block 0)");
+    this->configure_nfca_mode_();
+    return false;
+  }
+
+  for (size_t i = 0; i < payload.size(); i += 4) {
+    uint8_t blk = 1 + (i / 4);
+    write_req[2] = blk;
+    write_req[3] = payload[i];
+    write_req[4] = payload[i + 1];
+    write_req[5] = payload[i + 2];
+    write_req[6] = payload[i + 3];
+    resp_len = 0;
+
+    bool success = false;
+    for (uint8_t retry = 0; retry < 3; retry++) {
+      if (this->transceive_nfcv_(write_req, sizeof(write_req), resp, resp_len, 25)) {
+        success = true;
+        break;
+      }
+      delay(10);
+    }
+    if (!success) {
+      ESP_LOGE(TAG, "NFC-V: failed to write block %u", blk);
+      this->configure_nfca_mode_();
+      return false;
+    }
+  }
+
+  ESP_LOGI(TAG, "NFC-V NDEF write successful!");
+  this->configure_nfca_mode_();
+  return true;
+}
+
 }  // namespace st25r300
 }  // namespace esphome

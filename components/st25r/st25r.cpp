@@ -1531,6 +1531,16 @@ void ST25R::nfcv_scan_() {
 }
 
 bool ST25R::ndef_write(nfc::NdefMessage *message, bool format) {
+  // Check if the most recent tag is NFC-V (8-byte UID = 16 hex chars)
+  // If so, use the NFC-V WRITE_SINGLE_BLOCK path
+  if (!this->present_tags_.empty()) {
+    const std::string &last_uid = this->present_tags_.rbegin()->first;
+    if (last_uid.length() == 16) {
+      return this->nfcv_ndef_write_(message);
+    }
+  }
+
+  // NFC-A Type 2 NDEF write (NTAG / Ultralight)
   uint8_t buffer[16];
   uint8_t len;
 
@@ -1606,6 +1616,73 @@ bool ST25R::ndef_write(nfc::NdefMessage *message, bool format) {
     }
   }
   ESP_LOGI(TAG, "NDEF write successful!");
+  return true;
+}
+
+bool ST25R::nfcv_ndef_write_(nfc::NdefMessage *message) {
+  // NFC-V Type 5 NDEF write via WRITE_SINGLE_BLOCK (0x21)
+  // Block 0 = CC, blocks 1+ = NDEF TLV data
+
+  this->configure_nfcv_stream_mode_();
+
+  std::vector<uint8_t> payload;
+  if (message != nullptr) {
+    std::vector<uint8_t> ndef_data = message->encode();
+    payload.push_back(0x03);  // NDEF TLV type
+    if (ndef_data.size() < 255) {
+      payload.push_back((uint8_t)ndef_data.size());
+    } else {
+      payload.push_back(0xFF);
+      payload.push_back((uint8_t)((ndef_data.size() >> 8) & 0xFF));
+      payload.push_back((uint8_t)(ndef_data.size() & 0xFF));
+    }
+    payload.insert(payload.end(), ndef_data.begin(), ndef_data.end());
+  }
+  payload.push_back(0xFE);  // Terminator TLV
+  while (payload.size() % 4 != 0) payload.push_back(0);
+
+  ESP_LOGD(TAG, "NFC-V NDEF write: %zu bytes in %zu blocks", payload.size(), payload.size() / 4);
+
+  // Write CC to block 0: magic=0xE1, ver=0x40 (v1.0, read/write), size, features=0x00
+  uint8_t cc_size = (payload.size() + 4) / 8;  // size in 8-byte units (round up)
+  if (cc_size == 0) cc_size = 1;
+  uint8_t write_req[7] = {0x02, 0x21, 0x00, 0xE1, 0x40, cc_size, 0x00};  // flags, WRITE_SINGLE_BLOCK, block, data[4]
+  uint8_t resp[4];
+  uint8_t resp_len = 0;
+
+  if (!this->transceive_nfcv_stream_(write_req, sizeof(write_req), resp, resp_len, 25)) {
+    ESP_LOGE(TAG, "NFC-V: failed to write CC (block 0)");
+    this->restore_nfca_mode_();
+    return false;
+  }
+
+  // Write NDEF data blocks
+  for (size_t i = 0; i < payload.size(); i += 4) {
+    uint8_t blk = 1 + (i / 4);
+    write_req[2] = blk;
+    write_req[3] = payload[i];
+    write_req[4] = payload[i + 1];
+    write_req[5] = payload[i + 2];
+    write_req[6] = payload[i + 3];
+    resp_len = 0;
+
+    bool success = false;
+    for (uint8_t retry = 0; retry < 3; retry++) {
+      if (this->transceive_nfcv_stream_(write_req, sizeof(write_req), resp, resp_len, 25)) {
+        success = true;
+        break;
+      }
+      delay(10);
+    }
+    if (!success) {
+      ESP_LOGE(TAG, "NFC-V: failed to write block %u", blk);
+      this->restore_nfca_mode_();
+      return false;
+    }
+  }
+
+  ESP_LOGI(TAG, "NFC-V NDEF write successful!");
+  this->restore_nfca_mode_();
   return true;
 }
 
