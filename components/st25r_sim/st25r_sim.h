@@ -21,6 +21,7 @@ enum TagType : uint8_t {
   TAG_NTAG216,                // 7-byte UID, SAK=0x00
   TAG_MIFARE_ULTRALIGHT,      // 7-byte UID, SAK=0x00
   TAG_ISO15693,               // 8-byte UID, ISO 15693 / NFC-V
+  TAG_TYPE4,                  // 4 or 7-byte UID, SAK=0x20, ISO-DEP capable
 };
 
 // ── Virtual NFC tag ────────────────────────────────────────────────────────────

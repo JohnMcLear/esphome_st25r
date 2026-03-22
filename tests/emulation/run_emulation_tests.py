@@ -946,6 +946,39 @@ class TestChipInitRegisters:
         assert val == 0x40, f"EMD_SUP_CONF expected 0x40, got 0x{val:02X}"
 
 
+class TestIsoDepType4:
+    """
+    ISO 14443-4 (ISO-DEP) Type 4 tag detection.
+
+    Tags with SAK bit 5 set (0x20) trigger RATS/ATS activation and
+    Type 4 NDEF read via I-Block wrapped APDUs.
+    """
+
+    UID_T4 = "AABB0011"  # 4-byte, will be TYPE4
+
+    def test_type4_tag_detected(self, sim):
+        """TYPE4 tag (SAK=0x20) is detected via NFC-A anticollision."""
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        ctrl1.add_tag(self.UID_T4, tag_type="TYPE4")
+        proc.wait_for(rf"READER1_ON_TAG {self.UID_T4}", timeout=10)
+
+    def test_isodep_activation(self, sim):
+        """RATS/ATS exchange fires for ISO-DEP capable tag."""
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            found = any("ISO-DEP" in line for line in proc.log_lines)
+        assert found, "ISO-DEP activation log not found for TYPE4 tag"
+
+    def test_type4_tag_removed(self, sim):
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        ctrl1.remove_tag(self.UID_T4)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.UID_T4}", timeout=10)
+
+
 class TestAatTuning:
     """
     Automatic Antenna Tuning (AAT) hill-climbing optimizer.

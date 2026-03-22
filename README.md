@@ -227,6 +227,33 @@ All four chips share the same register map (per ST application notes AN6279, AN6
 
 ---
 
+## ISO 14443-4 (ISO-DEP) / Type 4 Tags
+
+Tags with SAK bit 5 set (e.g., DESFire, NTAG424, GlobalPlatform cards) are automatically activated via RATS/ATS after NFC-A SELECT. The firmware then attempts to read NDEF data using the standard Type 4 tag flow:
+
+```
+1. RATS (0xE0 0x80) → ATS (frame size, timing)
+2. SELECT NDEF Application (AID: D276000085010100)
+3. SELECT Capability Container (FID: 0xE103)
+4. READ BINARY CC (15 bytes)
+5. SELECT NDEF File (from CC)
+6. READ BINARY NDEF data
+```
+
+**APDU format** (wrapped in I-Block framing automatically):
+
+| Command | CLA | INS | P1 | P2 | Data |
+|---------|-----|-----|----|----|------|
+| SELECT by name | 00 | A4 | 04 | 00 | AID bytes |
+| SELECT by FID | 00 | A4 | 00 | 0C | File ID (2 bytes) |
+| READ BINARY | 00 | B0 | offset_hi | offset_lo | Le (length) |
+
+**Supported tags:** Any ISO 14443-4 compliant tag (SAK & 0x20). Tags without an NDEF application (e.g., payment cards, GlobalPlatform) will still be detected by UID — only the NDEF read step is skipped.
+
+**Verified on hardware:** GlobalPlatform card SAK=0x28, ATS TL=13 bytes, RATS/ATS + I-Block exchange successful on STEVAL-MB17149B.
+
+---
+
 ## Troubleshooting
 
 **No tags detected** — check wiring and confirm logs show `ST25R initialized successfully`. Verify IRQ pin is connected and not a strapping pin.
