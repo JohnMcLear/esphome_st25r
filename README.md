@@ -82,7 +82,24 @@ st25r_spi:
   irq_pin: GPIO7
   update_interval: 500ms
   rf_power: 15
+  rf_field_enabled: true
+  supply_3v3: true          # ST25R3916 auto-detects VDD and overrides this
+  rx_gain_boost: false
+
+  # Protocol options
+  nfcv_enabled: true        # ISO 15693 (NFC-V) tag detection alongside NFC-A
+  aat_enabled: true          # Automatic Antenna Tuning at startup (improves range on varicap boards)
+
+  # Antenna tuning DAC values (starting point for AAT, or static if aat_enabled: false)
+  ant_tune_a: 0x80
+  ant_tune_b: 0x40
+
+  # Mifare Classic keys
   mifare_key_a: A0A1A2A3A4A5
+  mifare_key_b: FFFFFFFFFFFF
+
+  # Tag presence debounce: consecutive missed scans before on_tag_removed fires
+  miss_threshold: 3
 
   # Health check: verify chip identity every 60 s (independent of 500 ms scan rate).
   # After 3 consecutive failures the chip is automatically reinitialised.
@@ -115,12 +132,17 @@ binary_sensor:
   - platform: st25r
     st25r_id: my_nfc_reader
     name: "NFC Ring"
-    uid: "04-1A-A7-67-5F-61-80"
+    uid: "04-1A-A7-67-5F-61-80"          # 7-byte NFC-A
 
   - platform: st25r
     st25r_id: my_nfc_reader
     name: "Access Card"
-    uid: "DE-A3-0D-00"
+    uid: "DE-A3-0D-00"                    # 4-byte NFC-A
+
+  - platform: st25r
+    st25r_id: my_nfc_reader
+    name: "ISO 15693 Badge"
+    uid: "E0-02-08-02-4F-EF-E7-E1"       # 8-byte NFC-V
 ```
 
 ---
