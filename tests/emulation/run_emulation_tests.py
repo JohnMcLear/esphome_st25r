@@ -946,6 +946,40 @@ class TestChipInitRegisters:
         assert val == 0x40, f"EMD_SUP_CONF expected 0x40, got 0x{val:02X}"
 
 
+class TestIsoDepType4:
+    """
+    ISO 14443-4 (ISO-DEP) Type 4 tag detection.
+
+    Tags with SAK bit 5 set (0x20) trigger RATS/ATS activation and
+    Type 4 NDEF read via I-Block wrapped APDUs.
+    """
+
+    UID_T4 = "F0F0F0F0"  # 4-byte, unique for TYPE4 tests
+
+    def test_type4_tag_detected_and_isodep(self, sim):
+        """TYPE4 tag (SAK=0x20) triggers RATS/ATS and Type 4 NDEF attempt."""
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        ctrl1.add_tag(self.UID_T4, tag_type="TYPE4")
+        # Wait for tag detection
+        proc.wait_for(rf"READER1_ON_TAG {self.UID_T4}", timeout=10)
+        # All ISO-DEP logs should be in the buffer now
+        with proc._lock:
+            logs = list(proc.log_lines)
+        assert any("ISO-DEP" in l for l in logs), "ISO-DEP activation not logged"
+        assert any("ATS received" in l for l in logs), "ATS not received"
+        assert any("SAK=0x20" in l for l in logs), "SAK=0x20 not logged"
+        assert any("T4T" in l for l in logs), "T4T NDEF read not attempted"
+
+    def test_type4_tag_removed(self, sim):
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        ctrl1.remove_tag(self.UID_T4)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.UID_T4}", timeout=10)
+
+
 class TestAatTuning:
     """
     Automatic Antenna Tuning (AAT) hill-climbing optimizer.

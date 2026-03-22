@@ -133,6 +133,19 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   virtual bool nfcv_ndef_write_(nfc::NdefMessage *message);  // NFC-V Type 5 WRITE_SINGLE_BLOCK path
   bool clean_tag();
 
+  /// Send an APDU via ISO-DEP (ISO 14443-4) I-Block framing.
+  /// Requires the tag to be ISO-DEP activated (SAK & 0x20, RATS already sent).
+  /// Call multiple times for conversational APDU exchanges (block number toggles automatically).
+  /// Returns true if a response was received; resp/resp_len contain the response data + SW1 SW2.
+  /// Example from on_tag lambda:
+  ///   uint8_t select[] = {0x00, 0xA4, 0x04, 0x00, 0x07, 0xA0, 0x00, 0x00, 0x05, 0x27, 0x20, 0x01};
+  ///   uint8_t resp[64]; uint8_t len = 0;
+  ///   if (id(reader).send_apdu(select, sizeof(select), resp, len)) { /* check resp */ }
+  bool send_apdu(const uint8_t *apdu, size_t apdu_len, uint8_t *resp, uint8_t &resp_len);
+
+  /// Check if the most recently selected tag supports ISO-DEP (SAK & 0x20).
+  bool is_isodep_active() const { return this->last_sak_ & 0x20; }
+
   void set_reset_pin(GPIOPin *reset_pin) { this->reset_pin_ = reset_pin; }
   void set_irq_pin(InternalGPIOPin *irq_pin) { this->irq_pin_ = irq_pin; }
   void set_rf_field_enabled(bool enabled) { this->rf_field_enabled_ = enabled; }
@@ -149,6 +162,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   void set_max_failed_checks(uint8_t n) { this->max_failed_checks_ = n; }
   void set_auto_reset_on_failure(bool v) { this->auto_reset_on_failure_ = v; }
   void set_nfcv_enabled(bool v) { this->nfcv_enabled_ = v; }
+  void set_nfcb_enabled(bool v) { this->nfcb_enabled_ = v; }
   void set_aat_enabled(bool v) { this->aat_enabled_ = v; }
 
   void register_on_tag_trigger(ST25RTagTrigger *trig) { this->on_tag_triggers_.push_back(trig); }
@@ -187,6 +201,16 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
 
   // Automatic Antenna Tuning — hill-climbing optimizer for ANT_TUNE_A/B
   void aat_tune_();
+
+  // ISO 14443-4 (ISO-DEP / Type 4 tags)
+  bool isodep_activate_(uint8_t *ats, uint8_t &ats_len);  // Send RATS, parse ATS
+  bool isodep_transceive_(const uint8_t *apdu, size_t apdu_len, uint8_t *resp, uint8_t &resp_len);
+  std::unique_ptr<nfc::NfcTag> read_tag_type4_(std::vector<uint8_t> &uid);
+  uint8_t isodep_block_number_{0};
+
+  // NFC-B (ISO 14443B) support
+  void nfcb_scan_();
+  void configure_nfcb_mode_();
 
   // NFC-V (ISO 15693) support for ST25R3916 — streaming mode
   void nfcv_scan_();
@@ -234,6 +258,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   uint8_t max_failed_checks_{3};
   bool auto_reset_on_failure_{true};
   bool nfcv_enabled_{true};
+  bool nfcb_enabled_{true};
   bool aat_enabled_{true};  // AAT hill-climbing — improves range on boards with varicaps
   uint8_t health_check_failures_{0};
   uint8_t reinitialization_attempts_{0};
@@ -262,6 +287,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   uint32_t last_state_change_{0};
   uint8_t cascade_level_{0};
   std::string current_uid_;
+  uint8_t last_sak_{0};  // SAK from most recent SELECT (bit5=0x20 → ISO-DEP capable)
 
   // Anticollision loop state
   uint8_t anticol_prefix_[5]{};   // UID prefix bytes being used to narrow search

@@ -137,6 +137,7 @@ static TagType parse_type(const std::string &name,
   if (name == "NTAG216")     return TAG_NTAG216;
   if (name == "ULTRALIGHT")  return TAG_MIFARE_ULTRALIGHT;
   if (name == "ISO15693")    return TAG_ISO15693;
+  if (name == "TYPE4")       return TAG_TYPE4;
   // Auto-detect from UID length
   if (uid.size() == 8) return TAG_ISO15693;
   return (uid.size() == 4) ? TAG_MIFARE_CLASSIC_1K : TAG_NTAG213;
@@ -312,8 +313,12 @@ void ST25RSim::write_command(uint8_t command) {
       }
       break;
 
-    case 0xC4:  // TRANSMIT_WITH_CRC (SELECT, HALT, Mifare auth cmd)
-      on_transmit_crc_();
+    case 0xC4:  // TRANSMIT_WITH_CRC (SELECT, HALT, Mifare auth cmd, NFC-B SENSB)
+      if ((regs_[0x03] & 0xF8) == 0x90) {  // MODE om=0x02 + tr_am=1 → NFC-B
+        on_nfcb_sensb_();
+      } else {
+        on_transmit_crc_();
+      }
       break;
 
     // No-ops
@@ -367,6 +372,7 @@ uint8_t ST25RSim::final_sak_for_(const VirtualTag &tag) const {
     case TAG_NTAG215:
     case TAG_NTAG216:
     case TAG_MIFARE_ULTRALIGHT: return 0x00;
+    case TAG_TYPE4:             return 0x20;  // ISO-DEP capable
     case TAG_MIFARE_CLASSIC_1K:
     default:                    return 0x08;
   }
@@ -895,6 +901,53 @@ void ST25RSim::on_transmit_crc_() {
     return;
   }
 
+  // ── RATS (0xE0) — ISO 14443-4 activation ─────────────────────────────────
+  if (cmd == 0xE0 && frame.size() >= 2) {
+    // Respond with basic ATS: TL=5, T0=0x75, TA=0x31, TB=0x02, TC=0x51
+    fifo_out_ = {0x05, 0x75, 0x31, 0x02, 0x51};
+    pending_irq_main_ = IRQ_TXE | IRQ_RXE;
+    ESP_LOGV(TAG, "SIM RATS → ATS (TL=5)");
+    return;
+  }
+
+  // ── I-Block (ISO-DEP) — PCB byte starts with 0x02 or 0x03 ──────────────
+  if ((cmd & 0xC2) == 0x02 && frame.size() >= 2) {
+    // I-Block with APDU. Check for SELECT NDEF app (INS=0xA4, P1=0x04)
+    // Respond with 9000 (success) for known commands, 6A82 (not found) for others
+    uint8_t pcb_resp = 0x02 | ((cmd ^ 0x01) & 0x01);  // toggle block number
+    if (frame.size() >= 6 && frame[1] == 0x00 && frame[2] == 0xA4 && frame[3] == 0x04) {
+      // SELECT by name — respond success
+      fifo_out_ = {pcb_resp, 0x90, 0x00};
+    } else if (frame.size() >= 6 && frame[1] == 0x00 && frame[2] == 0xA4 && frame[3] == 0x00) {
+      // SELECT by FID — respond success
+      fifo_out_ = {pcb_resp, 0x90, 0x00};
+    } else if (frame.size() >= 5 && frame[1] == 0x00 && frame[2] == 0xB0) {
+      // READ BINARY — respond with dummy data + 9000
+      uint8_t le = frame[frame.size() - 1];
+      if (le > 48) le = 48;
+      fifo_out_.clear();
+      fifo_out_.push_back(pcb_resp);
+      // CC dummy: CCLEN=000F, v2.0, MLe=FF, MLc=FF, NDEF TLV
+      if (frame[3] == 0x00 && frame[4] == 0x00 && le >= 15) {
+        // READ CC at offset 0
+        uint8_t cc[] = {0x00, 0x0F, 0x20, 0xFF, 0xFF, 0x04, 0x06, 0x00,
+                        0x00, 0xE1, 0x04, 0x00, 0x20, 0x00, 0x00};
+        for (uint8_t i = 0; i < 15 && i < le; i++) fifo_out_.push_back(cc[i]);
+      } else {
+        // Generic read — return zeros
+        for (uint8_t i = 0; i < le; i++) fifo_out_.push_back(0x00);
+      }
+      fifo_out_.push_back(0x90);
+      fifo_out_.push_back(0x00);
+    } else {
+      // Unknown APDU — respond 6A82 (file not found)
+      fifo_out_ = {pcb_resp, 0x6A, 0x82};
+    }
+    pending_irq_main_ = IRQ_TXE | IRQ_RXE;
+    ESP_LOGV(TAG, "SIM I-Block → response (%u bytes)", (unsigned)fifo_out_.size());
+    return;
+  }
+
   // ── Unknown / other commands ──────────────────────────────────────────────
   pending_irq_main_ = IRQ_TXE;
   ESP_LOGV(TAG, "SIM TRANSMIT_WITH_CRC: unhandled cmd=0x%02X", cmd);
@@ -1054,6 +1107,32 @@ void ST25RSim::on_nfcv_transmit_() {
     pending_irq_main_ = IRQ_TXE;
     pending_irq_timer_ = 0x40;
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NFC-B (ISO 14443B) SENSB_REQ handler
+// ─────────────────────────────────────────────────────────────────────────────
+
+void ST25RSim::on_nfcb_sensb_() {
+  std::vector<uint8_t> frame;
+  frame.swap(fifo_in_);
+  fifo_out_.clear();
+
+  // Check for SENSB_REQ: first byte should be 0x05
+  if (frame.size() < 3 || frame[0] != 0x05) {
+    pending_irq_main_ = IRQ_TXE;
+    pending_irq_timer_ = 0x40;  // NRE
+    return;
+  }
+
+  std::lock_guard<std::mutex> lk(tags_mutex_);
+
+  // Find first ISO14443B tag (TAG_ISO14443B type — not yet defined, so use a heuristic:
+  // for now, no NFC-B virtual tags exist, so just return NRE)
+  // TODO: Add TAG_ISO14443B to TagType enum when NFC-B virtual tags are needed
+  pending_irq_main_ = IRQ_TXE;
+  pending_irq_timer_ = 0x40;  // NRE — no NFC-B tags in sim yet
+  ESP_LOGV(TAG, "SIM NFC-B SENSB_REQ → no ISO14443B tags in sim");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

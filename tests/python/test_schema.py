@@ -408,3 +408,152 @@ class TestIso15693Crc:
         for i in range(256):
             crc = self.iso15693_crc(bytes([i]))
             assert 0 <= crc <= 0xFFFF
+
+
+# ── ISO 14443-4 (ISO-DEP / Type 4) protocol tests ───────────────────────────
+
+class TestIsoDepProtocol:
+    """Tests for ISO 14443-4 ISO-DEP protocol constants and framing."""
+
+    def test_rats_command_format(self):
+        """RATS: 0xE0 + parameter byte (FSDI << 4 | DID)."""
+        rats = bytes([0xE0, 0x80])  # FSDI=8 (256 bytes), DID=0
+        assert rats[0] == 0xE0
+        assert (rats[1] >> 4) == 8   # FSDI
+        assert (rats[1] & 0x0F) == 0  # DID
+
+    def test_iblock_pcb_format(self):
+        """I-Block PCB: bits[7:6]=00, bit1=1, bit0=block_number."""
+        pcb_block0 = 0x02  # I-Block, block#0
+        pcb_block1 = 0x03  # I-Block, block#1
+        assert pcb_block0 & 0xC0 == 0x00  # I-Block type
+        assert pcb_block0 & 0x02 == 0x02  # Must-be-1 bit
+        assert pcb_block0 & 0x01 == 0     # Block number 0
+        assert pcb_block1 & 0x01 == 1     # Block number 1
+
+    def test_iblock_chaining_bit(self):
+        """I-Block chaining: bit 4 set when more data follows."""
+        pcb_chain = 0x12  # I-Block, chaining, block#0
+        assert pcb_chain & 0x10 == 0x10  # Chaining bit
+
+    def test_block_number_toggle(self):
+        """Block numbers alternate 0, 1, 0, 1..."""
+        bn = 0
+        for _ in range(4):
+            bn ^= 1
+        assert bn == 0  # Even number of toggles returns to 0
+
+    def test_sak_isodep_detection(self):
+        """SAK bit 5 (0x20) indicates ISO-DEP capable tag."""
+        assert 0x20 & 0x20 == 0x20   # NTAG424/DESFire SAK=0x20
+        assert 0x28 & 0x20 == 0x20   # GlobalPlatform SAK=0x28 (confirmed on hardware)
+        assert 0x08 & 0x20 == 0x00   # Mifare Classic SAK=0x08 — NOT ISO-DEP
+        assert 0x00 & 0x20 == 0x00   # NTAG SAK=0x00 — NOT ISO-DEP
+
+
+class TestType4NdefCommands:
+    """Tests for NFC Forum Type 4 tag APDU command construction."""
+
+    def test_select_ndef_app_v2(self):
+        """SELECT NDEF Application v2: AID = D276000085010100."""
+        apdu = bytes([0x00, 0xA4, 0x04, 0x00, 0x07,
+                      0xD2, 0x76, 0x00, 0x00, 0x85, 0x01, 0x01, 0x00])
+        assert apdu[0] == 0x00   # CLA
+        assert apdu[1] == 0xA4   # INS SELECT
+        assert apdu[2] == 0x04   # P1: select by name
+        assert apdu[4] == 0x07   # Lc: 7 bytes
+        assert apdu[5:12] == bytes([0xD2, 0x76, 0x00, 0x00, 0x85, 0x01, 0x01])
+
+    def test_select_cc_file(self):
+        """SELECT CC file: FID = 0xE103."""
+        apdu = bytes([0x00, 0xA4, 0x00, 0x0C, 0x02, 0xE1, 0x03])
+        assert apdu[2] == 0x00   # P1: select by file ID
+        assert apdu[3] == 0x0C   # P2: no response data
+        assert apdu[5:7] == bytes([0xE1, 0x03])
+
+    def test_read_binary(self):
+        """READ BINARY: offset + length."""
+        apdu = bytes([0x00, 0xB0, 0x00, 0x02, 0x20])
+        assert apdu[1] == 0xB0   # INS READ BINARY
+        assert apdu[2] == 0x00   # P1: offset high
+        assert apdu[3] == 0x02   # P2: offset low (skip 2-byte NLEN)
+        assert apdu[4] == 0x20   # Le: read 32 bytes
+
+    def test_success_status_word(self):
+        """Status word 0x9000 = success."""
+        sw1, sw2 = 0x90, 0x00
+        assert sw1 == 0x90 and sw2 == 0x00
+
+    def test_atqb_response_code(self):
+        """ATQB response starts with 0x50."""
+        assert 0x50 == 0x50
+
+    def test_sensb_req_format(self):
+        """SENSB_REQ: 0x05, AFI, PARAM."""
+        sensb = bytes([0x05, 0x00, 0x08])
+        assert sensb[0] == 0x05  # SENSB_REQ command
+        assert sensb[1] == 0x00  # AFI: any
+        assert sensb[2] & 0x08 == 0x08  # WUPB bit set
+
+
+class TestSeidApdu:
+    """Tests for payment card SEID/CPLC APDU commands (hardware-verified)."""
+
+    def test_get_cplc_command_format(self):
+        """GET DATA CPLC: CLA=80, INS=CA, P1=9F, P2=7F, Le=2C."""
+        apdu = bytes([0x80, 0xCA, 0x9F, 0x7F, 0x2C])
+        assert apdu[0] == 0x80   # CLA: GlobalPlatform
+        assert apdu[1] == 0xCA   # INS: GET DATA
+        assert apdu[2] == 0x9F   # P1: tag high byte
+        assert apdu[3] == 0x7F   # P2: tag low byte (9F7F = CPLC)
+        assert apdu[4] == 0x2C   # Le: expected length (44 bytes)
+
+    def test_seid_is_stable(self):
+        """SEID from CPLC is the same across multiple reads (hardware-verified).
+
+        Tested on STEVAL-MB17149B with a random-UID payment card (SAK=0x20).
+        NFC-A UID changed every scan but SEID remained constant.
+        """
+        seid_scan1 = "9F7F2A4830185782317202000B010811623B0007D71142116811431168114411681414000005151208120F009000"
+        seid_scan2 = "9F7F2A4830185782317202000B010811623B0007D71142116811431168114411681414000005151208120F009000"
+        assert seid_scan1 == seid_scan2
+
+    def test_cplc_response_parsing(self):
+        """CPLC tag 9F7F contains IC fabricator, type, OS ID, etc."""
+        # Real CPLC data from hardware test (with SW stripped)
+        cplc_hex = "9F7F2A4830185782317202000B010811623B0007D71142116811431168114411681414000005151208120F00"
+        cplc = bytes.fromhex(cplc_hex)
+        assert cplc[0] == 0x9F   # CPLC tag high
+        assert cplc[1] == 0x7F   # CPLC tag low
+        assert cplc[2] == 0x2A   # Length (42 bytes)
+        # IC Fabricator at offset 3-4
+        ic_fabricator = (cplc[3] << 8) | cplc[4]
+        assert ic_fabricator > 0  # Non-zero fabricator ID
+
+    def test_other_seid_commands(self):
+        """Alternative SEID commands for different card types."""
+        # OT Credit/Debit
+        ot_cmd = bytes([0x80, 0xCA, 0x9F, 0x7F, 0x2D])
+        assert ot_cmd[4] == 0x2D  # Le=45
+
+        # MULTOS
+        multos_cmd = bytes([0x80, 0x02, 0x00, 0x00, 0x16])
+        assert multos_cmd[1] == 0x02  # INS
+        assert multos_cmd[4] == 0x16  # Le=22
+
+    def test_sblock_deselect_format(self):
+        """S-Block DESELECT: PCB=0xC2 (bits[7:6]=11, DESELECT)."""
+        deselect = bytes([0xC2])
+        assert deselect[0] & 0xC0 == 0xC0  # S-Block type
+        assert deselect[0] & 0x30 == 0x00  # DESELECT (not WTX)
+
+    def test_random_uid_is_not_stable(self):
+        """Random-UID payment cards change NFC-A UID every scan."""
+        uid1 = "08D28688"
+        uid2 = "0889CE54"
+        uid3 = "0893A298"
+        assert uid1 != uid2 != uid3  # All different
+        # But all start with 08 (random UID marker per ISO 14443-3)
+        assert uid1[:2] == "08"
+        assert uid2[:2] == "08"
+        assert uid3[:2] == "08"

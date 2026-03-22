@@ -98,6 +98,10 @@ void ST25R300::update() {
   if (this->nfcv_enabled_)
     this->nfcv_scan_();
 
+  // NFC-B (ISO 14443B) blocking SENSB — runs before NFC-A scan
+  if (this->nfcb_enabled_)
+    this->nfcb_scan_();
+
   this->saved_anticol_valid_ = false;
   this->anticol_resume_ = false;
 
@@ -831,6 +835,55 @@ bool ST25R300::nfcv_ndef_write_(nfc::NdefMessage *message) {
   ESP_LOGI(TAG, "NFC-V NDEF write successful!");
   this->configure_nfca_mode_();
   return true;
+}
+
+// ── NFC-B (ISO 14443B) support ───────────────────────────────────────────────
+
+void ST25R300::configure_nfcb_mode_() {
+  this->write_register(ST25R300_REG_PROTOCOL1, 0x02);      // om=2: NFC-B/ISO14443B
+  this->write_register(ST25R300_REG_TX_PROTOCOL1, 0x20);   // tx_crc only (no parity for NFC-B)
+  this->write_register(ST25R300_REG_RX_PROTOCOL1,
+                       ST25R300_RX_PROT1_B_RX_SOF | ST25R300_RX_PROT1_B_RX_EOF |
+                       ST25R300_RX_PROT1_RX_CRC);  // 0x34: SOF+EOF+CRC (no parity)
+  // NFC-B uses AM modulation (10% ASK), not OOK
+  this->write_register(ST25R300_REG_TX_MOD1, 0x70);  // am_mod=7 (12% ASK)
+  // NRT: ~20ms for NFC-B response
+  this->write_register(ST25R300_REG_NRT_CONF2, 0x10);
+  this->write_register(ST25R300_REG_NRT_CONF3, 0x89);
+}
+
+void ST25R300::nfcb_scan_() {
+  this->configure_nfcb_mode_();
+
+  // SENSB_REQ (ALLB): cmd=0x05, AFI=0x00, PARAM=0x08 (1 slot + WUPB)
+  uint8_t sensb_req[] = {0x05, 0x00, 0x08};
+  uint8_t resp[16];
+  uint8_t resp_len = 0;
+
+  if (this->transceive_nfcv_(sensb_req, sizeof(sensb_req), resp, resp_len, 20) &&
+      resp_len >= 12 && resp[0] == 0x50) {
+    // ATQB: byte 0 = 0x50, bytes 1-4 = PUPI
+    char uid_str[9];
+    snprintf(uid_str, sizeof(uid_str), "%02X%02X%02X%02X", resp[1], resp[2], resp[3], resp[4]);
+    ESP_LOGI(TAG, "NFC-B tag: %s (ATQB len=%u)", uid_str, resp_len);
+
+    std::string uid_string(uid_str);
+    this->tags_this_scan_.insert(uid_string);
+
+    if (this->present_tags_.find(uid_string) == this->present_tags_.end()) {
+      this->present_tags_[uid_string] = 0;
+      std::vector<uint8_t> uid_bytes = {resp[1], resp[2], resp[3], resp[4]};
+      nfc::NfcTagUid nfc_uid(uid_bytes.begin(), uid_bytes.end());
+      auto tag = make_unique<nfc::NfcTag>(nfc_uid);
+      for (auto *listener : this->tag_listeners_)
+        listener->tag_on(*tag);
+      for (auto *trigger : this->on_tag_triggers_)
+        trigger->trigger(uid_string);
+    }
+  }
+
+  // Restore NFC-A mode
+  this->configure_nfca_mode_();
 }
 
 }  // namespace st25r300

@@ -172,6 +172,20 @@ void ST25R::update() {
   if (this->nfcv_enabled_)
     this->nfcv_scan_();
 
+  // NFC-B (ISO 14443B) blocking SENSB_REQ — runs before NFC-A scan
+  if (this->nfcb_enabled_)
+    this->nfcb_scan_();
+
+  // If previous scan activated ISO-DEP (RATS), send S-Block DESELECT to return
+  // the card to IDLE state. Without this, ISO-DEP cards ignore subsequent WUPAs.
+  if (this->last_sak_ & 0x20) {
+    uint8_t deselect[] = {0xC2};  // S-Block DESELECT, no DID
+    uint8_t dsl_resp[4];
+    uint8_t dsl_len = 0;
+    this->transceive_(deselect, 1, dsl_resp, dsl_len, 10);
+    this->last_sak_ = 0;  // Clear so we don't deselect again if tag is gone
+  }
+
   this->saved_anticol_valid_ = false;
   this->anticol_resume_ = false;
 
@@ -434,7 +448,13 @@ bool ST25R::mifare_read_block_(uint8_t block, uint8_t *data,
 
 std::unique_ptr<nfc::NfcTag> ST25R::read_tag_(std::vector<uint8_t> &uid) {
   uint8_t type = nfc::guess_tag_type(uid.size());
-  ESP_LOGI(TAG, "read_tag_: UID length=%zu, guessed type=%d", uid.size(), type);
+  ESP_LOGI(TAG, "read_tag_: UID length=%zu, guessed type=%d, SAK=0x%02X", uid.size(), type, this->last_sak_);
+
+  // ISO-DEP capable (SAK bit 5 set) → try Type 4 NDEF read
+  if (this->last_sak_ & 0x20) {
+    ESP_LOGI(TAG, "ISO-DEP capable tag (SAK & 0x20) — trying Type 4 NDEF");
+    return this->read_tag_type4_(uid);
+  }
 
   if (type == nfc::TAG_TYPE_MIFARE_CLASSIC) {
     ESP_LOGI(TAG, "Mifare Classic detected - attempting authentication");
@@ -755,6 +775,7 @@ void ST25R::process_state_() {
             return;
           }
           uint8_t sak = sak_buf[0];
+          this->last_sak_ = sak;
 
           if (sak & 0x04) {  // Cascade bit — need another anticollision level
             // Save CL1 collision state before overwriting for CL2
@@ -1246,6 +1267,241 @@ void ST25R::aat_tune_() {
   ESP_LOGI(TAG, "AAT: converged A=0x%02X B=0x%02X amp=%u", best_a, best_b, best_amp);
 }
 
+// ── ISO 14443-4 (ISO-DEP / Type 4 tags) ─────────────────────────────────────
+
+bool ST25R::isodep_activate_(uint8_t *ats, uint8_t &ats_len) {
+  // Send RATS: 0xE0, FSDI=8 (256 bytes) | DID=0
+  uint8_t rats[] = {0xE0, 0x80};
+  uint8_t resp[64];
+  uint8_t resp_len = 0;
+  ats_len = 0;
+
+  if (!this->transceive_(rats, sizeof(rats), resp, resp_len) || resp_len < 2) {
+    ESP_LOGD(TAG, "ISO-DEP: RATS failed (resp_len=%u)", resp_len);
+    return false;
+  }
+
+  // ATS: TL(1) + T0(1) + [TA] + [TB] + [TC] + [HB...]
+  ats_len = resp_len;
+  memcpy(ats, resp, resp_len);
+  this->isodep_block_number_ = 0;
+
+  ESP_LOGD(TAG, "ISO-DEP: ATS received, TL=%u", resp[0]);
+  return true;
+}
+
+bool ST25R::isodep_transceive_(const uint8_t *apdu, size_t apdu_len, uint8_t *resp, uint8_t &resp_len) {
+  // Wrap APDU in I-Block: [PCB][APDU...]
+  uint8_t frame[64];
+  if (apdu_len + 1 > sizeof(frame)) return false;
+
+  // PCB: I-Block, no chaining, no DID/NAD, must-be-1 bit, block number
+  frame[0] = 0x02 | (this->isodep_block_number_ & 0x01);
+  memcpy(frame + 1, apdu, apdu_len);
+
+  uint8_t raw_resp[64];
+  uint8_t raw_len = 0;
+
+  if (!this->transceive_(frame, apdu_len + 1, raw_resp, raw_len) || raw_len < 3) {
+    return false;
+  }
+
+  // Toggle block number for next exchange
+  this->isodep_block_number_ ^= 1;
+
+  // Strip PCB byte, check for I-Block response
+  if ((raw_resp[0] & 0xC0) != 0x00) {
+    // Not an I-Block — might be R-Block or S-Block
+    ESP_LOGD(TAG, "ISO-DEP: non-I-Block response PCB=0x%02X", raw_resp[0]);
+    return false;
+  }
+
+  // Response: [PCB][data...][SW1][SW2]  (CRC already stripped by transceive_)
+  resp_len = raw_len - 1;  // strip PCB
+  memcpy(resp, raw_resp + 1, resp_len);
+  return true;
+}
+
+std::unique_ptr<nfc::NfcTag> ST25R::read_tag_type4_(std::vector<uint8_t> &uid) {
+  uint8_t ats[64];
+  uint8_t ats_len = 0;
+
+  if (!this->isodep_activate_(ats, ats_len)) {
+    nfc::NfcTagUid nfc_uid(uid.begin(), uid.end());
+    return make_unique<nfc::NfcTag>(nfc_uid);
+  }
+
+  uint8_t resp[64];
+  uint8_t resp_len = 0;
+
+  // Step 1: SELECT NDEF Application (AID = D276000085010100 for v2, try v1 as fallback)
+  uint8_t select_app[] = {0x00, 0xA4, 0x04, 0x00, 0x07, 0xD2, 0x76, 0x00, 0x00, 0x85, 0x01, 0x01, 0x00};
+  if (!this->isodep_transceive_(select_app, sizeof(select_app), resp, resp_len) ||
+      resp_len < 2 || resp[resp_len - 2] != 0x90 || resp[resp_len - 1] != 0x00) {
+    // Try v1 AID
+    select_app[11] = 0x00;  // D276000085010100 → D276000085010000
+    resp_len = 0;
+    if (!this->isodep_transceive_(select_app, sizeof(select_app), resp, resp_len) ||
+        resp_len < 2 || resp[resp_len - 2] != 0x90 || resp[resp_len - 1] != 0x00) {
+      ESP_LOGD(TAG, "T4T: SELECT NDEF app failed");
+      nfc::NfcTagUid nfc_uid(uid.begin(), uid.end());
+      return make_unique<nfc::NfcTag>(nfc_uid);
+    }
+  }
+
+  // Step 2: SELECT CC File (0xE103)
+  uint8_t select_cc[] = {0x00, 0xA4, 0x00, 0x0C, 0x02, 0xE1, 0x03};
+  resp_len = 0;
+  if (!this->isodep_transceive_(select_cc, sizeof(select_cc), resp, resp_len) ||
+      resp_len < 2 || resp[resp_len - 2] != 0x90) {
+    ESP_LOGD(TAG, "T4T: SELECT CC failed");
+    nfc::NfcTagUid nfc_uid(uid.begin(), uid.end());
+    return make_unique<nfc::NfcTag>(nfc_uid);
+  }
+
+  // Step 3: READ BINARY CC (15 bytes)
+  uint8_t read_cc[] = {0x00, 0xB0, 0x00, 0x00, 0x0F};
+  resp_len = 0;
+  if (!this->isodep_transceive_(read_cc, sizeof(read_cc), resp, resp_len) ||
+      resp_len < 17) {  // 15 data + SW1 SW2
+    ESP_LOGD(TAG, "T4T: READ CC failed (resp_len=%u)", resp_len);
+    nfc::NfcTagUid nfc_uid(uid.begin(), uid.end());
+    return make_unique<nfc::NfcTag>(nfc_uid);
+  }
+
+  // Parse CC: bytes 7-8 = NDEF file ID, bytes 9-10 = max NDEF size
+  // CC TLV at offset 7: type(1) + len(1) + fileID(2) + maxSize(2) + readAccess(1) + writeAccess(1)
+  uint16_t ndef_file_id = ((uint16_t)resp[9] << 8) | resp[10];
+  uint16_t max_ndef_size = ((uint16_t)resp[11] << 8) | resp[12];
+  ESP_LOGD(TAG, "T4T CC: NDEF file=0x%04X, max_size=%u", ndef_file_id, max_ndef_size);
+
+  // Step 4: SELECT NDEF File
+  uint8_t select_ndef[] = {0x00, 0xA4, 0x00, 0x0C, 0x02, (uint8_t)(ndef_file_id >> 8), (uint8_t)(ndef_file_id & 0xFF)};
+  resp_len = 0;
+  if (!this->isodep_transceive_(select_ndef, sizeof(select_ndef), resp, resp_len) ||
+      resp_len < 2 || resp[resp_len - 2] != 0x90) {
+    ESP_LOGD(TAG, "T4T: SELECT NDEF file failed");
+    nfc::NfcTagUid nfc_uid(uid.begin(), uid.end());
+    return make_unique<nfc::NfcTag>(nfc_uid);
+  }
+
+  // Step 5: READ NDEF Length (first 2 bytes)
+  uint8_t read_nlen[] = {0x00, 0xB0, 0x00, 0x00, 0x02};
+  resp_len = 0;
+  if (!this->isodep_transceive_(read_nlen, sizeof(read_nlen), resp, resp_len) ||
+      resp_len < 4) {  // 2 data + SW1 SW2
+    ESP_LOGD(TAG, "T4T: READ NLEN failed");
+    nfc::NfcTagUid nfc_uid(uid.begin(), uid.end());
+    return make_unique<nfc::NfcTag>(nfc_uid);
+  }
+
+  uint16_t ndef_len = ((uint16_t)resp[0] << 8) | resp[1];
+  if (ndef_len == 0 || ndef_len > 255) {
+    ESP_LOGD(TAG, "T4T: NDEF length %u (skipping read)", ndef_len);
+    nfc::NfcTagUid nfc_uid(uid.begin(), uid.end());
+    return make_unique<nfc::NfcTag>(nfc_uid);
+  }
+
+  // Step 6: READ NDEF Data
+  uint8_t read_ndef[] = {0x00, 0xB0, 0x00, 0x02, (uint8_t)ndef_len};
+  resp_len = 0;
+  if (!this->isodep_transceive_(read_ndef, sizeof(read_ndef), resp, resp_len) ||
+      resp_len < ndef_len + 2) {
+    ESP_LOGD(TAG, "T4T: READ NDEF data failed");
+    nfc::NfcTagUid nfc_uid(uid.begin(), uid.end());
+    return make_unique<nfc::NfcTag>(nfc_uid);
+  }
+
+  ESP_LOGI(TAG, "T4T NDEF: %u bytes read", ndef_len);
+  nfc::NfcTagUid nfc_uid(uid.begin(), uid.end());
+  return make_unique<nfc::NfcTag>(nfc_uid);
+}
+
+// ── NFC-B (ISO 14443B) for ST25R3916 ─────────────────────────────────────────
+
+void ST25R::configure_nfcb_mode_() {
+  // MODE: om=0x02 (ISO14443B) in bits[6:3] = 0x10, tr_am=1 (AM modulation) bit7 = 0x80
+  this->write_register(MODE, 0x90);
+  this->write_register(BIT_RATE, 0x00);  // 106 kbps
+  // TX: 10% ASK (AM modulation) — NFC-B requires AM, not OOK
+  uint8_t d_res = (15 - this->rf_power_) & 0x0F;
+  this->write_register(TX_DRIVER_CONF, 0x70 | d_res);  // am_mod=7 (12% ASK)
+  // RX: RFAL NFC-B analog profile
+  this->write_register(RX_CONF1, 0x00);  // AM channel
+  this->write_register(RX_CONF2, 0x2D);
+  this->write_register(RX_CONF3, 0x00);
+  this->write_register(RX_CONF4, 0x00);
+  this->write_register(CORR_CONF1, 0x14);  // NFC-B correlator
+  this->write_register(CORR_CONF2, 0x00);
+}
+
+void ST25R::nfcb_scan_() {
+  this->configure_nfcb_mode_();
+
+  // SENSB_REQ (ALLB_REQ): cmd=0x05, AFI=0x00 (any), PARAM=0x08 (1 slot + WUPB)
+  uint8_t sensb_req[] = {0x05, 0x00, 0x08};
+  uint8_t resp[16];
+  uint8_t resp_len = 0;
+
+  // Use standard CRC transceive — NFC-B uses the chip's CRC-B hardware
+  this->write_command(ST25R_CMD_CLEAR_FIFO);
+  this->write_command(ST25R_CMD_RESET_RX_GAIN);
+
+  uint16_t ntx = sizeof(sensb_req);
+  this->write_register(NUM_TX_BYTES1, ntx >> 5);
+  this->write_register(NUM_TX_BYTES2, (ntx & 0x1F) << 3);
+  this->write_fifo(sensb_req, sizeof(sensb_req));
+
+  this->read_register(IRQ_MAIN);
+  this->read_register(IRQ_TIMER);
+  this->irq_triggered_ = false;
+  this->write_command(ST25R_CMD_TRANSMIT_WITH_CRC);
+
+  // Wait for ATQB response
+  uint32_t start = millis();
+  while (millis() - start < 20) {
+    uint8_t irq = this->read_register(IRQ_MAIN);
+    uint8_t irq_t = this->read_register(IRQ_TIMER);
+    if (irq & 0x10) {  // RXE
+      uint8_t fifo_len = this->read_register(FIFO_STATUS1);
+      if (fifo_len >= 12) {  // Minimum ATQB: 0x50 + PUPI(4) + AppData(4) + ProtInfo(3)
+        this->read_fifo(resp, fifo_len);
+        resp_len = fifo_len;
+      }
+      break;
+    }
+    if (irq_t & 0x40) break;  // NRE
+    delay(1);
+  }
+
+  // Restore NFC-A mode
+  this->restore_nfca_mode_();
+  // Also restore TX_DRIVER to OOK (am_mod=0)
+  uint8_t d_res_restore = (15 - this->rf_power_) & 0x0F;
+  this->write_register(TX_DRIVER_CONF, d_res_restore);
+
+  if (resp_len < 12 || resp[0] != 0x50) return;
+
+  // Parse ATQB: byte 0 = 0x50, bytes 1-4 = PUPI
+  char uid_str[9];
+  snprintf(uid_str, sizeof(uid_str), "%02X%02X%02X%02X", resp[1], resp[2], resp[3], resp[4]);
+  ESP_LOGI(TAG, "NFC-B tag: %s (ATQB len=%u)", uid_str, resp_len);
+
+  std::string uid_string(uid_str);
+  this->tags_this_scan_.insert(uid_string);
+
+  if (this->present_tags_.find(uid_string) == this->present_tags_.end()) {
+    this->present_tags_[uid_string] = 0;
+    std::vector<uint8_t> uid_bytes = {resp[1], resp[2], resp[3], resp[4]};
+    nfc::NfcTagUid nfc_uid(uid_bytes.begin(), uid_bytes.end());
+    auto tag = make_unique<nfc::NfcTag>(nfc_uid);
+    for (auto *listener : this->tag_listeners_)
+      listener->tag_on(*tag);
+    for (auto *trigger : this->on_tag_triggers_)
+      trigger->trigger(uid_string);
+  }
+}
+
 // ── NFC-V (ISO 15693) streaming mode for ST25R3916 ──────────────────────────
 
 // ISO 15693 CRC-16 CCITT (preset=0xFFFF, poly=0x8408, result inverted)
@@ -1688,6 +1944,14 @@ bool ST25R::nfcv_ndef_write_(nfc::NdefMessage *message) {
 
 bool ST25R::clean_tag() {
   return this->ndef_write(nullptr, true);
+}
+
+bool ST25R::send_apdu(const uint8_t *apdu, size_t apdu_len, uint8_t *resp, uint8_t &resp_len) {
+  if (!(this->last_sak_ & 0x20)) {
+    ESP_LOGW(TAG, "send_apdu: tag not ISO-DEP capable (SAK=0x%02X)", this->last_sak_);
+    return false;
+  }
+  return this->isodep_transceive_(apdu, apdu_len, resp, resp_len);
 }
 
 void ST25R::dump_config() {

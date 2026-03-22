@@ -21,6 +21,7 @@ enum TagType : uint8_t {
   TAG_NTAG216,                // 7-byte UID, SAK=0x00
   TAG_MIFARE_ULTRALIGHT,      // 7-byte UID, SAK=0x00
   TAG_ISO15693,               // 8-byte UID, ISO 15693 / NFC-V
+  TAG_TYPE4,                  // 4 or 7-byte UID, SAK=0x20, ISO-DEP capable
 };
 
 // ── Virtual NFC tag ────────────────────────────────────────────────────────────
@@ -96,6 +97,7 @@ class ST25RSim : public st25r::ST25R {
   void on_anticol_();
   void on_transmit_crc_();
   void on_nfcv_transmit_();  // Handle NFC-V streaming mode transceive
+  void on_nfcb_sensb_();    // Handle NFC-B SENSB_REQ
 
   // Mifare sub-handlers (called from on_anticol_ when auth state active)
   void on_mifare_auth_response_(const std::vector<uint8_t> &frame);
