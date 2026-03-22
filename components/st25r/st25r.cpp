@@ -1483,6 +1483,7 @@ void ST25R::dump_config() {
   ESP_LOGCONFIG(TAG, "  RF Power: %u", this->rf_power_);
   ESP_LOGCONFIG(TAG, "  RF Field Enabled: %s", YESNO(this->rf_field_enabled_));
   ESP_LOGCONFIG(TAG, "  Miss Threshold: %u", this->miss_threshold_);
+  ESP_LOGCONFIG(TAG, "  NFC-V (ISO 15693): %s", YESNO(this->nfcv_enabled_));
   ESP_LOGCONFIG(TAG, "  Health Check: %s", YESNO(this->health_check_enabled_));
   if (this->health_check_enabled_) {
     ESP_LOGCONFIG(TAG, "  Health Check Interval: %u ms", this->health_check_interval_ms_);
@@ -1492,6 +1493,10 @@ void ST25R::dump_config() {
   LOG_UPDATE_INTERVAL(this);
   uint8_t ic_id = this->read_register(IC_IDENTITY);
   ESP_LOGCONFIG(TAG, "  IC Identity (live read): 0x%02X (chip_type=0x%02X)", ic_id, ic_id & 0xF8);
+  ESP_LOGCONFIG(TAG, "  IO_CONF2: 0x%02X (sup3V=%s, aat_en=%s)",
+                this->read_register(IO_CONF2),
+                (this->read_register(IO_CONF2) & 0x80) ? "3.3V" : "5V",
+                (this->read_register(IO_CONF2) & 0x20) ? "yes" : "no");
 }
 
 bool ST25RBinarySensor::process(const std::string &uid) {
