@@ -176,6 +176,16 @@ void ST25R::update() {
   if (this->nfcb_enabled_)
     this->nfcb_scan_();
 
+  // If previous scan activated ISO-DEP (RATS), send S-Block DESELECT to return
+  // the card to IDLE state. Without this, ISO-DEP cards ignore subsequent WUPAs.
+  if (this->last_sak_ & 0x20) {
+    uint8_t deselect[] = {0xC2};  // S-Block DESELECT, no DID
+    uint8_t dsl_resp[4];
+    uint8_t dsl_len = 0;
+    this->transceive_(deselect, 1, dsl_resp, dsl_len, 10);
+    this->last_sak_ = 0;  // Clear so we don't deselect again if tag is gone
+  }
+
   this->saved_anticol_valid_ = false;
   this->anticol_resume_ = false;
 
