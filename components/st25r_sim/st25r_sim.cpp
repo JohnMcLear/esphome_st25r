@@ -905,7 +905,7 @@ void ST25RSim::on_transmit_crc_() {
   if (cmd == 0xE0 && frame.size() >= 2) {
     // Respond with basic ATS: TL=5, T0=0x75, TA=0x31, TB=0x02, TC=0x51
     fifo_out_ = {0x05, 0x75, 0x31, 0x02, 0x51};
-    pending_irq_main_ = IRQ_RXE;
+    pending_irq_main_ = IRQ_TXE | IRQ_RXE;
     ESP_LOGV(TAG, "SIM RATS → ATS (TL=5)");
     return;
   }
@@ -943,7 +943,7 @@ void ST25RSim::on_transmit_crc_() {
       // Unknown APDU — respond 6A82 (file not found)
       fifo_out_ = {pcb_resp, 0x6A, 0x82};
     }
-    pending_irq_main_ = IRQ_RXE;
+    pending_irq_main_ = IRQ_TXE | IRQ_RXE;
     ESP_LOGV(TAG, "SIM I-Block → response (%u bytes)", (unsigned)fifo_out_.size());
     return;
   }

@@ -312,7 +312,9 @@ on_tag:
         }
 ```
 
-**Payment ring/card SEID example** (reads Secure Element ID):
+**Payment card/ring SEID example** (reads stable Secure Element ID — hardware-verified):
+
+Many payment cards use random UIDs that change every scan for privacy. The SEID (from CPLC data) is a **permanent, stable identifier** that never changes — ideal for access control.
 
 ```yaml
 on_tag:
@@ -322,7 +324,9 @@ on_tag:
         uint8_t resp[64];
         uint8_t len = 0;
 
-        // GET DATA (CPLC/SEID) — works on GlobalPlatform payment cards/rings
+        // GET DATA CPLC (80 CA 9F 7F 2C) — reads Secure Element ID
+        // Works on GlobalPlatform payment cards/rings (SAK=0x20)
+        // Hardware-verified: SEID stable across scans even with random UID cards
         uint8_t get_seid[] = {0x80, 0xCA, 0x9F, 0x7F, 0x2C};
         if (id(my_reader).send_apdu(get_seid, sizeof(get_seid), resp, len) && len > 2) {
           std::string seid;
@@ -334,6 +338,8 @@ on_tag:
           ESP_LOGI("payment", "SEID: %s (SW=%02X%02X)", seid.c_str(), resp[len-2], resp[len-1]);
         }
 ```
+
+> **Tested on STEVAL-MB17149B** with a random-UID payment card (SAK=0x20): NFC-A UID changed every scan (08D28688, 0889CE54, 0893A298...) but SEID remained constant across all reads.
 
 > **Note:** `send_apdu()` can be called multiple times within the same `on_tag` lambda for multi-step conversations. The I-Block block number toggles automatically.
 

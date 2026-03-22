@@ -956,20 +956,21 @@ class TestIsoDepType4:
 
     UID_T4 = "F0F0F0F0"  # 4-byte, unique for TYPE4 tests
 
-    def test_type4_tag_detected(self, sim):
-        """TYPE4 tag (SAK=0x20) is detected via NFC-A anticollision."""
+    def test_type4_tag_detected_and_isodep(self, sim):
+        """TYPE4 tag (SAK=0x20) triggers RATS/ATS and Type 4 NDEF attempt."""
         proc, ctrl1, ctrl2 = sim
         with proc._lock:
             proc.log_lines.clear()
         ctrl1.add_tag(self.UID_T4, tag_type="TYPE4")
+        # Wait for tag detection
         proc.wait_for(rf"READER1_ON_TAG {self.UID_T4}", timeout=10)
-
-    def test_isodep_activation(self, sim):
-        """RATS/ATS exchange fires for ISO-DEP capable tag."""
-        proc, ctrl1, ctrl2 = sim
+        # All ISO-DEP logs should be in the buffer now
         with proc._lock:
-            found = any("ISO-DEP" in line for line in proc.log_lines)
-        assert found, "ISO-DEP activation log not found for TYPE4 tag"
+            logs = list(proc.log_lines)
+        assert any("ISO-DEP" in l for l in logs), "ISO-DEP activation not logged"
+        assert any("ATS received" in l for l in logs), "ATS not received"
+        assert any("SAK=0x20" in l for l in logs), "SAK=0x20 not logged"
+        assert any("T4T" in l for l in logs), "T4T NDEF read not attempted"
 
     def test_type4_tag_removed(self, sim):
         proc, ctrl1, ctrl2 = sim

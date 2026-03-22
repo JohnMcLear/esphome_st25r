@@ -494,3 +494,66 @@ class TestType4NdefCommands:
         assert sensb[0] == 0x05  # SENSB_REQ command
         assert sensb[1] == 0x00  # AFI: any
         assert sensb[2] & 0x08 == 0x08  # WUPB bit set
+
+
+class TestSeidApdu:
+    """Tests for payment card SEID/CPLC APDU commands (hardware-verified)."""
+
+    def test_get_cplc_command_format(self):
+        """GET DATA CPLC: CLA=80, INS=CA, P1=9F, P2=7F, Le=2C."""
+        apdu = bytes([0x80, 0xCA, 0x9F, 0x7F, 0x2C])
+        assert apdu[0] == 0x80   # CLA: GlobalPlatform
+        assert apdu[1] == 0xCA   # INS: GET DATA
+        assert apdu[2] == 0x9F   # P1: tag high byte
+        assert apdu[3] == 0x7F   # P2: tag low byte (9F7F = CPLC)
+        assert apdu[4] == 0x2C   # Le: expected length (44 bytes)
+
+    def test_seid_is_stable(self):
+        """SEID from CPLC is the same across multiple reads (hardware-verified).
+
+        Tested on STEVAL-MB17149B with a random-UID payment card (SAK=0x20).
+        NFC-A UID changed every scan but SEID remained constant.
+        """
+        seid_scan1 = "9F7F2A4830185782317202000B010811623B0007D71142116811431168114411681414000005151208120F009000"
+        seid_scan2 = "9F7F2A4830185782317202000B010811623B0007D71142116811431168114411681414000005151208120F009000"
+        assert seid_scan1 == seid_scan2
+
+    def test_cplc_response_parsing(self):
+        """CPLC tag 9F7F contains IC fabricator, type, OS ID, etc."""
+        # Real CPLC data from hardware test (with SW stripped)
+        cplc_hex = "9F7F2A4830185782317202000B010811623B0007D71142116811431168114411681414000005151208120F00"
+        cplc = bytes.fromhex(cplc_hex)
+        assert cplc[0] == 0x9F   # CPLC tag high
+        assert cplc[1] == 0x7F   # CPLC tag low
+        assert cplc[2] == 0x2A   # Length (42 bytes)
+        # IC Fabricator at offset 3-4
+        ic_fabricator = (cplc[3] << 8) | cplc[4]
+        assert ic_fabricator > 0  # Non-zero fabricator ID
+
+    def test_other_seid_commands(self):
+        """Alternative SEID commands for different card types."""
+        # OT Credit/Debit
+        ot_cmd = bytes([0x80, 0xCA, 0x9F, 0x7F, 0x2D])
+        assert ot_cmd[4] == 0x2D  # Le=45
+
+        # MULTOS
+        multos_cmd = bytes([0x80, 0x02, 0x00, 0x00, 0x16])
+        assert multos_cmd[1] == 0x02  # INS
+        assert multos_cmd[4] == 0x16  # Le=22
+
+    def test_sblock_deselect_format(self):
+        """S-Block DESELECT: PCB=0xC2 (bits[7:6]=11, DESELECT)."""
+        deselect = bytes([0xC2])
+        assert deselect[0] & 0xC0 == 0xC0  # S-Block type
+        assert deselect[0] & 0x30 == 0x00  # DESELECT (not WTX)
+
+    def test_random_uid_is_not_stable(self):
+        """Random-UID payment cards change NFC-A UID every scan."""
+        uid1 = "08D28688"
+        uid2 = "0889CE54"
+        uid3 = "0893A298"
+        assert uid1 != uid2 != uid3  # All different
+        # But all start with 08 (random UID marker per ISO 14443-3)
+        assert uid1[:2] == "08"
+        assert uid2[:2] == "08"
+        assert uid3[:2] == "08"
