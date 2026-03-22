@@ -155,13 +155,15 @@ st25r_i2c:
 
 - **ISO 14443A (NFC-A):** 4-byte, 7-byte, and 10-byte UIDs (Cascade Levels 1–3)
 - **ISO 15693 (NFC-V):** 8-byte UID detection, dual-protocol with NFC-A
+  - NDEF read/write for Type 5 tags (READ/WRITE_SINGLE_BLOCK)
   - ST25R3916: software 1-of-4 encoding + Manchester decoding (streaming mode)
   - ST25R300: built-in hardware NFC-V codec
 - Multi-tag detection — anticollision loop finds all NFC-A tags simultaneously
 - Mifare Classic Crypto1 authentication and block read
-- NDEF read/write for Type 2 tags (NTAG / Ultralight)
+- NDEF read/write for Type 2 tags (NTAG / Ultralight) and Type 5 tags (ISO 15693)
+- **Automatic Antenna Tuning (AAT)** — hill-climbing optimizer for ANT_TUNE_A/B at startup; +20% range on varicap-equipped boards (confirmed on STEVAL-MB17149B: 50mm → 60mm)
 - Tag presence/removal triggers with 3-miss debounce
-- Binary sensor platform for specific-tag tracking
+- Binary sensor platform for specific-tag tracking (supports 4/7/8-byte UIDs)
 - VDD auto-detection for optimal regulator configuration
 - Chip health monitoring with automatic recovery
 - RF field strength sensor
