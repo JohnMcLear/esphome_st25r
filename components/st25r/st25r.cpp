@@ -933,10 +933,8 @@ bool ST25R::wait_for_irq_(uint8_t mask, uint32_t timeout_ms) {
 }
 
 bool ST25R::reset_() {
-  ESP_LOGV(TAG, "  reset_: Sending SET_DEFAULT");
-  this->write_command(ST25R_CMD_SET_DEFAULT);
-  delay(10);
-
+  // Verify IC identity BEFORE SET_DEFAULT — if bus is down, don't clear registers.
+  // IC_IDENTITY is read-only and unaffected by SET_DEFAULT.
   uint8_t ic_identity = this->read_register(IC_IDENTITY);
   ESP_LOGD(TAG, "  reset_: IC identity read: 0x%02X", ic_identity);
   uint8_t chip_type = ic_identity & 0xF8;
@@ -944,6 +942,10 @@ bool ST25R::reset_() {
     ESP_LOGE(TAG, "  reset_: IC identity mismatch! Expected 0x28/0x30, got 0x%02X", chip_type);
     return false;
   }
+
+  ESP_LOGV(TAG, "  reset_: Sending SET_DEFAULT");
+  this->write_command(ST25R_CMD_SET_DEFAULT);
+  delay(10);
   bool is_b_version = (chip_type == 0x30);
   this->is_b_version_ = is_b_version;
   // ST25R3916 (0x28) and ST25R3916B (0x30) both have Automatic Antenna Tuning (AAT)

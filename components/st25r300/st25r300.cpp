@@ -433,10 +433,7 @@ void ST25R300::send_anticol_frame_() {
 
 // ── reset_ ────────────────────────────────────────────────────────────────────
 bool ST25R300::reset_() {
-  ESP_LOGV(TAG, "  reset_: Sending SET_DEFAULT");
-  this->write_command(ST25R300_CMD_SET_DEFAULT);
-  delay(10);
-
+  // Verify IC identity BEFORE SET_DEFAULT — if bus is down, don't clear registers.
   uint8_t ic_identity = this->read_register(ST25R300_REG_IC_IDENTITY);
   ESP_LOGD(TAG, "  reset_: IC identity read: 0x%02X", ic_identity);
   if ((ic_identity & ST25R300_IC_TYPE_MASK) != ST25R300_IC_TYPE_VAL) {
@@ -444,6 +441,10 @@ bool ST25R300::reset_() {
              ic_identity & ST25R300_IC_TYPE_MASK);
     return false;
   }
+
+  ESP_LOGV(TAG, "  reset_: Sending SET_DEFAULT");
+  this->write_command(ST25R300_CMD_SET_DEFAULT);
+  delay(10);
   ESP_LOGI(TAG, "IC identity match: 0x%02X (ST25R300 rev %u)", ic_identity, ic_identity & 0x07);
 
   // Step 1: Enable oscillator → enter Ready mode
