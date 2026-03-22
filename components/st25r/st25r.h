@@ -130,6 +130,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   float get_setup_priority() const override { return setup_priority::DATA; }
 
   bool ndef_write(nfc::NdefMessage *message, bool format = false);
+  virtual bool nfcv_ndef_write_(nfc::NdefMessage *message);  // NFC-V Type 5 WRITE_SINGLE_BLOCK path
   bool clean_tag();
 
   void set_reset_pin(GPIOPin *reset_pin) { this->reset_pin_ = reset_pin; }
@@ -147,6 +148,8 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   void set_health_check_interval(uint32_t ms) { this->health_check_interval_ms_ = ms; }
   void set_max_failed_checks(uint8_t n) { this->max_failed_checks_ = n; }
   void set_auto_reset_on_failure(bool v) { this->auto_reset_on_failure_ = v; }
+  void set_nfcv_enabled(bool v) { this->nfcv_enabled_ = v; }
+  void set_aat_enabled(bool v) { this->aat_enabled_ = v; }
 
   void register_on_tag_trigger(ST25RTagTrigger *trig) { this->on_tag_triggers_.push_back(trig); }
   void register_on_tag_removed_trigger(ST25RTagRemovedTrigger *trig) {
@@ -181,6 +184,9 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
 
   void field_on_();
   void finalize_scan_();
+
+  // Automatic Antenna Tuning — hill-climbing optimizer for ANT_TUNE_A/B
+  void aat_tune_();
 
   // NFC-V (ISO 15693) support for ST25R3916 — streaming mode
   void nfcv_scan_();
@@ -227,6 +233,8 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   uint32_t last_health_check_ms_{0};
   uint8_t max_failed_checks_{3};
   bool auto_reset_on_failure_{true};
+  bool nfcv_enabled_{true};
+  bool aat_enabled_{true};  // AAT hill-climbing — improves range on boards with varicaps
   uint8_t health_check_failures_{0};
   uint8_t reinitialization_attempts_{0};
   volatile bool irq_triggered_{false};

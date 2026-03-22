@@ -94,8 +94,9 @@ void ST25R300::update() {
     this->field_strength_sensor_->publish_state(sense);
   }
 
-  // NFC-V (ISO 15693) blocking inventory — fast (~25ms), runs before NFC-A scan
-  this->nfcv_scan_();
+  // NFC-V (ISO 15693) blocking inventory — runs before NFC-A scan
+  if (this->nfcv_enabled_)
+    this->nfcv_scan_();
 
   this->saved_anticol_valid_ = false;
   this->anticol_resume_ = false;
@@ -432,10 +433,7 @@ void ST25R300::send_anticol_frame_() {
 
 // ── reset_ ────────────────────────────────────────────────────────────────────
 bool ST25R300::reset_() {
-  ESP_LOGV(TAG, "  reset_: Sending SET_DEFAULT");
-  this->write_command(ST25R300_CMD_SET_DEFAULT);
-  delay(10);
-
+  // Verify IC identity BEFORE SET_DEFAULT — if bus is down, don't clear registers.
   uint8_t ic_identity = this->read_register(ST25R300_REG_IC_IDENTITY);
   ESP_LOGD(TAG, "  reset_: IC identity read: 0x%02X", ic_identity);
   if ((ic_identity & ST25R300_IC_TYPE_MASK) != ST25R300_IC_TYPE_VAL) {
@@ -443,6 +441,10 @@ bool ST25R300::reset_() {
              ic_identity & ST25R300_IC_TYPE_MASK);
     return false;
   }
+
+  ESP_LOGV(TAG, "  reset_: Sending SET_DEFAULT");
+  this->write_command(ST25R300_CMD_SET_DEFAULT);
+  delay(10);
   ESP_LOGI(TAG, "IC identity match: 0x%02X (ST25R300 rev %u)", ic_identity, ic_identity & 0x07);
 
   // Step 1: Enable oscillator → enter Ready mode
@@ -693,32 +695,142 @@ void ST25R300::nfcv_scan_() {
     uid_str[16] = '\0';
     ESP_LOGI(TAG, "NFC-V tag: %s (DSFID=0x%02X)", uid_str, resp[1]);
 
-    // Add to this scan's tag set (shared with NFC-A tags)
+    // Add to tags_this_scan_ — finalize_scan_() handles on_tag_removed
     std::string uid_string(uid_str);
     this->tags_this_scan_.insert(uid_string);
 
-    // Fire on_tag if this is a new tag
+    // Try to read NDEF (Type 5 tag) via READ_SINGLE_BLOCK
+    std::vector<uint8_t> uid_bytes;
+    for (int j = 0; j < 8; j++)
+      uid_bytes.push_back(resp[9 - j]);
+
+    // Read block 0 (Capability Container)
+    uint8_t blk_req[] = {0x02, 0x20, 0x00};  // flags, READ_SINGLE_BLOCK, block=0
+    uint8_t blk_resp[8];
+    uint8_t blk_len = 0;
+    std::vector<uint8_t> ndef_data;
+
+    if (this->transceive_nfcv_(blk_req, sizeof(blk_req), blk_resp, blk_len, 20) &&
+        blk_len >= 5 && !(blk_resp[0] & 0x01)) {
+      if (blk_resp[1] == 0xE1) {  // NDEF magic byte in CC
+        uint8_t cc_size = blk_resp[3];
+        uint8_t total_blocks = (cc_size * 8) / 4;
+        if (total_blocks > 64) total_blocks = 64;
+
+        for (uint8_t blk = 1; blk <= total_blocks; blk++) {
+          blk_req[2] = blk;
+          blk_len = 0;
+          if (this->transceive_nfcv_(blk_req, sizeof(blk_req), blk_resp, blk_len, 20) &&
+              blk_len >= 5 && !(blk_resp[0] & 0x01)) {
+            for (int k = 1; k < 5 && k < blk_len; k++)
+              ndef_data.push_back(blk_resp[k]);
+          } else {
+            break;
+          }
+        }
+      }
+    }
+
+    // Fire on_tag immediately for new tags
     if (this->present_tags_.find(uid_string) == this->present_tags_.end()) {
       this->present_tags_[uid_string] = 0;
+      nfc::NfcTagUid nfc_uid(uid_bytes.begin(), uid_bytes.end());
 
-      std::vector<uint8_t> uid_bytes;
-      for (int j = 0; j < 8; j++)
-        uid_bytes.push_back(resp[9 - j]);
+      if (!ndef_data.empty()) {
+        for (size_t i = 0; i < ndef_data.size(); i++) {
+          if (ndef_data[i] == 0x03 && i + 1 < ndef_data.size()) {
+            uint8_t ndef_len = ndef_data[i + 1];
+            size_t ndef_start = i + 2;
+            if (ndef_start + ndef_len <= ndef_data.size()) {
+              ESP_LOGI(TAG, "NFC-V NDEF: %u bytes", ndef_len);
+              auto tag = make_unique<nfc::NfcTag>(nfc_uid);
+              this->tags_data_[uid_string] = std::move(tag);
+            }
+            break;
+          }
+          if (ndef_data[i] == 0xFE) break;
+        }
+      }
 
-      auto tag = make_unique<nfc::NfcTag>(nfc::NfcTagUid(uid_bytes.begin(), uid_bytes.end()));
+      if (this->tags_data_.find(uid_string) == this->tags_data_.end()) {
+        auto tag = make_unique<nfc::NfcTag>(nfc_uid);
+        this->tags_data_[uid_string] = std::move(tag);
+      }
+
       for (auto *listener : this->tag_listeners_)
-        listener->tag_on(*tag);
+        listener->tag_on(*this->tags_data_[uid_string]);
       for (auto *trigger : this->on_tag_triggers_)
         trigger->trigger(uid_string);
     }
 
-    // For single-tag MVP, skip STAY_QUIET — tag stays responsive across scans.
-    // Multi-tag requires STAY_QUIET + field cycling between update() cycles.
     break;  // One tag per scan for now
   }
 
   // Switch back to NFC-A mode for the main scan
   this->configure_nfca_mode_();
+}
+
+bool ST25R300::nfcv_ndef_write_(nfc::NdefMessage *message) {
+  this->configure_nfcv_mode_();
+
+  std::vector<uint8_t> payload;
+  if (message != nullptr) {
+    std::vector<uint8_t> ndef_data = message->encode();
+    payload.push_back(0x03);
+    if (ndef_data.size() < 255) {
+      payload.push_back((uint8_t)ndef_data.size());
+    } else {
+      payload.push_back(0xFF);
+      payload.push_back((uint8_t)((ndef_data.size() >> 8) & 0xFF));
+      payload.push_back((uint8_t)(ndef_data.size() & 0xFF));
+    }
+    payload.insert(payload.end(), ndef_data.begin(), ndef_data.end());
+  }
+  payload.push_back(0xFE);
+  while (payload.size() % 4 != 0) payload.push_back(0);
+
+  ESP_LOGD(TAG, "NFC-V NDEF write: %zu bytes in %zu blocks", payload.size(), payload.size() / 4);
+
+  // Write CC to block 0
+  uint8_t cc_size = (payload.size() + 4) / 8;
+  if (cc_size == 0) cc_size = 1;
+  uint8_t write_req[7] = {0x02, 0x21, 0x00, 0xE1, 0x40, cc_size, 0x00};
+  uint8_t resp[4];
+  uint8_t resp_len = 0;
+
+  if (!this->transceive_nfcv_(write_req, sizeof(write_req), resp, resp_len, 25)) {
+    ESP_LOGE(TAG, "NFC-V: failed to write CC (block 0)");
+    this->configure_nfca_mode_();
+    return false;
+  }
+
+  for (size_t i = 0; i < payload.size(); i += 4) {
+    uint8_t blk = 1 + (i / 4);
+    write_req[2] = blk;
+    write_req[3] = payload[i];
+    write_req[4] = payload[i + 1];
+    write_req[5] = payload[i + 2];
+    write_req[6] = payload[i + 3];
+    resp_len = 0;
+
+    bool success = false;
+    for (uint8_t retry = 0; retry < 3; retry++) {
+      if (this->transceive_nfcv_(write_req, sizeof(write_req), resp, resp_len, 25)) {
+        success = true;
+        break;
+      }
+      delay(10);
+    }
+    if (!success) {
+      ESP_LOGE(TAG, "NFC-V: failed to write block %u", blk);
+      this->configure_nfca_mode_();
+      return false;
+    }
+  }
+
+  ESP_LOGI(TAG, "NFC-V NDEF write successful!");
+  this->configure_nfca_mode_();
+  return true;
 }
 
 }  // namespace st25r300

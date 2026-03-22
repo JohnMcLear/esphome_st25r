@@ -13,12 +13,11 @@ Requires:
 
 import os
 import re
-import socket
-import subprocess
-import threading
 import time
 
 import pytest
+
+from sim_helpers import SimProcess, SimController
 
 
 YAML_PATH_B = "tests/emulation/test-emulation-b.yaml"
@@ -54,93 +53,6 @@ def find_binary_b():
                         return full
     return None
 
-
-class SimProcess:
-    def __init__(self, binary):
-        self.binary = binary
-        self.proc = None
-        self.log_lines = []
-        self._lock = threading.Lock()
-
-    def start(self):
-        self.proc = subprocess.Popen(
-            [self.binary],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
-        t = threading.Thread(target=self._read_output, daemon=True)
-        t.start()
-
-    def _read_output(self):
-        for line in self.proc.stdout:
-            line = line.rstrip()
-            with self._lock:
-                self.log_lines.append(line)
-            print(f"[FW-B] {line}", flush=True)
-
-    def wait_for(self, pattern, timeout=15):
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            with self._lock:
-                for line in self.log_lines:
-                    if re.search(pattern, line):
-                        return line
-            time.sleep(0.1)
-        raise TimeoutError(f"Pattern {pattern!r} not seen within {timeout}s")
-
-    def stop(self):
-        if self.proc and self.proc.poll() is None:
-            self.proc.terminate()
-            try:
-                self.proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.proc.kill()
-
-
-class SimController:
-    def __init__(self, path):
-        self.path = path
-
-    def _send(self, cmd):
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
-            s.connect(self.path)
-            s.sendall((cmd + "\n").encode())
-            return s.recv(4096).decode()
-
-    def wait_ready(self, timeout=20):
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            if os.path.exists(self.path):
-                try:
-                    self._send("LIST")
-                    return
-                except OSError:
-                    pass
-            time.sleep(0.2)
-        raise TimeoutError(f"Socket {self.path} did not appear")
-
-    def add_tag(self, uid_hex, tag_type=None, key_a=None, key_b=None, ndef=None):
-        parts = [f"ADD_TAG {uid_hex}"]
-        if tag_type: parts.append(f"TYPE={tag_type}")
-        if key_a:    parts.append(f"KEY_A={key_a}")
-        if key_b:    parts.append(f"KEY_B={key_b}")
-        if ndef:     parts.append(f"NDEF={ndef}")
-        resp = self._send(" ".join(parts))
-        assert "OK" in resp, f"add_tag failed: {resp}"
-
-    def remove_tag(self, uid_hex):
-        resp = self._send(f"REMOVE_TAG {uid_hex}")
-        assert "OK" in resp, f"remove_tag failed: {resp}"
-
-    def get_reg(self, addr_hex):
-        resp = self._send(f"GET_REG {addr_hex}")
-        return int(resp.strip(), 16)
-
-    def set_ic_identity(self, val_hex):
-        resp = self._send(f"SET_IC_IDENTITY {val_hex}")
-        assert "OK" in resp, f"set_ic_identity failed: {resp}"
 
 
 @pytest.fixture(scope="module")
@@ -257,6 +169,27 @@ class TestBVersionMifareAuth:
         proc.wait_for(r"READER1_B_ON_TAG_REMOVED CAFEBABE", timeout=10)
 
 
+class TestBVersionNfcv:
+    """NFC-V tag detection works on B-version (IC=0x30) via streaming mode."""
+
+    NFCV_UID = "E00208024FEFE7E1"
+
+    def test_nfcv_detected_and_trigger(self, sim_b):
+        proc, ctrl3, ctrl4 = sim_b
+        with proc._lock:
+            proc.log_lines.clear()
+        ctrl3.add_tag(self.NFCV_UID, tag_type="ISO15693")
+        proc.wait_for(rf"NFC-V tag: {self.NFCV_UID}", timeout=10)
+        proc.wait_for(rf"READER1_B_ON_TAG {self.NFCV_UID}", timeout=5)
+
+    def test_nfcv_removed(self, sim_b):
+        proc, ctrl3, ctrl4 = sim_b
+        with proc._lock:
+            proc.log_lines.clear()
+        ctrl3.remove_tag(self.NFCV_UID)
+        proc.wait_for(rf"READER1_B_ON_TAG_REMOVED {self.NFCV_UID}", timeout=10)
+
+
 class TestBVersionRfalAnalogProfile:
     """
     B-version must also get the full RFAL NFC-A 106 analog profile.
@@ -341,6 +274,28 @@ class TestBVersionChipInitRegisters:
         proc, ctrl3, ctrl4 = sim_b
         val = ctrl3.get_reg("6A")
         assert val == 0x80, f"RES_AM_MOD expected 0x80, got 0x{val:02X}"
+
+
+class TestBVersionAat:
+    """AAT hill-climbing on B-version preserves ANT_TUNE values with constant sim amplitude."""
+
+    def test_ant_tune_preserved(self, sim_b):
+        proc, ctrl3, ctrl4 = sim_b
+        proc.wait_for(r"Sent WUPA", timeout=10)
+        val_a = ctrl3.get_reg("26")
+        val_b = ctrl3.get_reg("27")
+        assert val_a == 0x80, f"ANT_TUNE_A expected 0x80, got 0x{val_a:02X}"
+        assert val_b == 0x40, f"ANT_TUNE_B expected 0x40, got 0x{val_b:02X}"
+
+    def test_tags_work_after_aat(self, sim_b):
+        proc, ctrl3, ctrl4 = sim_b
+        with proc._lock:
+            proc.log_lines.clear()
+        uid = "11223344"
+        ctrl3.add_tag(uid)
+        proc.wait_for(rf"READER1_B_ON_TAG {uid}", timeout=10)
+        ctrl3.remove_tag(uid)
+        proc.wait_for(rf"READER1_B_ON_TAG_REMOVED {uid}", timeout=10)
 
 
 class TestBVersionHealthCheck:

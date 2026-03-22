@@ -168,11 +168,9 @@ void ST25R::update() {
     this->field_strength_sensor_->publish_state(amplitude);
   }
 
-  // NFC-V (ISO 15693) blocking inventory via streaming mode — runs before NFC-A
-  this->nfcv_scan_();
-
-  // RX_CONF3: RFAL NFC-A 106 uses 0x00 for all silicon variants.
-  this->write_register(RX_CONF3, 0x00);
+  // NFC-V (ISO 15693) blocking inventory — runs before NFC-A scan
+  if (this->nfcv_enabled_)
+    this->nfcv_scan_();
 
   this->saved_anticol_valid_ = false;
   this->anticol_resume_ = false;
@@ -935,10 +933,8 @@ bool ST25R::wait_for_irq_(uint8_t mask, uint32_t timeout_ms) {
 }
 
 bool ST25R::reset_() {
-  ESP_LOGV(TAG, "  reset_: Sending SET_DEFAULT");
-  this->write_command(ST25R_CMD_SET_DEFAULT);
-  delay(10);
-
+  // Verify IC identity BEFORE SET_DEFAULT — if bus is down, don't clear registers.
+  // IC_IDENTITY is read-only and unaffected by SET_DEFAULT.
   uint8_t ic_identity = this->read_register(IC_IDENTITY);
   ESP_LOGD(TAG, "  reset_: IC identity read: 0x%02X", ic_identity);
   uint8_t chip_type = ic_identity & 0xF8;
@@ -946,6 +942,10 @@ bool ST25R::reset_() {
     ESP_LOGE(TAG, "  reset_: IC identity mismatch! Expected 0x28/0x30, got 0x%02X", chip_type);
     return false;
   }
+
+  ESP_LOGV(TAG, "  reset_: Sending SET_DEFAULT");
+  this->write_command(ST25R_CMD_SET_DEFAULT);
+  delay(10);
   bool is_b_version = (chip_type == 0x30);
   this->is_b_version_ = is_b_version;
   // ST25R3916 (0x28) and ST25R3916B (0x30) both have Automatic Antenna Tuning (AAT)
@@ -1029,6 +1029,12 @@ bool ST25R::reset_() {
     this->field_on_();
   }
   delay(10);
+
+  // AAT hill-climbing: optimize ANT_TUNE_A/B for maximum field amplitude.
+  // Confirmed +10mm range on STEVAL-MB17149B (varicap-equipped board).
+  // Boards without varicaps see no effect (harmless). Disable via YAML: aat_enabled: false
+  if (this->aat_enabled_)
+    this->aat_tune_();
 
   ESP_LOGV(TAG, "  reset_: Complete");
   return true;
@@ -1160,6 +1166,84 @@ void ST25R::field_on_() {
   delay(10);
   this->write_register(OP_CONTROL, 0xC8); // en=1, rx_en=1, tx_en=1
   this->write_command(ST25R_CMD_ADJUST_REGULATORS);
+}
+
+// ── AAT (Automatic Antenna Tuning) hill-climbing optimizer ───────────────────
+// Based on RFAL st25r3916AatTune() (AN5322). Iteratively adjusts ANT_TUNE_A/B
+// to maximize RF field amplitude (AD_CONV_RESULT). Runs once after field_on_()
+// during reset_() on chips with AAT hardware (ST25R3916/3916B).
+
+void ST25R::aat_tune_() {
+  if (!this->has_aat_) return;
+
+  uint8_t a = this->ant_tune_a_;
+  uint8_t b = this->ant_tune_b_;
+  uint8_t step_a = 16;
+  uint8_t step_b = 16;
+  const uint8_t max_iter = 20;
+
+  // Measure current amplitude
+  auto measure = [this]() -> uint8_t {
+    this->write_command(ST25R_CMD_MEASURE_AMPLITUDE);
+    delay(3);  // VCC settling time
+    return this->read_register(AD_CONV_RESULT);
+  };
+
+  this->write_register(ANT_TUNE_A, a);
+  this->write_register(ANT_TUNE_B, b);
+  delay(3);
+  uint8_t best_amp = measure();
+  uint8_t best_a = a, best_b = b;
+
+  ESP_LOGD(TAG, "AAT: start A=0x%02X B=0x%02X amp=%u", a, b, best_amp);
+
+  for (uint8_t iter = 0; iter < max_iter; iter++) {
+    bool improved = false;
+
+    // Try 4 directions: A±step, B±step
+    struct { int8_t da; int8_t db; } dirs[] = {
+      {(int8_t)step_a, 0}, {-(int8_t)step_a, 0},
+      {0, (int8_t)step_b}, {0, -(int8_t)step_b}
+    };
+
+    for (auto &d : dirs) {
+      int16_t new_a = (int16_t)a + d.da;
+      int16_t new_b = (int16_t)b + d.db;
+      if (new_a < 0 || new_a > 255 || new_b < 0 || new_b > 255) continue;
+
+      this->write_register(ANT_TUNE_A, (uint8_t)new_a);
+      this->write_register(ANT_TUNE_B, (uint8_t)new_b);
+      delay(3);
+      uint8_t amp = measure();
+
+      if (amp > best_amp) {
+        best_amp = amp;
+        best_a = (uint8_t)new_a;
+        best_b = (uint8_t)new_b;
+        improved = true;
+      }
+    }
+
+    if (improved) {
+      a = best_a;
+      b = best_b;
+      this->write_register(ANT_TUNE_A, a);
+      this->write_register(ANT_TUNE_B, b);
+    } else {
+      // No improvement — reduce step size
+      step_a = (step_a > 1) ? step_a / 2 : 0;
+      step_b = (step_b > 1) ? step_b / 2 : 0;
+      if (step_a == 0 && step_b == 0) break;  // Converged
+    }
+  }
+
+  // Store final values
+  this->ant_tune_a_ = best_a;
+  this->ant_tune_b_ = best_b;
+  this->write_register(ANT_TUNE_A, best_a);
+  this->write_register(ANT_TUNE_B, best_b);
+
+  ESP_LOGI(TAG, "AAT: converged A=0x%02X B=0x%02X amp=%u", best_a, best_b, best_amp);
 }
 
 // ── NFC-V (ISO 15693) streaming mode for ST25R3916 ──────────────────────────
@@ -1370,17 +1454,73 @@ void ST25R::nfcv_scan_() {
       uid_str[16] = '\0';
       ESP_LOGI(TAG, "NFC-V tag: %s (DSFID=0x%02X)", uid_str, resp[1]);
 
+      // Add to tags_this_scan_ — finalize_scan_() handles on_tag/on_tag_removed
       std::string uid_string(uid_str);
       this->tags_this_scan_.insert(uid_string);
 
+      // Try to read NDEF (Type 5 tag) via READ_SINGLE_BLOCK
+      std::vector<uint8_t> uid_bytes;
+      for (int j = 0; j < 8; j++)
+        uid_bytes.push_back(resp[9 - j]);
+
+      // Read block 0 (Capability Container)
+      uint8_t blk_req[] = {0x02, 0x20, 0x00};  // flags, READ_SINGLE_BLOCK, block=0
+      uint8_t blk_resp[8];
+      uint8_t blk_len = 0;
+      std::vector<uint8_t> ndef_data;
+
+      if (this->transceive_nfcv_stream_(blk_req, sizeof(blk_req), blk_resp, blk_len, 20) &&
+          blk_len >= 5 && !(blk_resp[0] & 0x01)) {
+        // CC: byte1=magic(0xE1), byte2=ver+access, byte3=size(*8), byte4=features
+        if (blk_resp[1] == 0xE1) {
+          uint8_t cc_size = blk_resp[3];  // NDEF area size in 8-byte units
+          uint8_t total_blocks = (cc_size * 8) / 4;  // 4 bytes per block
+          if (total_blocks > 64) total_blocks = 64;  // safety limit
+
+          // Read blocks 1..N for NDEF TLV data
+          for (uint8_t blk = 1; blk <= total_blocks; blk++) {
+            blk_req[2] = blk;
+            blk_len = 0;
+            if (this->transceive_nfcv_stream_(blk_req, sizeof(blk_req), blk_resp, blk_len, 20) &&
+                blk_len >= 5 && !(blk_resp[0] & 0x01)) {
+              for (int k = 1; k < 5 && k < blk_len; k++)
+                ndef_data.push_back(blk_resp[k]);
+            } else {
+              break;
+            }
+          }
+        }
+      }
+
+      // Fire on_tag immediately for new tags
       if (this->present_tags_.find(uid_string) == this->present_tags_.end()) {
         this->present_tags_[uid_string] = 0;
-        std::vector<uint8_t> uid_bytes;
-        for (int j = 0; j < 8; j++)
-          uid_bytes.push_back(resp[9 - j]);
-        auto tag = make_unique<nfc::NfcTag>(nfc::NfcTagUid(uid_bytes.begin(), uid_bytes.end()));
+        nfc::NfcTagUid nfc_uid(uid_bytes.begin(), uid_bytes.end());
+
+        if (!ndef_data.empty()) {
+          // Parse NDEF TLV: search for type 0x03 (NDEF message)
+          for (size_t i = 0; i < ndef_data.size(); i++) {
+            if (ndef_data[i] == 0x03 && i + 1 < ndef_data.size()) {
+              uint8_t ndef_len = ndef_data[i + 1];
+              size_t ndef_start = i + 2;
+              if (ndef_start + ndef_len <= ndef_data.size()) {
+                ESP_LOGI(TAG, "NFC-V NDEF: %u bytes", ndef_len);
+                auto tag = make_unique<nfc::NfcTag>(nfc_uid);
+                this->tags_data_[uid_string] = std::move(tag);
+              }
+              break;
+            }
+            if (ndef_data[i] == 0xFE) break;  // Terminator TLV
+          }
+        }
+
+        if (this->tags_data_.find(uid_string) == this->tags_data_.end()) {
+          auto tag = make_unique<nfc::NfcTag>(nfc_uid);
+          this->tags_data_[uid_string] = std::move(tag);
+        }
+
         for (auto *listener : this->tag_listeners_)
-          listener->tag_on(*tag);
+          listener->tag_on(*this->tags_data_[uid_string]);
         for (auto *trigger : this->on_tag_triggers_)
           trigger->trigger(uid_string);
       }
@@ -1391,6 +1531,16 @@ void ST25R::nfcv_scan_() {
 }
 
 bool ST25R::ndef_write(nfc::NdefMessage *message, bool format) {
+  // Check if the most recent tag is NFC-V (8-byte UID = 16 hex chars)
+  // If so, use the NFC-V WRITE_SINGLE_BLOCK path
+  if (!this->present_tags_.empty()) {
+    const std::string &last_uid = this->present_tags_.rbegin()->first;
+    if (last_uid.length() == 16) {
+      return this->nfcv_ndef_write_(message);
+    }
+  }
+
+  // NFC-A Type 2 NDEF write (NTAG / Ultralight)
   uint8_t buffer[16];
   uint8_t len;
 
@@ -1469,6 +1619,73 @@ bool ST25R::ndef_write(nfc::NdefMessage *message, bool format) {
   return true;
 }
 
+bool ST25R::nfcv_ndef_write_(nfc::NdefMessage *message) {
+  // NFC-V Type 5 NDEF write via WRITE_SINGLE_BLOCK (0x21)
+  // Block 0 = CC, blocks 1+ = NDEF TLV data
+
+  this->configure_nfcv_stream_mode_();
+
+  std::vector<uint8_t> payload;
+  if (message != nullptr) {
+    std::vector<uint8_t> ndef_data = message->encode();
+    payload.push_back(0x03);  // NDEF TLV type
+    if (ndef_data.size() < 255) {
+      payload.push_back((uint8_t)ndef_data.size());
+    } else {
+      payload.push_back(0xFF);
+      payload.push_back((uint8_t)((ndef_data.size() >> 8) & 0xFF));
+      payload.push_back((uint8_t)(ndef_data.size() & 0xFF));
+    }
+    payload.insert(payload.end(), ndef_data.begin(), ndef_data.end());
+  }
+  payload.push_back(0xFE);  // Terminator TLV
+  while (payload.size() % 4 != 0) payload.push_back(0);
+
+  ESP_LOGD(TAG, "NFC-V NDEF write: %zu bytes in %zu blocks", payload.size(), payload.size() / 4);
+
+  // Write CC to block 0: magic=0xE1, ver=0x40 (v1.0, read/write), size, features=0x00
+  uint8_t cc_size = (payload.size() + 4) / 8;  // size in 8-byte units (round up)
+  if (cc_size == 0) cc_size = 1;
+  uint8_t write_req[7] = {0x02, 0x21, 0x00, 0xE1, 0x40, cc_size, 0x00};  // flags, WRITE_SINGLE_BLOCK, block, data[4]
+  uint8_t resp[4];
+  uint8_t resp_len = 0;
+
+  if (!this->transceive_nfcv_stream_(write_req, sizeof(write_req), resp, resp_len, 25)) {
+    ESP_LOGE(TAG, "NFC-V: failed to write CC (block 0)");
+    this->restore_nfca_mode_();
+    return false;
+  }
+
+  // Write NDEF data blocks
+  for (size_t i = 0; i < payload.size(); i += 4) {
+    uint8_t blk = 1 + (i / 4);
+    write_req[2] = blk;
+    write_req[3] = payload[i];
+    write_req[4] = payload[i + 1];
+    write_req[5] = payload[i + 2];
+    write_req[6] = payload[i + 3];
+    resp_len = 0;
+
+    bool success = false;
+    for (uint8_t retry = 0; retry < 3; retry++) {
+      if (this->transceive_nfcv_stream_(write_req, sizeof(write_req), resp, resp_len, 25)) {
+        success = true;
+        break;
+      }
+      delay(10);
+    }
+    if (!success) {
+      ESP_LOGE(TAG, "NFC-V: failed to write block %u", blk);
+      this->restore_nfca_mode_();
+      return false;
+    }
+  }
+
+  ESP_LOGI(TAG, "NFC-V NDEF write successful!");
+  this->restore_nfca_mode_();
+  return true;
+}
+
 bool ST25R::clean_tag() {
   return this->ndef_write(nullptr, true);
 }
@@ -1480,6 +1697,7 @@ void ST25R::dump_config() {
   ESP_LOGCONFIG(TAG, "  RF Power: %u", this->rf_power_);
   ESP_LOGCONFIG(TAG, "  RF Field Enabled: %s", YESNO(this->rf_field_enabled_));
   ESP_LOGCONFIG(TAG, "  Miss Threshold: %u", this->miss_threshold_);
+  ESP_LOGCONFIG(TAG, "  NFC-V (ISO 15693): %s", YESNO(this->nfcv_enabled_));
   ESP_LOGCONFIG(TAG, "  Health Check: %s", YESNO(this->health_check_enabled_));
   if (this->health_check_enabled_) {
     ESP_LOGCONFIG(TAG, "  Health Check Interval: %u ms", this->health_check_interval_ms_);
@@ -1489,6 +1707,10 @@ void ST25R::dump_config() {
   LOG_UPDATE_INTERVAL(this);
   uint8_t ic_id = this->read_register(IC_IDENTITY);
   ESP_LOGCONFIG(TAG, "  IC Identity (live read): 0x%02X (chip_type=0x%02X)", ic_id, ic_id & 0xF8);
+  ESP_LOGCONFIG(TAG, "  IO_CONF2: 0x%02X (sup3V=%s, aat_en=%s)",
+                this->read_register(IO_CONF2),
+                (this->read_register(IO_CONF2) & 0x80) ? "3.3V" : "5V",
+                (this->read_register(IO_CONF2) & 0x20) ? "yes" : "no");
 }
 
 bool ST25RBinarySensor::process(const std::string &uid) {

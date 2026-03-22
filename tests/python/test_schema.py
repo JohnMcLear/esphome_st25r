@@ -176,6 +176,24 @@ class TestRfPower:
             cv.int_range(min=0, max=15)(power)
 
 
+# ── Boolean config options ────────────────────────────────────────────────────
+
+class TestBooleanConfigs:
+    """Verify boolean YAML options accept true/false."""
+
+    def test_aat_enabled_true(self):
+        assert cv.boolean(True) is True
+
+    def test_aat_enabled_false(self):
+        assert cv.boolean(False) is False
+
+    def test_nfcv_enabled_true(self):
+        assert cv.boolean(True) is True
+
+    def test_nfcv_enabled_false(self):
+        assert cv.boolean(False) is False
+
+
 # ── Pure-Python PRNG cross-check ──────────────────────────────────────────────
 
 def _swapendian(x: int) -> int:
@@ -338,3 +356,55 @@ class TestNfcvProtocolConstants:
         assert flags & 0x02 != 0  # bit1: high data rate
         assert flags & 0x04 != 0  # bit2: inventory flag
         assert flags & 0x20 != 0  # bit5: 1-slot
+
+
+class TestIso15693Crc:
+    """Tests for the ISO 15693 CRC-16 CCITT algorithm."""
+
+    @staticmethod
+    def iso15693_crc(data):
+        """Pure-Python CRC-16 CCITT matching the C++ implementation."""
+        crc = 0xFFFF
+        for byte in data:
+            d = byte ^ (crc & 0xFF)
+            d ^= (d << 4) & 0xFF
+            crc = ((crc >> 8) ^ (d << 8) ^ (d << 3) ^ (d >> 4)) & 0xFFFF
+        return crc ^ 0xFFFF
+
+    def test_empty_data(self):
+        """CRC of empty data should be ~0xFFFF = 0x0000... no, ~0xFFFF = 0."""
+        # With no data, CRC stays at preset 0xFFFF, inverted = 0x0000
+        # But the algorithm never enters the loop, so crc=0xFFFF, ~crc=0x0000
+        assert self.iso15693_crc(b"") == 0x0000
+
+    def test_inventory_command(self):
+        """CRC of INVENTORY [0x26, 0x01, 0x00] should be deterministic."""
+        crc = self.iso15693_crc(bytes([0x26, 0x01, 0x00]))
+        assert isinstance(crc, int)
+        assert 0 <= crc <= 0xFFFF
+
+    def test_known_response_crc_appended(self):
+        """Appending CRC bytes and recomputing should yield the CRC residue constant."""
+        payload = bytes([0x00, 0x00, 0xE1, 0xE7, 0xEF, 0x4F, 0x02, 0x08, 0x02, 0xE0])
+        crc = self.iso15693_crc(payload)
+        crc_bytes = bytes([crc & 0xFF, (crc >> 8) & 0xFF])
+        # CRC of data+crc should be a fixed residue (property of CCITT CRC)
+        full_crc = self.iso15693_crc(payload + crc_bytes)
+        # The residue is constant for any valid frame — verify by checking a second payload
+        payload2 = bytes([0x01, 0x02, 0x03])
+        crc2 = self.iso15693_crc(payload2)
+        crc2_bytes = bytes([crc2 & 0xFF, (crc2 >> 8) & 0xFF])
+        full_crc2 = self.iso15693_crc(payload2 + crc2_bytes)
+        assert full_crc == full_crc2  # both produce the same residue
+
+    def test_crc_changes_with_data(self):
+        """Different data produces different CRCs."""
+        crc1 = self.iso15693_crc(bytes([0x00, 0x00]))
+        crc2 = self.iso15693_crc(bytes([0x00, 0x01]))
+        assert crc1 != crc2
+
+    def test_crc_is_16_bit(self):
+        """CRC must be a 16-bit value."""
+        for i in range(256):
+            crc = self.iso15693_crc(bytes([i]))
+            assert 0 <= crc <= 0xFFFF

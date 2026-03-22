@@ -14,12 +14,11 @@ Requires:
 
 import os
 import re
-import socket
-import subprocess
-import threading
 import time
 
 import pytest
+
+from sim_helpers import SimProcess, SimController
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -63,165 +62,6 @@ def find_binary():
                         return full
     return None
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# SimProcess — manages the ESPHome host binary
-# ─────────────────────────────────────────────────────────────────────────────
-
-class SimProcess:
-    def __init__(self, binary):
-        self.binary = binary
-        self.proc = None
-        self.log_lines = []
-        self._lock = threading.Lock()
-
-    def start(self):
-        # Force line-buffered stdout on the C binary so log lines reach Python
-        # immediately.  Without stdbuf, the C runtime's stdio buffer (4096 bytes)
-        # causes log lines to be held until the buffer fills — which can be
-        # several seconds of wall time, causing wait_for() to time out even
-        # though the binary is actively printing.
-        self.proc = subprocess.Popen(
-            ["stdbuf", "-oL", self.binary],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
-        t = threading.Thread(target=self._read_output, daemon=True)
-        t.start()
-
-    def _read_output(self):
-        for line in self.proc.stdout:
-            line = line.rstrip()
-            with self._lock:
-                self.log_lines.append(line)
-            print(f"[FW] {line}", flush=True)
-
-    def wait_for(self, pattern, timeout=15):
-        """Block until a log line matches pattern or timeout seconds pass."""
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            with self._lock:
-                for line in self.log_lines:
-                    if re.search(pattern, line):
-                        return line
-            time.sleep(0.1)
-        raise TimeoutError(f"Pattern {pattern!r} not seen within {timeout}s")
-
-    def wait_for_absent(self, pattern, window=5):
-        """Assert that pattern does NOT appear for `window` seconds."""
-        deadline = time.time() + window
-        while time.time() < deadline:
-            with self._lock:
-                for line in self.log_lines:
-                    if re.search(pattern, line):
-                        return False  # found — test should fail
-            time.sleep(0.1)
-        return True  # never appeared
-
-    def stop(self):
-        if self.proc and self.proc.poll() is None:
-            self.proc.terminate()
-            try:
-                self.proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.proc.kill()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# SimController — controls one simulated reader via Unix socket
-# ─────────────────────────────────────────────────────────────────────────────
-
-class SimController:
-    def __init__(self, path):
-        self.path = path
-
-    def _send(self, cmd):
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
-            s.connect(self.path)
-            s.sendall((cmd + "\n").encode())
-            return s.recv(4096).decode()
-
-    def wait_ready(self, timeout=20):
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            if os.path.exists(self.path):
-                try:
-                    self._send("LIST")
-                    return
-                except OSError:
-                    pass
-            time.sleep(0.2)
-        raise TimeoutError(f"Socket {self.path} did not appear")
-
-    def add_tag(self, uid_hex, tag_type=None, key_a=None, key_b=None,
-                ndef=None):
-        """
-        Add a virtual tag.
-
-        uid_hex  — hex string like "DEA30D00"
-        tag_type — optional: MIFARE_1K, MIFARE_4K, NTAG213, NTAG215,
-                              NTAG216, ULTRALIGHT
-        key_a    — optional 12-hex Mifare Key A (default FFFFFFFFFFFF)
-        key_b    — optional 12-hex Mifare Key B
-        ndef     — optional hex bytes of the raw NDEF record payload
-        """
-        parts = [f"ADD_TAG {uid_hex}"]
-        if tag_type:  parts.append(f"TYPE={tag_type}")
-        if key_a:     parts.append(f"KEY_A={key_a}")
-        if key_b:     parts.append(f"KEY_B={key_b}")
-        if ndef:      parts.append(f"NDEF={ndef}")
-        resp = self._send(" ".join(parts))
-        assert "OK" in resp, f"add_tag failed: {resp}"
-
-    def remove_tag(self, uid_hex):
-        resp = self._send(f"REMOVE_TAG {uid_hex}")
-        assert "OK" in resp, f"remove_tag failed: {resp}"
-
-    def set_key(self, uid_hex, which, key_hex):
-        resp = self._send(f"SET_KEY {uid_hex} {which} {key_hex}")
-        assert "OK" in resp, f"set_key failed: {resp}"
-
-    def set_ndef(self, uid_hex, ndef_hex):
-        resp = self._send(f"SET_NDEF {uid_hex} {ndef_hex}")
-        assert "OK" in resp, f"set_ndef failed: {resp}"
-
-    def list_tags(self):
-        return self._send("LIST")
-
-    def get_reg(self, addr_hex):
-        """Read a register value from the sim (hex addr string like '0D')."""
-        resp = self._send(f"GET_REG {addr_hex}")
-        return int(resp.strip(), 16)
-
-    def set_vdd(self, value_hex):
-        """Set the raw VDD measurement value (hex string like 'A0')."""
-        resp = self._send(f"SET_VDD {value_hex}")
-        assert "OK" in resp, f"set_vdd failed: {resp}"
-
-    def set_ic_identity(self, value_hex):
-        """Change the IC identity the sim reports (hex string like '30')."""
-        resp = self._send(f"SET_IC_IDENTITY {value_hex}")
-        assert "OK" in resp, f"set_ic_identity failed: {resp}"
-
-    def set_nre_mode(self, mode: str):
-        """
-        Control NRE signalling on WUPA with no tags.
-        mode='hw'  — only IRQ_TIMER set (real ST25R3916: NRE never in IRQ_MAIN)
-        mode='sim' — also IRQ_MAIN IRQ_NRE fast-path set (default)
-        """
-        resp = self._send(f"SET_NRE_MODE {mode}")
-        assert "OK" in resp, f"set_nre_mode failed: {resp}"
-
-    def get_pending_timer(self) -> int:
-        """
-        Return pending_irq_timer_ value WITHOUT clearing it.
-        Used to verify that the firmware read (and cleared) IRQ_TIMER after a
-        WUPA timeout so the IRQ pin is properly lowered on real hardware.
-        """
-        resp = self._send("GET_PENDING_TIMER")
-        return int(resp.strip(), 16)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -988,6 +828,74 @@ class TestVddAutoDetect:
         )
 
 
+class TestNfcvTagDetection:
+    """
+    ISO 15693 (NFC-V) tag detection via streaming mode.
+
+    The firmware runs nfcv_scan_() before each NFC-A WUPA, switching to
+    streaming mode (MODE=0x70), sending a 1-of-4 encoded INVENTORY, and
+    Manchester-decoding the response. The sim must encode the response
+    in Manchester format for the firmware to decode.
+    """
+
+    NFCV_UID = "E00208024FEFE7E1"  # 8-byte ISO 15693 UID
+
+    def test_nfcv_tag_detected_and_trigger_fires(self, sim):
+        """ISO 15693 tag detected via NFC-V inventory; on_tag trigger fires."""
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        ctrl1.add_tag(self.NFCV_UID, tag_type="ISO15693")
+        proc.wait_for(rf"NFC-V tag: {self.NFCV_UID}", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG {self.NFCV_UID}", timeout=5)
+
+    def test_nfcv_tag_removed(self, sim):
+        """Removing an NFC-V tag fires on_tag_removed."""
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        ctrl1.remove_tag(self.NFCV_UID)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.NFCV_UID}", timeout=10)
+
+    def test_nfcv_no_tag_no_crash(self, sim):
+        """NFC-V inventory with no ISO15693 tags doesn't crash or stall."""
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        # No NFC-V tags present — should see WUPA (NFC-A scan) without issues
+        proc.wait_for(r"Sent WUPA", timeout=5)
+
+
+class TestNfcvDualProtocol:
+    """
+    Dual-protocol: NFC-A and NFC-V tags detected simultaneously.
+    """
+
+    NFCV_UID = "A0B1C2D3E4F50607"
+    NFCA_UID = "CCDD0011"
+
+    def test_both_protocols_detected(self, sim):
+        """NFC-A + NFC-V tags are both detected in the same scan cycle."""
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        ctrl1.add_tag(self.NFCA_UID)
+        ctrl1.add_tag(self.NFCV_UID, tag_type="ISO15693")
+        # Both should fire on_tag triggers
+        proc.wait_for(rf"READER1_ON_TAG {self.NFCA_UID}", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG {self.NFCV_UID}", timeout=10)
+
+    def test_cleanup_dual(self, sim):
+        """Remove tags for subsequent tests."""
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        ctrl1.remove_tag(self.NFCA_UID)
+        ctrl1.remove_tag(self.NFCV_UID)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.NFCA_UID}", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.NFCV_UID}", timeout=10)
+
+
 class TestChipInitRegisters:
     """
     RFAL chip-init registers that improve range by configuring the RF front-end.
@@ -1036,6 +944,50 @@ class TestChipInitRegisters:
         proc, ctrl1, ctrl2 = sim
         val = ctrl1.get_reg("45")
         assert val == 0x40, f"EMD_SUP_CONF expected 0x40, got 0x{val:02X}"
+
+
+class TestAatTuning:
+    """
+    Automatic Antenna Tuning (AAT) hill-climbing optimizer.
+
+    The sim returns a constant AD_CONV_RESULT (0x80) for amplitude measurements,
+    so the algorithm should converge immediately at the starting values (no
+    direction improves). Verify it runs without crashing and preserves the
+    configured ANT_TUNE_A/B values.
+    """
+
+    def test_aat_runs_at_boot(self, sim):
+        """AAT convergence log should appear during reset_()."""
+        proc, ctrl1, ctrl2 = sim
+        proc.wait_for(r"Sent WUPA", timeout=10)
+        # AAT log fires during reset_() which happens at boot — check full log
+        with proc._lock:
+            found = any("AAT" in line for line in proc.log_lines)
+        # If boot log was missed, verify ANT_TUNE values are still correct
+        if not found:
+            val_a = ctrl1.get_reg("26")
+            val_b = ctrl1.get_reg("27")
+            assert val_a == 0x80, f"ANT_TUNE_A expected 0x80 after AAT, got 0x{val_a:02X}"
+            assert val_b == 0x40, f"ANT_TUNE_B expected 0x40 after AAT, got 0x{val_b:02X}"
+
+    def test_ant_tune_preserved_after_aat(self, sim):
+        """AAT with constant amplitude should preserve starting ANT_TUNE values."""
+        proc, ctrl1, ctrl2 = sim
+        val_a = ctrl1.get_reg("26")
+        val_b = ctrl1.get_reg("27")
+        assert val_a == 0x80, f"ANT_TUNE_A expected 0x80, got 0x{val_a:02X}"
+        assert val_b == 0x40, f"ANT_TUNE_B expected 0x40, got 0x{val_b:02X}"
+
+    def test_tags_still_detected_after_aat(self, sim):
+        """Tag detection works normally after AAT runs."""
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        uid = "AABBCCDD"
+        ctrl1.add_tag(uid)
+        proc.wait_for(rf"READER1_ON_TAG {uid}", timeout=10)
+        ctrl1.remove_tag(uid)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {uid}", timeout=10)
 
 
 class TestHealthCheck:

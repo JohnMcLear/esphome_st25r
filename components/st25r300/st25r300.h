@@ -32,6 +32,7 @@ class ST25R300 : public st25r::ST25R {
   bool transceive_ex_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len,
                       bool with_crc, uint32_t timeout_ms = 150) override;
   std::unique_ptr<nfc::NfcTag> read_tag_(std::vector<uint8_t> &uid) override;
+  bool nfcv_ndef_write_(nfc::NdefMessage *message) override;
   void send_halt_() override;
   void start_wupa_() override;
   void pre_select_() override;  // no-op: ST25R300 manages mode in transceive_ex_()
