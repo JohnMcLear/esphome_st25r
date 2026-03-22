@@ -954,7 +954,7 @@ class TestIsoDepType4:
     Type 4 NDEF read via I-Block wrapped APDUs.
     """
 
-    UID_T4 = "AABB0011"  # 4-byte, will be TYPE4
+    UID_T4 = "F0F0F0F0"  # 4-byte, unique for TYPE4 tests
 
     def test_type4_tag_detected(self, sim):
         """TYPE4 tag (SAK=0x20) is detected via NFC-A anticollision."""

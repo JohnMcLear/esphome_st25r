@@ -252,6 +252,91 @@ Tags with SAK bit 5 set (e.g., DESFire, NTAG424, GlobalPlatform cards) are autom
 
 **Verified on hardware:** GlobalPlatform card SAK=0x28, ATS TL=13 bytes, RATS/ATS + I-Block exchange successful on STEVAL-MB17149B.
 
+### Custom APDU Exchange (Lambda)
+
+Use `send_apdu()` from an `on_tag` lambda for multi-step APDU conversations. Block numbers toggle automatically between calls. RATS/ATS activation happens automatically when the tag is first detected.
+
+**Yubikey OTP example** (reads OTP from Yubico applet):
+
+```yaml
+st25r_spi:
+  id: my_reader
+  cs_pin: GPIO6
+  irq_pin: GPIO7
+  on_tag:
+    then:
+      - lambda: |-
+          if (!id(my_reader).is_isodep_active()) return;  // skip non-ISO-DEP tags
+
+          uint8_t resp[64];
+          uint8_t len = 0;
+
+          // Step 1: SELECT Yubico OTP applet (AID: A0000005272001)
+          uint8_t select_yubico[] = {0x00, 0xA4, 0x04, 0x00, 0x07,
+                                     0xA0, 0x00, 0x00, 0x05, 0x27, 0x20, 0x01, 0x00};
+          if (!id(my_reader).send_apdu(select_yubico, sizeof(select_yubico), resp, len) ||
+              len < 2 || resp[len-2] != 0x90) {
+            ESP_LOGW("yubikey", "SELECT Yubico OTP failed");
+            return;
+          }
+          ESP_LOGI("yubikey", "Yubico OTP applet selected (%u bytes)", len);
+
+          // Step 2: Read OTP (Yubico proprietary command)
+          uint8_t read_otp[] = {0x00, 0x01, 0x00, 0x00, 0x00};
+          len = 0;
+          if (id(my_reader).send_apdu(read_otp, sizeof(read_otp), resp, len) && len > 2) {
+            // OTP is in resp[0..len-3], SW1 SW2 at end
+            std::string otp;
+            for (int i = 0; i < len - 2; i++) {
+              char hex[3];
+              snprintf(hex, sizeof(hex), "%02X", resp[i]);
+              otp += hex;
+            }
+            ESP_LOGI("yubikey", "OTP: %s (SW=%02X%02X)", otp.c_str(), resp[len-2], resp[len-1]);
+          }
+```
+
+**Generic APDU example** (read UID from any ISO-DEP tag):
+
+```yaml
+on_tag:
+  then:
+    - lambda: |-
+        if (!id(my_reader).is_isodep_active()) return;
+        uint8_t resp[64];
+        uint8_t len = 0;
+        // GET DATA (UID): CLA=0xFF, INS=0xCA, P1=0x00, P2=0x00, Le=0x00
+        uint8_t get_uid[] = {0xFF, 0xCA, 0x00, 0x00, 0x00};
+        if (id(my_reader).send_apdu(get_uid, sizeof(get_uid), resp, len)) {
+          ESP_LOGI("apdu", "Response: %u bytes, SW=%02X%02X", len, resp[len-2], resp[len-1]);
+        }
+```
+
+**Payment ring/card SEID example** (reads Secure Element ID):
+
+```yaml
+on_tag:
+  then:
+    - lambda: |-
+        if (!id(my_reader).is_isodep_active()) return;
+        uint8_t resp[64];
+        uint8_t len = 0;
+
+        // GET DATA (CPLC/SEID) — works on GlobalPlatform payment cards/rings
+        uint8_t get_seid[] = {0x80, 0xCA, 0x9F, 0x7F, 0x2C};
+        if (id(my_reader).send_apdu(get_seid, sizeof(get_seid), resp, len) && len > 2) {
+          std::string seid;
+          for (int i = 0; i < len - 2; i++) {
+            char hex[3];
+            snprintf(hex, sizeof(hex), "%02X", resp[i]);
+            seid += hex;
+          }
+          ESP_LOGI("payment", "SEID: %s (SW=%02X%02X)", seid.c_str(), resp[len-2], resp[len-1]);
+        }
+```
+
+> **Note:** `send_apdu()` can be called multiple times within the same `on_tag` lambda for multi-step conversations. The I-Block block number toggles automatically.
+
 ---
 
 ## Troubleshooting

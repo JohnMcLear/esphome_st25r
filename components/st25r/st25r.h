@@ -133,6 +133,19 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   virtual bool nfcv_ndef_write_(nfc::NdefMessage *message);  // NFC-V Type 5 WRITE_SINGLE_BLOCK path
   bool clean_tag();
 
+  /// Send an APDU via ISO-DEP (ISO 14443-4) I-Block framing.
+  /// Requires the tag to be ISO-DEP activated (SAK & 0x20, RATS already sent).
+  /// Call multiple times for conversational APDU exchanges (block number toggles automatically).
+  /// Returns true if a response was received; resp/resp_len contain the response data + SW1 SW2.
+  /// Example from on_tag lambda:
+  ///   uint8_t select[] = {0x00, 0xA4, 0x04, 0x00, 0x07, 0xA0, 0x00, 0x00, 0x05, 0x27, 0x20, 0x01};
+  ///   uint8_t resp[64]; uint8_t len = 0;
+  ///   if (id(reader).send_apdu(select, sizeof(select), resp, len)) { /* check resp */ }
+  bool send_apdu(const uint8_t *apdu, size_t apdu_len, uint8_t *resp, uint8_t &resp_len);
+
+  /// Check if the most recently selected tag supports ISO-DEP (SAK & 0x20).
+  bool is_isodep_active() const { return this->last_sak_ & 0x20; }
+
   void set_reset_pin(GPIOPin *reset_pin) { this->reset_pin_ = reset_pin; }
   void set_irq_pin(InternalGPIOPin *irq_pin) { this->irq_pin_ = irq_pin; }
   void set_rf_field_enabled(bool enabled) { this->rf_field_enabled_ = enabled; }

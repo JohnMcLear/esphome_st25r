@@ -1936,6 +1936,14 @@ bool ST25R::clean_tag() {
   return this->ndef_write(nullptr, true);
 }
 
+bool ST25R::send_apdu(const uint8_t *apdu, size_t apdu_len, uint8_t *resp, uint8_t &resp_len) {
+  if (!(this->last_sak_ & 0x20)) {
+    ESP_LOGW(TAG, "send_apdu: tag not ISO-DEP capable (SAK=0x%02X)", this->last_sak_);
+    return false;
+  }
+  return this->isodep_transceive_(apdu, apdu_len, resp, resp_len);
+}
+
 void ST25R::dump_config() {
   ESP_LOGCONFIG(TAG, "ST25R:");
   LOG_PIN("  IRQ Pin: ", this->irq_pin_);
