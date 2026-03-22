@@ -189,6 +189,12 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   // Automatic Antenna Tuning — hill-climbing optimizer for ANT_TUNE_A/B
   void aat_tune_();
 
+  // ISO 14443-4 (ISO-DEP / Type 4 tags)
+  bool isodep_activate_(uint8_t *ats, uint8_t &ats_len);  // Send RATS, parse ATS
+  bool isodep_transceive_(const uint8_t *apdu, size_t apdu_len, uint8_t *resp, uint8_t &resp_len);
+  std::unique_ptr<nfc::NfcTag> read_tag_type4_(std::vector<uint8_t> &uid);
+  uint8_t isodep_block_number_{0};
+
   // NFC-B (ISO 14443B) support
   void nfcb_scan_();
   void configure_nfcb_mode_();
@@ -268,6 +274,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   uint32_t last_state_change_{0};
   uint8_t cascade_level_{0};
   std::string current_uid_;
+  uint8_t last_sak_{0};  // SAK from most recent SELECT (bit5=0x20 → ISO-DEP capable)
 
   // Anticollision loop state
   uint8_t anticol_prefix_[5]{};   // UID prefix bytes being used to narrow search
