@@ -233,7 +233,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   uint8_t max_failed_checks_{3};
   bool auto_reset_on_failure_{true};
   bool nfcv_enabled_{true};
-  bool aat_enabled_{false};  // AAT hill-climbing disabled by default (experimental)
+  bool aat_enabled_{true};  // AAT hill-climbing — improves range on boards with varicaps
   uint8_t health_check_failures_{0};
   uint8_t reinitialization_attempts_{0};
   volatile bool irq_triggered_{false};

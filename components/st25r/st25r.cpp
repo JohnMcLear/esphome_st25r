@@ -1031,9 +1031,8 @@ bool ST25R::reset_() {
   delay(10);
 
   // AAT hill-climbing: optimize ANT_TUNE_A/B for maximum field amplitude.
-  // Disabled by default — maximizing raw amplitude doesn't necessarily improve
-  // tag coupling range (phase matters too, but ST25R3916 has no phase register).
-  // Enable via YAML: aat_enabled: true
+  // Confirmed +10mm range on STEVAL-MB17149B (varicap-equipped board).
+  // Boards without varicaps see no effect (harmless). Disable via YAML: aat_enabled: false
   if (this->aat_enabled_)
     this->aat_tune_();
 

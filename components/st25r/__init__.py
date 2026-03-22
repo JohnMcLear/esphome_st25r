@@ -78,7 +78,7 @@ ST25R_SCHEMA = cv.Schema(
         cv.Optional(CONF_MAX_FAILED_CHECKS, default=3): cv.int_range(min=1, max=255),
         cv.Optional(CONF_AUTO_RESET_ON_FAILURE, default=True): cv.boolean,
         cv.Optional(CONF_NFCV_ENABLED, default=True): cv.boolean,
-        cv.Optional(CONF_AAT_ENABLED, default=False): cv.boolean,
+        cv.Optional(CONF_AAT_ENABLED, default=True): cv.boolean,
         cv.Optional(CONF_STATUS): binary_sensor_.binary_sensor_schema(),
         cv.Optional(CONF_FIELD_STRENGTH): sensor_.sensor_schema(),
         cv.Optional(CONF_ON_TAG): automation.validate_automation(

@@ -59,6 +59,7 @@ Flash, open logs — you should see `ST25R initialized successfully` and then a 
 | `rf_field_enabled` | `true` | Keep RF field on between scans |
 | `supply_3v3` | `true` | *Deprecated on ST25R3916* — VDD is auto-detected. Only used on ST25R300. |
 | `nfcv_enabled` | `true` | Enable ISO 15693 (NFC-V) tag detection alongside NFC-A |
+| `aat_enabled` | `true` | Automatic Antenna Tuning — hill-climbing optimizer for max range (requires varicaps) |
 | `mifare_key_a` | `FFFFFFFFFFFF` | Mifare Classic Key A (12 hex chars) |
 | `mifare_key_b` | `FFFFFFFFFFFF` | Mifare Classic Key B (12 hex chars) |
 | `health_check_enabled` | `true` | Periodically verify chip identity via IC_IDENTITY register |
