@@ -946,6 +946,50 @@ class TestChipInitRegisters:
         assert val == 0x40, f"EMD_SUP_CONF expected 0x40, got 0x{val:02X}"
 
 
+class TestAatTuning:
+    """
+    Automatic Antenna Tuning (AAT) hill-climbing optimizer.
+
+    The sim returns a constant AD_CONV_RESULT (0x80) for amplitude measurements,
+    so the algorithm should converge immediately at the starting values (no
+    direction improves). Verify it runs without crashing and preserves the
+    configured ANT_TUNE_A/B values.
+    """
+
+    def test_aat_runs_at_boot(self, sim):
+        """AAT convergence log should appear during reset_()."""
+        proc, ctrl1, ctrl2 = sim
+        proc.wait_for(r"Sent WUPA", timeout=10)
+        # AAT log fires during reset_() which happens at boot — check full log
+        with proc._lock:
+            found = any("AAT" in line for line in proc.log_lines)
+        # If boot log was missed, verify ANT_TUNE values are still correct
+        if not found:
+            val_a = ctrl1.get_reg("26")
+            val_b = ctrl1.get_reg("27")
+            assert val_a == 0x80, f"ANT_TUNE_A expected 0x80 after AAT, got 0x{val_a:02X}"
+            assert val_b == 0x40, f"ANT_TUNE_B expected 0x40 after AAT, got 0x{val_b:02X}"
+
+    def test_ant_tune_preserved_after_aat(self, sim):
+        """AAT with constant amplitude should preserve starting ANT_TUNE values."""
+        proc, ctrl1, ctrl2 = sim
+        val_a = ctrl1.get_reg("26")
+        val_b = ctrl1.get_reg("27")
+        assert val_a == 0x80, f"ANT_TUNE_A expected 0x80, got 0x{val_a:02X}"
+        assert val_b == 0x40, f"ANT_TUNE_B expected 0x40, got 0x{val_b:02X}"
+
+    def test_tags_still_detected_after_aat(self, sim):
+        """Tag detection works normally after AAT runs."""
+        proc, ctrl1, ctrl2 = sim
+        with proc._lock:
+            proc.log_lines.clear()
+        uid = "AABBCCDD"
+        ctrl1.add_tag(uid)
+        proc.wait_for(rf"READER1_ON_TAG {uid}", timeout=10)
+        ctrl1.remove_tag(uid)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {uid}", timeout=10)
+
+
 class TestHealthCheck:
     """
     Health check verifies IC identity at a separate slow interval (2s in

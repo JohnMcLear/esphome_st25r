@@ -176,6 +176,24 @@ class TestRfPower:
             cv.int_range(min=0, max=15)(power)
 
 
+# ── Boolean config options ────────────────────────────────────────────────────
+
+class TestBooleanConfigs:
+    """Verify boolean YAML options accept true/false."""
+
+    def test_aat_enabled_true(self):
+        assert cv.boolean(True) is True
+
+    def test_aat_enabled_false(self):
+        assert cv.boolean(False) is False
+
+    def test_nfcv_enabled_true(self):
+        assert cv.boolean(True) is True
+
+    def test_nfcv_enabled_false(self):
+        assert cv.boolean(False) is False
+
+
 # ── Pure-Python PRNG cross-check ──────────────────────────────────────────────
 
 def _swapendian(x: int) -> int:

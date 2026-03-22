@@ -276,6 +276,28 @@ class TestBVersionChipInitRegisters:
         assert val == 0x80, f"RES_AM_MOD expected 0x80, got 0x{val:02X}"
 
 
+class TestBVersionAat:
+    """AAT hill-climbing on B-version preserves ANT_TUNE values with constant sim amplitude."""
+
+    def test_ant_tune_preserved(self, sim_b):
+        proc, ctrl3, ctrl4 = sim_b
+        proc.wait_for(r"Sent WUPA", timeout=10)
+        val_a = ctrl3.get_reg("26")
+        val_b = ctrl3.get_reg("27")
+        assert val_a == 0x80, f"ANT_TUNE_A expected 0x80, got 0x{val_a:02X}"
+        assert val_b == 0x40, f"ANT_TUNE_B expected 0x40, got 0x{val_b:02X}"
+
+    def test_tags_work_after_aat(self, sim_b):
+        proc, ctrl3, ctrl4 = sim_b
+        with proc._lock:
+            proc.log_lines.clear()
+        uid = "11223344"
+        ctrl3.add_tag(uid)
+        proc.wait_for(rf"READER1_B_ON_TAG {uid}", timeout=10)
+        ctrl3.remove_tag(uid)
+        proc.wait_for(rf"READER1_B_ON_TAG_REMOVED {uid}", timeout=10)
+
+
 class TestBVersionHealthCheck:
     """
     Health check on the B-version (IC identity 0x30) honours all four config options
