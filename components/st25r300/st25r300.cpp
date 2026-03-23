@@ -35,8 +35,8 @@ void ST25R300::setup() {
   if (this->status_binary_sensor_ != nullptr)
     this->status_binary_sensor_->publish_initial_state(false);
 
-  ESP_LOGI(TAG, "Starting reset_()...");
-  if (!this->reset_()) {
+  ESP_LOGI(TAG, "Starting reset_chip_()...");
+  if (!this->reset_chip_()) {
     ESP_LOGE(TAG, "Failed to reset/init ST25R300");
     this->mark_failed();
     return;
@@ -122,7 +122,7 @@ void ST25R300::update() {
 
 // ── loop ──────────────────────────────────────────────────────────────────────
 // Overrides base to translate ST25R300's three IRQ registers into the normalized
-// irq_status_ byte used by the shared process_state_() state machine.
+// irq_status_ uint8_t used by the shared process_state_() state machine.
 void ST25R300::loop() {
   if (this->is_failed()) return;
 
@@ -436,7 +436,7 @@ void ST25R300::send_anticol_frame_() {
 }
 
 // ── reset_ ────────────────────────────────────────────────────────────────────
-bool ST25R300::reset_() {
+bool ST25R300::reset_chip_() {
   // Verify IC identity BEFORE SET_DEFAULT — if bus is down, don't clear registers.
   uint8_t ic_identity = this->read_register(ST25R300_REG_IC_IDENTITY);
   ESP_LOGD(TAG, "  reset_: IC identity read: 0x%02X", ic_identity);
@@ -533,7 +533,7 @@ void ST25R300::reinitialize_() {
     this->reset_pin_->digital_write(false);
     delay(10);
   }
-  if (this->reset_()) {
+  if (this->reset_chip_()) {
     ESP_LOGI(TAG, "Reinitialize succeeded after %u attempt(s)", this->reinitialization_attempts_);
     this->health_check_failures_ = 0;
     this->reinitialization_attempts_ = 0;
@@ -685,7 +685,7 @@ void ST25R300::nfcv_scan_() {
       break;
     }
 
-    // Check flags byte — bit0=error
+    // Check flags uint8_t — bit0=error
     if (resp[0] & 0x01) {
       ESP_LOGD(TAG, "NFC-V: inventory error flag set (0x%02X)", resp[0]);
       break;
@@ -716,7 +716,7 @@ void ST25R300::nfcv_scan_() {
 
     if (this->transceive_nfcv_(blk_req, sizeof(blk_req), blk_resp, blk_len, 20) &&
         blk_len >= 5 && !(blk_resp[0] & 0x01)) {
-      if (blk_resp[1] == 0xE1) {  // NDEF magic byte in CC
+      if (blk_resp[1] == 0xE1) {  // NDEF magic uint8_t in CC
         uint8_t cc_size = blk_resp[3];
         uint8_t total_blocks = (cc_size * 8) / 4;
         if (total_blocks > 64) total_blocks = 64;
@@ -862,7 +862,7 @@ void ST25R300::nfcb_scan_() {
 
   if (this->transceive_nfcv_(sensb_req, sizeof(sensb_req), resp, resp_len, 20) &&
       resp_len >= 12 && resp[0] == 0x50) {
-    // ATQB: byte 0 = 0x50, bytes 1-4 = PUPI
+    // ATQB: uint8_t 0 = 0x50, bytes 1-4 = PUPI
     char uid_str[9];
     snprintf(uid_str, sizeof(uid_str), "%02X%02X%02X%02X", resp[1], resp[2], resp[3], resp[4]);
     ESP_LOGI(TAG, "NFC-B tag: %s (ATQB len=%u)", uid_str, resp_len);

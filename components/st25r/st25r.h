@@ -183,10 +183,10 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   virtual void read_fifo(uint8_t *data, size_t len) = 0;
 
   // Chip-specific overrides — each uses the ST25R3916 default or can be overridden
-  virtual bool reset_();
+  virtual bool reset_chip_();
   virtual void reinitialize_();
   virtual void send_anticol_frame_();
-  virtual bool transceive_ex_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, bool with_crc, uint32_t timeout_ms = 150);
+  virtual bool transceive_ex_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, bool with_crc, uint32_t timeout_ms);
   virtual std::unique_ptr<nfc::NfcTag> read_tag_(std::vector<uint8_t> &uid);
 
   // Virtual helpers used by the shared process_state_() to abstract chip differences
@@ -236,7 +236,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
                             struct Crypto1State *cs);
   bool mifare_read_block_(uint8_t block, uint8_t *data, struct Crypto1State *cs);
   static void isr(ST25R *arg);
-  
+
   GPIOPin *reset_pin_{nullptr};
   InternalGPIOPin *irq_pin_{nullptr};
 

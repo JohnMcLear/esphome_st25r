@@ -26,7 +26,7 @@ class ST25R300 : public st25r::ST25R {
   virtual void read_fifo(uint8_t *data, size_t len) = 0;
 
   // Chip-specific overrides
-  bool reset_() override;
+  bool reset_chip_() override;
   void reinitialize_() override;
   void send_anticol_frame_() override;
   bool transceive_ex_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len,
