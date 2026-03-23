@@ -557,3 +557,135 @@ class TestSeidApdu:
         assert uid1[:2] == "08"
         assert uid2[:2] == "08"
         assert uid3[:2] == "08"
+
+
+# ── NDEF payload construction tests ──────────────────────────────────────────
+
+
+def parse_nfcv_ndef_tlv(ndef_data: bytes) -> bytes | None:
+    """
+    Parse NDEF TLV from NFC-V block data — mirrors the C++ logic in
+    st25r.cpp nfcv_scan_ and st25r300.cpp nfcv_scan_.
+    Returns the NDEF payload bytes, or None if not found.
+    """
+    for i in range(len(ndef_data)):
+        if ndef_data[i] == 0x03 and i + 1 < len(ndef_data):
+            ndef_len = ndef_data[i + 1]
+            ndef_start = i + 2
+            if ndef_start + ndef_len <= len(ndef_data):
+                return ndef_data[ndef_start:ndef_start + ndef_len]
+            return None
+        if ndef_data[i] == 0xFE:
+            return None
+    return None
+
+
+def parse_type4_ndef(resp: bytes, ndef_len: int) -> bytes | None:
+    """
+    Extract NDEF payload from a Type 4 READ BINARY response — mirrors the
+    C++ logic in st25r.cpp read_tag_type4_.
+    resp contains ndef_len data bytes followed by 2-byte SW.
+    """
+    if len(resp) < ndef_len + 2:
+        return None
+    return resp[:ndef_len]
+
+
+class TestNdefPayloadConstruction:
+    """Tests verifying NDEF payload is correctly extracted for NfcTag construction."""
+
+    def test_nfcv_ndef_tlv_basic(self):
+        """Type 0x03 TLV with 3-byte NDEF payload."""
+        data = bytes([0x03, 0x03, 0xD1, 0x01, 0x00, 0xFE])
+        payload = parse_nfcv_ndef_tlv(data)
+        assert payload == bytes([0xD1, 0x01, 0x00])
+
+    def test_nfcv_ndef_tlv_with_null_prefix(self):
+        """NULL TLV (0x00) before the NDEF TLV."""
+        data = bytes([0x00, 0x00, 0x03, 0x02, 0xAA, 0xBB, 0xFE])
+        payload = parse_nfcv_ndef_tlv(data)
+        assert payload == bytes([0xAA, 0xBB])
+
+    def test_nfcv_ndef_tlv_terminator_first(self):
+        """Terminator TLV (0xFE) before any NDEF TLV."""
+        data = bytes([0xFE, 0x03, 0x01, 0xAA])
+        payload = parse_nfcv_ndef_tlv(data)
+        assert payload is None
+
+    def test_nfcv_ndef_tlv_empty_payload(self):
+        """NDEF TLV with zero-length payload."""
+        data = bytes([0x03, 0x00, 0xFE])
+        payload = parse_nfcv_ndef_tlv(data)
+        # ndef_len=0, ndef_start=2, 2+0 <= 3 → returns empty bytes
+        assert payload == b""
+
+    def test_nfcv_ndef_tlv_truncated(self):
+        """NDEF TLV where length exceeds available data."""
+        data = bytes([0x03, 0x10, 0xAA, 0xBB])  # claims 16 bytes, only 2 available
+        payload = parse_nfcv_ndef_tlv(data)
+        assert payload is None
+
+    def test_nfcv_ndef_tlv_no_ndef(self):
+        """Data with no NDEF TLV and no terminator."""
+        data = bytes([0x00, 0x00, 0x00, 0x00])
+        payload = parse_nfcv_ndef_tlv(data)
+        assert payload is None
+
+    def test_type4_ndef_basic(self):
+        """Type 4 READ BINARY response with NDEF + SW 9000."""
+        resp = bytes([0xD1, 0x01, 0x0C, 0x55, 0x01]) + bytes([0x90, 0x00])
+        payload = parse_type4_ndef(resp, 5)
+        assert payload == bytes([0xD1, 0x01, 0x0C, 0x55, 0x01])
+
+    def test_type4_ndef_truncated_response(self):
+        """Response shorter than expected NDEF length."""
+        resp = bytes([0xD1, 0x90, 0x00])  # Only 1 data byte + SW
+        payload = parse_type4_ndef(resp, 5)
+        assert payload is None
+
+    def test_type4_ndef_exact_fit(self):
+        """Response has exactly ndef_len + 2 bytes."""
+        data = bytes(range(32))
+        resp = data + bytes([0x90, 0x00])
+        payload = parse_type4_ndef(resp, 32)
+        assert payload == data
+
+
+class TestVddFallbackLogic:
+    """Tests for VDD auto-detect with supply_3v3 fallback."""
+
+    @staticmethod
+    def vdd_detect(vdd_raw: int, supply_3v3: bool) -> bool:
+        """
+        Mirrors the C++ VDD detection logic in st25r.cpp reset_().
+        Returns True if sup3V should be set.
+        """
+        if vdd_raw == 0:
+            return supply_3v3
+        vdd_mv = vdd_raw * 23 + ((vdd_raw * 4 + 5) // 10)
+        return vdd_mv < 3600
+
+    def test_normal_3v3_detection(self):
+        """3.3V supply: ~3300mV → raw ~143."""
+        assert self.vdd_detect(143, True) is True
+
+    def test_normal_5v_detection(self):
+        """5V supply: ~5000mV → raw ~217."""
+        assert self.vdd_detect(217, True) is False
+
+    def test_raw_zero_fallback_3v3(self):
+        """raw=0 measurement failure → fall back to supply_3v3=True."""
+        assert self.vdd_detect(0, True) is True
+
+    def test_raw_zero_fallback_5v(self):
+        """raw=0 measurement failure → fall back to supply_3v3=False."""
+        assert self.vdd_detect(0, False) is False
+
+    def test_boundary_3600mv(self):
+        """Boundary: exactly 3600mV → sup3V=False (not < 3600)."""
+        # 3600 = raw * 23 + (raw*4+5)//10 → raw ~155
+        # raw=155: 155*23=3565, (155*4+5)//10=62 → 3627 > 3600 → 5V
+        # raw=154: 154*23=3542, (154*4+5)//10=62 → 3604 > 3600 → 5V
+        # raw=153: 153*23=3519, (153*4+5)//10=61 → 3580 < 3600 → 3.3V
+        assert self.vdd_detect(153, True) is True   # 3580mV → 3.3V
+        assert self.vdd_detect(154, True) is False  # 3604mV → 5V
