@@ -47,7 +47,7 @@ struct AuthState {
   uint32_t nt{0};             // tag nonce we generated
   uint32_t uid_u32{0};        // lower 4 bytes of tag UID as uint32
   uint64_t key{0};
-  struct Crypto1State cs{};   // LFSR state; advanced by each block transact.
+  st25r::Crypto1State cs{};   // LFSR state; advanced by each block transact.
 };
 
 // ── ST25RSim ──────────────────────────────────────────────────────────────────

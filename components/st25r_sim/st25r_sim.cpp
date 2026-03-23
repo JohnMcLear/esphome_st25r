@@ -34,6 +34,14 @@
 namespace esphome {
 namespace st25r_sim {
 
+using st25r::Crypto1State;
+using st25r::crypto1_init;
+using st25r::crypto1_bit;
+using st25r::crypto1_byte;
+using st25r::crypto1_word;
+using st25r::crypto1_filter;
+using st25r::prng_successor;
+
 static const char *const TAG = "st25r_sim";
 
 // ── IRQ bits ──────────────────────────────────────────────────────────────────
@@ -289,7 +297,7 @@ void ST25RSim::write_command(uint8_t command) {
       fifo_in_.clear();
       fifo_out_.clear();
       fifo_status2_ = 0;
-      auth_state_ = {};
+      auth_state_ = AuthState{};
       { std::lock_guard<std::mutex> lk(tags_mutex_);
         for (auto &t : virtual_tags_) t.halted = false; }
       break;
@@ -431,7 +439,7 @@ void ST25RSim::on_wupa_() {
   fifo_status2_ = 0;
   collision_display_ = 0;
   last_selected_valid_ = false;
-  auth_state_ = {};  // reset any in-progress auth
+  auth_state_ = AuthState{};  // reset any in-progress auth
 
   // Enforce correct AM modulation for ISO14443A.
   // TX_DRIVER_CONF bits[7:4] = am_mod — must be 0 (100% ASK / OOK).
@@ -512,7 +520,7 @@ void ST25RSim::on_anticol_() {
 
   // ── Normal ISO 14443-A anticollision frame ────────────────────────────────
   // Clear auth state on any new anticol (new tag selection started)
-  auth_state_ = {};
+  auth_state_ = AuthState{};
 
   if (frame.size() < 2) { pending_irq_timer_ = 0x40; return; }
 
@@ -624,7 +632,7 @@ void ST25RSim::on_mifare_auth_response_(const std::vector<uint8_t> &frame) {
     ESP_LOGW(TAG, "SIM Mifare auth: AR mismatch (got %08X expected %08X)",
              ar_plain_u32, ar_expected);
     // Respond with IRQ_TXE only → firmware auth fails gracefully
-    auth_state_ = {};
+    auth_state_ = AuthState{};
     pending_irq_main_ = IRQ_TXE;
     return;
   }
