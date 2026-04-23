@@ -18,7 +18,7 @@ wifi:
   password: "WIFI_PASSWORD"
 
 external_components:
-  - source: github://JohnMcLear/esphome-st25r
+  - source: github://JohnMcLear/esphome_st25r
     components: [ st25r, st25r_spi, st25r_i2c ]
 
 # Enable SPI bus
