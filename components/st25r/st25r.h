@@ -182,6 +182,11 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   virtual void write_fifo(const uint8_t *data, size_t len) = 0;
   virtual void read_fifo(uint8_t *data, size_t len) = 0;
 
+  // Cross-encoding IC_IDENTITY probe — each SPI backend reads 0x3F using the
+  // OTHER chip family's read encoding. Used on identity-check failure to tell
+  // the user they loaded the wrong driver for their silicon. Default is a no-op.
+  virtual uint8_t probe_sibling_identity_() { return 0xFF; }
+
   // Chip-specific overrides — each uses the ST25R3916 default or can be overridden
   virtual bool reset_chip();
   virtual void reinitialize();

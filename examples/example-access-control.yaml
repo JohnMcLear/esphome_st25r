@@ -1,5 +1,6 @@
-# Advanced ESPHome configuration for ST25R NFC Reader
+# Advanced ESPHome configuration for ST25R3916/3916B NFC Reader
 # Implementation of an Access Control System
+# For ST25R300 silicon, see example-st25r300.yaml instead.
 
 esphome:
   name: st25r-access-control

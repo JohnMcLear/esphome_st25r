@@ -1,0 +1,50 @@
+# Example ESPHome configuration for ST25R300 NFC Reader
+# For ST25R3916/3916B silicon, see example-basic.yaml or example-access-control.yaml.
+esphome:
+  name: st25r300-nfc-reader
+  friendly_name: ST25R300 NFC Reader
+
+esp32:
+  board: esp32-c6-devkitc-1
+  variant: esp32c6
+
+logger:
+  level: DEBUG
+
+wifi:
+  ssid: "ST25R300 Fallback"
+  password: "PASSWORD"
+
+external_components:
+  - source: github://JohnMcLear/esphome_st25r
+    components: [ st25r300, st25r300_spi ]
+
+# Enable SPI bus
+spi:
+  clk_pin: GPIO19
+  mosi_pin: GPIO10
+  miso_pin: GPIO18
+
+# Configure ST25R300 NFC reader via SPI
+st25r300_spi:
+  id: my_st25r300
+  cs_pin: GPIO7
+  irq_pin: GPIO6
+  reset_pin: GPIO5
+  update_interval: 1s
+  rf_field_enabled: true
+  rf_power: 15           # 0..15 (15 = full power)
+  rx_gain_boost: false
+  nfcv_enabled: true     # ISO 15693
+  nfcb_enabled: true     # ISO 14443-B
+  health_check_enabled: true
+  health_check_interval: 60s
+
+  # Tag detection triggers
+  on_tag:
+    - lambda: |-
+        ESP_LOGI("main", "Tag detected: %s", x.c_str());
+
+  on_tag_removed:
+    - lambda: |-
+        ESP_LOGI("main", "Tag removed: %s", x.c_str());

@@ -62,5 +62,16 @@ void ST25RSpi::read_fifo(uint8_t *data, size_t len) {
   this->disable();
 }
 
+uint8_t ST25RSpi::probe_sibling_identity_() {
+  // Read IC_IDENTITY (0x3F) using ST25R300's read encoding (0x80 | reg).
+  // Called after the 3916-encoded identity read fails — if the attached silicon
+  // is actually ST25R300, this returns a valid chip signature (top 5 bits 10110b).
+  this->enable();
+  this->write_byte(0xBF);
+  uint8_t value = this->read_byte();
+  this->disable();
+  return value;
+}
+
 }  // namespace st25r_spi
 }  // namespace esphome
