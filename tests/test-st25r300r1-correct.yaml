@@ -1,0 +1,48 @@
+# Correct config for ST25R300R1 silicon on an ESP32-S3 with USB Serial/JTAG
+# console. Uses the st25r300_spi driver (the ST25R300 family, not the
+# ST25R3916 family — see test-wrong-driver-warning.yaml for the common
+# mistake).
+
+esphome:
+  name: st25r300r1-gamma
+
+esp32:
+  variant: esp32s3
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG: "y"
+      CONFIG_ESP_CONSOLE_UART_DEFAULT: "n"
+      CONFIG_ESP_CONSOLE_SECONDARY_NONE: "y"
+
+logger:
+  level: DEBUG
+  hardware_uart: USB_SERIAL_JTAG
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [st25r300, st25r300_spi]
+
+spi:
+  clk_pin: GPIO10
+  miso_pin: GPIO11
+  mosi_pin: GPIO9
+
+st25r300_spi:
+  id: my_st25r300
+  cs_pin: GPIO8
+  irq_pin: GPIO13
+  reset_pin: GPIO12
+  update_interval: 2s
+  on_tag:
+    then:
+      - logger.log:
+          format: "Tag detected: %s"
+          args: ['x.c_str()']
+  on_tag_removed:
+    then:
+      - logger.log:
+          format: "Tag removed: %s"
+          args: ['x.c_str()']
