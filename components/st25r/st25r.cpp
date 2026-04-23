@@ -966,7 +966,16 @@ bool ST25R::reset_chip() {
   ESP_LOGD(TAG, "  reset_: IC identity read: 0x%02X", ic_identity);
   uint8_t chip_type = ic_identity & 0xF8;
   if (chip_type != 0x28 && chip_type != 0x30) {
-    ESP_LOGE(TAG, "  reset_: IC identity mismatch! Expected 0x28/0x30, got 0x%02X", chip_type);
+    uint8_t sibling = this->probe_sibling_identity_();
+    if ((sibling & 0xF8) == 0xB0) {
+      ESP_LOGE(TAG, "  reset_: Wrong driver! Chip responds to ST25R300 encoding "
+                    "(IC_IDENTITY=0x%02X, rev %u).", sibling, sibling & 0x07);
+      ESP_LOGE(TAG, "  reset_: You have ST25R300 silicon — switch YAML from st25r_spi to st25r300_spi:");
+      ESP_LOGE(TAG, "  reset_:   external_components: ... components: [st25r300, st25r300_spi]");
+      ESP_LOGE(TAG, "  reset_:   st25r300_spi: { cs_pin: ..., irq_pin: ..., reset_pin: ... }");
+    } else {
+      ESP_LOGE(TAG, "  reset_: IC identity mismatch! Expected 0x28/0x30, got 0x%02X", chip_type);
+    }
     return false;
   }
 

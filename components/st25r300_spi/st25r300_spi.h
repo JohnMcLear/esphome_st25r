@@ -27,6 +27,7 @@ class ST25R300Spi : public st25r300::ST25R300,
   void write_command(uint8_t command) override;
   void write_fifo(const uint8_t *data, size_t len) override;
   void read_fifo(uint8_t *data, size_t len) override;
+  uint8_t probe_sibling_identity_() override;
 };
 
 }  // namespace st25r300_spi
