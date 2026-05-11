@@ -82,6 +82,16 @@ UID4 = "DEA30D00"
 UID7 = "041AA7675F6180"
 
 
+def dashed(uid_hex):
+    """Convert continuous-hex UID ("DEA30D00") to dashed form ("DE-A3-0D-00")
+    matching the ESPHome nfc::format_uid_to output used by the C++ side."""
+    return "-".join(uid_hex[i:i + 2] for i in range(0, len(uid_hex), 2))
+
+
+UID4_DASH = dashed(UID4)
+UID7_DASH = dashed(UID7)
+
+
 class TestBVersionInit:
     """B-version chip identity (0x30) is accepted — no mismatch error, status fires."""
 
@@ -123,42 +133,43 @@ class TestBVersionTagDetection:
         with proc._lock:
             proc.log_lines.clear()
         ctrl3.add_tag(UID4)
-        line = proc.wait_for(r"READER1_B_ON_TAG DEA30D00", timeout=10)
-        assert "DEA30D00" in line
+        line = proc.wait_for(rf"READER1_B_ON_TAG {UID4_DASH}", timeout=10)
+        assert UID4_DASH in line
 
     def test_4byte_tag_removed(self, sim_b):
         proc, ctrl3, ctrl4 = sim_b
         with proc._lock:
             proc.log_lines.clear()
         ctrl3.remove_tag(UID4)
-        proc.wait_for(r"READER1_B_ON_TAG_REMOVED DEA30D00", timeout=10)
+        proc.wait_for(rf"READER1_B_ON_TAG_REMOVED {UID4_DASH}", timeout=10)
 
     def test_7byte_tag_detected(self, sim_b):
         proc, ctrl3, ctrl4 = sim_b
         with proc._lock:
             proc.log_lines.clear()
         ctrl3.add_tag(UID7, tag_type="NTAG213")
-        proc.wait_for(r"READER1_B_ON_TAG 041AA7675F6180", timeout=10)
+        proc.wait_for(rf"READER1_B_ON_TAG {UID7_DASH}", timeout=10)
 
     def test_7byte_tag_removed(self, sim_b):
         proc, ctrl3, ctrl4 = sim_b
         with proc._lock:
             proc.log_lines.clear()
         ctrl3.remove_tag(UID7)
-        proc.wait_for(r"READER1_B_ON_TAG_REMOVED 041AA7675F6180", timeout=10)
+        proc.wait_for(rf"READER1_B_ON_TAG_REMOVED {UID7_DASH}", timeout=10)
 
 
 class TestBVersionMifareAuth:
     """Mifare Classic Crypto1 auth works correctly on B-version sim path."""
 
     UID_MFC = "CAFEBABE"
+    UID_MFC_DASH = dashed(UID_MFC)
 
     def test_mifare_auth_succeeds(self, sim_b):
         proc, ctrl3, ctrl4 = sim_b
         with proc._lock:
             proc.log_lines.clear()
         ctrl3.add_tag(self.UID_MFC, tag_type="MIFARE_1K")
-        proc.wait_for(r"READER1_B_ON_TAG CAFEBABE", timeout=12)
+        proc.wait_for(rf"READER1_B_ON_TAG {self.UID_MFC_DASH}", timeout=12)
         proc.wait_for(r"Mifare auth OK", timeout=5)
 
     def test_mifare_tag_removed(self, sim_b):
@@ -166,28 +177,29 @@ class TestBVersionMifareAuth:
         with proc._lock:
             proc.log_lines.clear()
         ctrl3.remove_tag(self.UID_MFC)
-        proc.wait_for(r"READER1_B_ON_TAG_REMOVED CAFEBABE", timeout=10)
+        proc.wait_for(rf"READER1_B_ON_TAG_REMOVED {self.UID_MFC_DASH}", timeout=10)
 
 
 class TestBVersionNfcv:
     """NFC-V tag detection works on B-version (IC=0x30) via streaming mode."""
 
     NFCV_UID = "E00208024FEFE7E1"
+    NFCV_UID_DASH = dashed(NFCV_UID)
 
     def test_nfcv_detected_and_trigger(self, sim_b):
         proc, ctrl3, ctrl4 = sim_b
         with proc._lock:
             proc.log_lines.clear()
         ctrl3.add_tag(self.NFCV_UID, tag_type="ISO15693")
-        proc.wait_for(rf"NFC-V tag: {self.NFCV_UID}", timeout=10)
-        proc.wait_for(rf"READER1_B_ON_TAG {self.NFCV_UID}", timeout=5)
+        proc.wait_for(rf"NFC-V tag: {self.NFCV_UID_DASH}", timeout=10)
+        proc.wait_for(rf"READER1_B_ON_TAG {self.NFCV_UID_DASH}", timeout=5)
 
     def test_nfcv_removed(self, sim_b):
         proc, ctrl3, ctrl4 = sim_b
         with proc._lock:
             proc.log_lines.clear()
         ctrl3.remove_tag(self.NFCV_UID)
-        proc.wait_for(rf"READER1_B_ON_TAG_REMOVED {self.NFCV_UID}", timeout=10)
+        proc.wait_for(rf"READER1_B_ON_TAG_REMOVED {self.NFCV_UID_DASH}", timeout=10)
 
 
 class TestBVersionRfalAnalogProfile:

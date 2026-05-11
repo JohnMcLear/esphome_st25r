@@ -35,7 +35,7 @@ st25r_spi:
     then:
       - if:
           condition:
-            lambda: 'return x == "DEA30D00";'
+            lambda: 'return x == "DE-A3-0D-00";'
           then:
             - logger.log: "Access Granted!"
             - output.turn_on: gate_latch

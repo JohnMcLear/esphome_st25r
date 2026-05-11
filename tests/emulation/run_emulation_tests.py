@@ -103,8 +103,18 @@ NDEF_TEXT_HI = "D10105540265 6E4869".replace(" ", "")
 # Test classes
 # ─────────────────────────────────────────────────────────────────────────────
 
-UID4 = "DEA30D00"   # 4-byte (Mifare Classic)
-UID7 = "041AA7675F6180"  # 7-byte (NTAG)
+UID4 = "DEA30D00"   # 4-byte (Mifare Classic), continuous hex — sim socket protocol
+UID7 = "041AA7675F6180"  # 7-byte (NTAG), continuous hex — sim socket protocol
+
+
+def dashed(uid_hex):
+    """Convert continuous-hex UID ("DEA30D00") to dashed form ("DE-A3-0D-00")
+    matching the ESPHome nfc::format_uid_to output used by the C++ side."""
+    return "-".join(uid_hex[i:i + 2] for i in range(0, len(uid_hex), 2))
+
+
+UID4_DASH = dashed(UID4)
+UID7_DASH = dashed(UID7)
 
 
 class TestStatusAndFieldStrength:
@@ -145,16 +155,16 @@ class TestBasicTagDetection:
         with proc._lock:
             proc.log_lines.clear()
         ctrl1.add_tag(UID4)
-        line = proc.wait_for(r"READER1_ON_TAG DEA30D00", timeout=10)
-        assert "DEA30D00" in line
+        line = proc.wait_for(rf"READER1_ON_TAG {UID4_DASH}", timeout=10)
+        assert UID4_DASH in line
 
     def test_4byte_tag_removed(self, sim):
         proc, ctrl1, ctrl2 = sim
         with proc._lock:
             proc.log_lines.clear()
         ctrl1.remove_tag(UID4)
-        line = proc.wait_for(r"READER1_ON_TAG_REMOVED DEA30D00", timeout=10)
-        assert "DEA30D00" in line
+        line = proc.wait_for(rf"READER1_ON_TAG_REMOVED {UID4_DASH}", timeout=10)
+        assert UID4_DASH in line
 
 
 class TestSevenByteUid:
@@ -165,16 +175,16 @@ class TestSevenByteUid:
         with proc._lock:
             proc.log_lines.clear()
         ctrl1.add_tag(UID7, tag_type="NTAG213")
-        line = proc.wait_for(r"READER1_ON_TAG 041AA7675F6180", timeout=10)
-        assert "041AA7675F6180" in line
+        line = proc.wait_for(rf"READER1_ON_TAG {UID7_DASH}", timeout=10)
+        assert UID7_DASH in line
 
     def test_7byte_tag_removed(self, sim):
         proc, ctrl1, ctrl2 = sim
         with proc._lock:
             proc.log_lines.clear()
         ctrl1.remove_tag(UID7)
-        line = proc.wait_for(r"READER1_ON_TAG_REMOVED 041AA7675F6180", timeout=10)
-        assert "041AA7675F6180" in line
+        line = proc.wait_for(rf"READER1_ON_TAG_REMOVED {UID7_DASH}", timeout=10)
+        assert UID7_DASH in line
 
 
 class TestMultiTagDetection:
@@ -182,6 +192,8 @@ class TestMultiTagDetection:
 
     UID_A = "AABBCCDD"
     UID_B = "11223344"
+    UID_A_DASH = "AA-BB-CC-DD"
+    UID_B_DASH = "11-22-33-44"
 
     def test_two_tags_both_detected(self, sim):
         proc, ctrl1, ctrl2 = sim
@@ -189,8 +201,8 @@ class TestMultiTagDetection:
             proc.log_lines.clear()
         ctrl1.add_tag(self.UID_A)
         ctrl1.add_tag(self.UID_B)
-        proc.wait_for(r"READER1_ON_TAG AABBCCDD", timeout=15)
-        proc.wait_for(r"READER1_ON_TAG 11223344", timeout=15)
+        proc.wait_for(rf"READER1_ON_TAG {self.UID_A_DASH}", timeout=15)
+        proc.wait_for(rf"READER1_ON_TAG {self.UID_B_DASH}", timeout=15)
 
     def test_two_tags_both_removed(self, sim):
         proc, ctrl1, ctrl2 = sim
@@ -198,8 +210,8 @@ class TestMultiTagDetection:
             proc.log_lines.clear()
         ctrl1.remove_tag(self.UID_A)
         ctrl1.remove_tag(self.UID_B)
-        proc.wait_for(r"READER1_ON_TAG_REMOVED AABBCCDD", timeout=15)
-        proc.wait_for(r"READER1_ON_TAG_REMOVED 11223344", timeout=15)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.UID_A_DASH}", timeout=15)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.UID_B_DASH}", timeout=15)
 
 
 class TestNoSpuriousRetrigger:
@@ -210,14 +222,14 @@ class TestNoSpuriousRetrigger:
         with proc._lock:
             proc.log_lines.clear()
         ctrl1.add_tag(UID4)
-        proc.wait_for(r"READER1_ON_TAG DEA30D00", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG {UID4_DASH}", timeout=10)
         time.sleep(3)
         with proc._lock:
             count = sum(1 for l in proc.log_lines
-                        if "READER1_ON_TAG DEA30D00" in l and "REMOVED" not in l)
+                        if f"READER1_ON_TAG {UID4_DASH}" in l and "REMOVED" not in l)
         assert count == 1, f"Expected 1 on_tag, got {count}"
         ctrl1.remove_tag(UID4)
-        proc.wait_for(r"READER1_ON_TAG_REMOVED DEA30D00", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {UID4_DASH}", timeout=10)
 
 
 class TestMifareFullAuth:
@@ -230,6 +242,7 @@ class TestMifareFullAuth:
     """
 
     UID_MFC = "CAFEBABE"
+    UID_MFC_DASH = dashed(UID_MFC)
 
     def test_mifare_auth_succeeds(self, sim):
         proc, ctrl1, ctrl2 = sim
@@ -237,7 +250,7 @@ class TestMifareFullAuth:
             proc.log_lines.clear()
         ctrl1.add_tag(self.UID_MFC, tag_type="MIFARE_1K")
         # on_tag must fire
-        proc.wait_for(r"READER1_ON_TAG CAFEBABE", timeout=12)
+        proc.wait_for(rf"READER1_ON_TAG {self.UID_MFC_DASH}", timeout=12)
         # Firmware must log successful auth (not a timeout / wrong-key failure)
         proc.wait_for(r"Mifare auth OK", timeout=5)
 
@@ -246,7 +259,7 @@ class TestMifareFullAuth:
         with proc._lock:
             proc.log_lines.clear()
         ctrl1.remove_tag(self.UID_MFC)
-        proc.wait_for(r"READER1_ON_TAG_REMOVED CAFEBABE", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.UID_MFC_DASH}", timeout=10)
 
 
 class TestMifareNdef:
@@ -258,6 +271,7 @@ class TestMifareNdef:
     """
 
     UID_MFC_NDEF = "BEEFCAFE"
+    UID_MFC_NDEF_DASH = dashed(UID_MFC_NDEF)
 
     def test_mifare_ndef_read(self, sim):
         proc, ctrl1, ctrl2 = sim
@@ -268,13 +282,13 @@ class TestMifareNdef:
             tag_type="MIFARE_1K",
             ndef=NDEF_TEXT_HI,
         )
-        proc.wait_for(r"READER1_ON_TAG BEEFCAFE", timeout=12)
+        proc.wait_for(rf"READER1_ON_TAG {self.UID_MFC_NDEF_DASH}", timeout=12)
         # Auth must succeed before block read
         proc.wait_for(r"Mifare auth OK", timeout=5)
         # Firmware logs successful NDEF or block read (depending on log level)
         # At minimum, on_tag must have fired without a crash
         ctrl1.remove_tag(self.UID_MFC_NDEF)
-        proc.wait_for(r"READER1_ON_TAG_REMOVED BEEFCAFE", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.UID_MFC_NDEF_DASH}", timeout=10)
 
 
 class TestNtagNdef:
@@ -283,14 +297,15 @@ class TestNtagNdef:
     """
 
     UID_NTAG = "04AABBCC112233"
+    UID_NTAG_DASH = dashed(UID_NTAG)
 
     def test_ntag_ndef_detected(self, sim):
         proc, ctrl1, ctrl2 = sim
         with proc._lock:
             proc.log_lines.clear()
         ctrl1.add_tag(self.UID_NTAG, tag_type="NTAG213", ndef=NDEF_TEXT_HI)
-        line = proc.wait_for(r"READER1_ON_TAG 04AABBCC112233", timeout=12)
-        assert "04AABBCC112233" in line
+        line = proc.wait_for(rf"READER1_ON_TAG {self.UID_NTAG_DASH}", timeout=12)
+        assert self.UID_NTAG_DASH in line
 
     def test_ntag_ndef_firmware_finds_message(self, sim):
         proc, ctrl1, ctrl2 = sim
@@ -306,7 +321,7 @@ class TestNtagNdef:
         with proc._lock:
             proc.log_lines.clear()
         ctrl1.remove_tag(self.UID_NTAG)
-        proc.wait_for(r"READER1_ON_TAG_REMOVED 04AABBCC112233", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.UID_NTAG_DASH}", timeout=10)
 
 
 class TestMultipleReaders:
@@ -317,20 +332,22 @@ class TestMultipleReaders:
 
     UID_R1 = "AA112233"
     UID_R2 = "BB445566"
+    UID_R1_DASH = dashed(UID_R1)
+    UID_R2_DASH = dashed(UID_R2)
 
     def test_reader1_sees_its_tag(self, sim):
         proc, ctrl1, ctrl2 = sim
         with proc._lock:
             proc.log_lines.clear()
         ctrl1.add_tag(self.UID_R1)
-        proc.wait_for(r"READER1_ON_TAG AA112233", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG {self.UID_R1_DASH}", timeout=10)
 
     def test_reader2_sees_its_tag(self, sim):
         proc, ctrl1, ctrl2 = sim
         with proc._lock:
             proc.log_lines.clear()
         ctrl2.add_tag(self.UID_R2)
-        proc.wait_for(r"READER2_ON_TAG BB445566", timeout=10)
+        proc.wait_for(rf"READER2_ON_TAG {self.UID_R2_DASH}", timeout=10)
 
     def test_reader1_does_not_see_reader2_tag(self, sim):
         proc, ctrl1, ctrl2 = sim
@@ -340,7 +357,7 @@ class TestMultipleReaders:
         time.sleep(2)
         with proc._lock:
             for line in proc.log_lines:
-                assert "READER1_ON_TAG BB445566" not in line, \
+                assert f"READER1_ON_TAG {self.UID_R2_DASH}" not in line, \
                     f"Reader 1 incorrectly saw Reader 2 tag: {line}"
 
     def test_reader2_does_not_see_reader1_tag(self, sim):
@@ -350,7 +367,7 @@ class TestMultipleReaders:
         time.sleep(2)
         with proc._lock:
             for line in proc.log_lines:
-                assert "READER2_ON_TAG AA112233" not in line, \
+                assert f"READER2_ON_TAG {self.UID_R1_DASH}" not in line, \
                     f"Reader 2 incorrectly saw Reader 1 tag: {line}"
 
     def test_cleanup(self, sim):
@@ -359,8 +376,8 @@ class TestMultipleReaders:
             proc.log_lines.clear()
         ctrl1.remove_tag(self.UID_R1)
         ctrl2.remove_tag(self.UID_R2)
-        proc.wait_for(r"READER1_ON_TAG_REMOVED AA112233", timeout=10)
-        proc.wait_for(r"READER2_ON_TAG_REMOVED BB445566", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.UID_R1_DASH}", timeout=10)
+        proc.wait_for(rf"READER2_ON_TAG_REMOVED {self.UID_R2_DASH}", timeout=10)
 
 
 # ── NDEF record helpers ────────────────────────────────────────────────────
@@ -377,6 +394,7 @@ class TestBinarySensor:
     """
 
     UID_BS = "FF112233"
+    UID_BS_DASH = dashed(UID_BS)
 
     def test_binary_sensor_true_when_present(self, sim):
         proc, ctrl1, ctrl2 = sim
@@ -384,7 +402,7 @@ class TestBinarySensor:
             proc.log_lines.clear()
         ctrl1.add_tag(self.UID_BS)
         # Wait for on_tag then binary sensor state=1
-        proc.wait_for(r"READER1_ON_TAG FF112233", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG {self.UID_BS_DASH}", timeout=10)
         proc.wait_for(r"BINARY_SENSOR_STATE 1", timeout=5)
 
     def test_binary_sensor_false_when_absent(self, sim):
@@ -392,7 +410,7 @@ class TestBinarySensor:
         with proc._lock:
             proc.log_lines.clear()
         ctrl1.remove_tag(self.UID_BS)
-        proc.wait_for(r"READER1_ON_TAG_REMOVED FF112233", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.UID_BS_DASH}", timeout=10)
         proc.wait_for(r"BINARY_SENSOR_STATE 0", timeout=5)
 
 
@@ -403,13 +421,14 @@ class TestNdefWrite:
     """
 
     UID_WRITE = "CCDDEE11223344"  # 7-byte NTAG; triggers clean_tag in on_tag
+    UID_WRITE_DASH = dashed(UID_WRITE)
 
     def test_ndef_write_succeeds(self, sim):
         proc, ctrl1, ctrl2 = sim
         with proc._lock:
             proc.log_lines.clear()
         ctrl1.add_tag(self.UID_WRITE, tag_type="NTAG213")
-        proc.wait_for(r"READER1_ON_TAG CCDDEE11223344", timeout=12)
+        proc.wait_for(rf"READER1_ON_TAG {self.UID_WRITE_DASH}", timeout=12)
         proc.wait_for(r"READER1_CLEAN_TAG_OK", timeout=5)
 
     def test_ndef_write_tag_removed(self, sim):
@@ -417,7 +436,7 @@ class TestNdefWrite:
         with proc._lock:
             proc.log_lines.clear()
         ctrl1.remove_tag(self.UID_WRITE)
-        proc.wait_for(r"READER1_ON_TAG_REMOVED CCDDEE11223344", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.UID_WRITE_DASH}", timeout=10)
 
 
 class TestNtagMultiPage:
@@ -429,13 +448,14 @@ class TestNtagMultiPage:
     """
 
     UID_MULTI = "04AABBCCDDEEFF"
+    UID_MULTI_DASH = dashed(UID_MULTI)
 
     def test_multi_page_ndef_detected(self, sim):
         proc, ctrl1, ctrl2 = sim
         with proc._lock:
             proc.log_lines.clear()
         ctrl1.add_tag(self.UID_MULTI, tag_type="NTAG213", ndef=NDEF_TEXT_LONG)
-        proc.wait_for(r"READER1_ON_TAG 04AABBCCDDEEFF", timeout=12)
+        proc.wait_for(rf"READER1_ON_TAG {self.UID_MULTI_DASH}", timeout=12)
 
     def test_multi_page_ndef_message_read(self, sim):
         proc, ctrl1, ctrl2 = sim
@@ -446,7 +466,7 @@ class TestNtagMultiPage:
         with proc._lock:
             proc.log_lines.clear()
         ctrl1.remove_tag(self.UID_MULTI)
-        proc.wait_for(r"READER1_ON_TAG_REMOVED 04AABBCCDDEEFF", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.UID_MULTI_DASH}", timeout=10)
 
 
 def _make_text_ndef(text: str) -> str:
@@ -475,6 +495,7 @@ class TestLargeNdefSingleByteTlv:
     """
 
     UID = "04112233445566"
+    UID_DASH = dashed(UID)
     NDEF = _make_text_ndef("A" * 91)  # payload=94, record=98 bytes, TLV len=0x62
 
     def test_large_ndef_single_byte_tlv_detected(self, sim):
@@ -482,7 +503,7 @@ class TestLargeNdefSingleByteTlv:
         with proc._lock:
             proc.log_lines.clear()
         ctrl1.add_tag(self.UID, tag_type="NTAG213", ndef=self.NDEF)
-        proc.wait_for(r"READER1_ON_TAG 04112233445566", timeout=12)
+        proc.wait_for(rf"READER1_ON_TAG {self.UID_DASH}", timeout=12)
 
     def test_large_ndef_single_byte_tlv_message_read(self, sim):
         proc, ctrl1, ctrl2 = sim
@@ -493,7 +514,7 @@ class TestLargeNdefSingleByteTlv:
         with proc._lock:
             proc.log_lines.clear()
         ctrl1.remove_tag(self.UID)
-        proc.wait_for(r"READER1_ON_TAG_REMOVED 04112233445566", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.UID_DASH}", timeout=10)
 
 
 class TestLargeNdefThreeByteTlv:
@@ -505,6 +526,7 @@ class TestLargeNdefThreeByteTlv:
     """
 
     UID = "04AABBCCDDEEFF"
+    UID_DASH = dashed(UID)
     NDEF = _make_text_ndef("B" * 276)  # payload=279, record=286 bytes, TLV 3-byte len
 
     def test_large_ndef_three_byte_tlv_detected(self, sim):
@@ -512,7 +534,7 @@ class TestLargeNdefThreeByteTlv:
         with proc._lock:
             proc.log_lines.clear()
         ctrl1.add_tag(self.UID, tag_type="NTAG216", ndef=self.NDEF)
-        proc.wait_for(r"READER1_ON_TAG 04AABBCCDDEEFF", timeout=12)
+        proc.wait_for(rf"READER1_ON_TAG {self.UID_DASH}", timeout=12)
 
     def test_large_ndef_three_byte_tlv_message_read(self, sim):
         proc, ctrl1, ctrl2 = sim
@@ -523,7 +545,7 @@ class TestLargeNdefThreeByteTlv:
         with proc._lock:
             proc.log_lines.clear()
         ctrl1.remove_tag(self.UID)
-        proc.wait_for(r"READER1_ON_TAG_REMOVED 04AABBCCDDEEFF", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.UID_DASH}", timeout=10)
 
 
 class TestOnTagActionChain:
@@ -538,22 +560,23 @@ class TestOnTagActionChain:
     """
 
     UID = "DEADBEEF"
+    UID_DASH = dashed(UID)
 
     def test_on_tag_lambda_and_action_both_fire(self, sim):
         proc, ctrl1, ctrl2 = sim
         with proc._lock:
             proc.log_lines.clear()
         ctrl1.add_tag(self.UID)
-        proc.wait_for(r"READER1_ON_TAG DEADBEEF", timeout=10)
-        proc.wait_for(r"READER1_ON_TAG_ACTION DEADBEEF", timeout=5)
+        proc.wait_for(rf"READER1_ON_TAG {self.UID_DASH}", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG_ACTION {self.UID_DASH}", timeout=5)
 
     def test_on_tag_removed_lambda_and_action_both_fire(self, sim):
         proc, ctrl1, ctrl2 = sim
         with proc._lock:
             proc.log_lines.clear()
         ctrl1.remove_tag(self.UID)
-        proc.wait_for(r"READER1_ON_TAG_REMOVED DEADBEEF", timeout=10)
-        proc.wait_for(r"READER1_ON_TAG_REMOVED_ACTION DEADBEEF", timeout=5)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.UID_DASH}", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED_ACTION {self.UID_DASH}", timeout=5)
 
 
 class TestMissThreshold:
@@ -572,6 +595,7 @@ class TestMissThreshold:
     """
 
     UID = "CAFEF00D"
+    UID_DASH = dashed(UID)
     UPDATE_MS = 500
     THRESHOLD = 3
 
@@ -581,7 +605,7 @@ class TestMissThreshold:
         with proc._lock:
             proc.log_lines.clear()
         ctrl1.add_tag(self.UID)
-        proc.wait_for(rf"READER1_ON_TAG {self.UID}", timeout=5)
+        proc.wait_for(rf"READER1_ON_TAG {self.UID_DASH}", timeout=5)
 
         # Remove the tag — removal must NOT fire before threshold misses
         with proc._lock:
@@ -595,13 +619,13 @@ class TestMissThreshold:
         time.sleep(too_soon_ms / 1000)
         with proc._lock:
             for line in proc.log_lines:
-                assert rf"READER1_ON_TAG_REMOVED {self.UID}" not in line, (
+                assert f"READER1_ON_TAG_REMOVED {self.UID_DASH}" not in line, (
                     f"on_tag_removed fired within {too_soon_ms}ms of remove — "
                     f"expected at least {self.THRESHOLD} missed scans first"
                 )
 
         # Now it must fire within the next 3 scan cycles (generous window)
-        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.UID}", timeout=3.0)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.UID_DASH}", timeout=3.0)
 
 
 class TestDetectionLatency:
@@ -623,6 +647,7 @@ class TestDetectionLatency:
     """
 
     UID = "DEADBABE"
+    UID_DASH = dashed(UID)
     MAX_DETECTION_MS = 1500   # worst-case: tag appears just after a scan completes
     MAX_REMOVAL_MS   = 2000   # 3 misses × ~500ms + Python wait_for polling jitter
 
@@ -632,7 +657,7 @@ class TestDetectionLatency:
             proc.log_lines.clear()
         t0 = time.time()
         ctrl1.add_tag(self.UID)
-        proc.wait_for(rf"READER1_ON_TAG {self.UID}", timeout=(self.MAX_DETECTION_MS + 500) / 1000)
+        proc.wait_for(rf"READER1_ON_TAG {self.UID_DASH}", timeout=(self.MAX_DETECTION_MS + 500) / 1000)
         elapsed_ms = (time.time() - t0) * 1000
         assert elapsed_ms <= self.MAX_DETECTION_MS, (
             f"Tag detection took {elapsed_ms:.0f}ms, exceeds {self.MAX_DETECTION_MS}ms budget"
@@ -644,7 +669,7 @@ class TestDetectionLatency:
             proc.log_lines.clear()
         t0 = time.time()
         ctrl1.remove_tag(self.UID)
-        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.UID}", timeout=(self.MAX_REMOVAL_MS + 500) / 1000)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.UID_DASH}", timeout=(self.MAX_REMOVAL_MS + 500) / 1000)
         elapsed_ms = (time.time() - t0) * 1000
         assert elapsed_ms <= self.MAX_REMOVAL_MS, (
             f"Tag removal took {elapsed_ms:.0f}ms, exceeds {self.MAX_REMOVAL_MS}ms budget"
@@ -838,7 +863,8 @@ class TestNfcvTagDetection:
     in Manchester format for the firmware to decode.
     """
 
-    NFCV_UID = "E00208024FEFE7E1"  # 8-byte ISO 15693 UID
+    NFCV_UID = "E00208024FEFE7E1"  # 8-byte ISO 15693 UID, continuous (sim socket)
+    NFCV_UID_DASH = dashed(NFCV_UID)
 
     def test_nfcv_tag_detected_and_trigger_fires(self, sim):
         """ISO 15693 tag detected via NFC-V inventory; on_tag trigger fires."""
@@ -846,8 +872,8 @@ class TestNfcvTagDetection:
         with proc._lock:
             proc.log_lines.clear()
         ctrl1.add_tag(self.NFCV_UID, tag_type="ISO15693")
-        proc.wait_for(rf"NFC-V tag: {self.NFCV_UID}", timeout=10)
-        proc.wait_for(rf"READER1_ON_TAG {self.NFCV_UID}", timeout=5)
+        proc.wait_for(rf"NFC-V tag: {self.NFCV_UID_DASH}", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG {self.NFCV_UID_DASH}", timeout=5)
 
     def test_nfcv_tag_removed(self, sim):
         """Removing an NFC-V tag fires on_tag_removed."""
@@ -855,7 +881,7 @@ class TestNfcvTagDetection:
         with proc._lock:
             proc.log_lines.clear()
         ctrl1.remove_tag(self.NFCV_UID)
-        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.NFCV_UID}", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.NFCV_UID_DASH}", timeout=10)
 
     def test_nfcv_no_tag_no_crash(self, sim):
         """NFC-V inventory with no ISO15693 tags doesn't crash or stall."""
@@ -873,6 +899,8 @@ class TestNfcvDualProtocol:
 
     NFCV_UID = "A0B1C2D3E4F50607"
     NFCA_UID = "CCDD0011"
+    NFCV_UID_DASH = dashed(NFCV_UID)
+    NFCA_UID_DASH = dashed(NFCA_UID)
 
     def test_both_protocols_detected(self, sim):
         """NFC-A + NFC-V tags are both detected in the same scan cycle."""
@@ -882,8 +910,8 @@ class TestNfcvDualProtocol:
         ctrl1.add_tag(self.NFCA_UID)
         ctrl1.add_tag(self.NFCV_UID, tag_type="ISO15693")
         # Both should fire on_tag triggers
-        proc.wait_for(rf"READER1_ON_TAG {self.NFCA_UID}", timeout=10)
-        proc.wait_for(rf"READER1_ON_TAG {self.NFCV_UID}", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG {self.NFCA_UID_DASH}", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG {self.NFCV_UID_DASH}", timeout=10)
 
     def test_cleanup_dual(self, sim):
         """Remove tags for subsequent tests."""
@@ -892,8 +920,8 @@ class TestNfcvDualProtocol:
             proc.log_lines.clear()
         ctrl1.remove_tag(self.NFCA_UID)
         ctrl1.remove_tag(self.NFCV_UID)
-        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.NFCA_UID}", timeout=10)
-        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.NFCV_UID}", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.NFCA_UID_DASH}", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.NFCV_UID_DASH}", timeout=10)
 
 
 class TestChipInitRegisters:
@@ -1018,10 +1046,11 @@ class TestAatTuning:
         with proc._lock:
             proc.log_lines.clear()
         uid = "AABBCCDD"
+        uid_dash = dashed(uid)
         ctrl1.add_tag(uid)
-        proc.wait_for(rf"READER1_ON_TAG {uid}", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG {uid_dash}", timeout=10)
         ctrl1.remove_tag(uid)
-        proc.wait_for(rf"READER1_ON_TAG_REMOVED {uid}", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {uid_dash}", timeout=10)
 
 
 class TestHealthCheck:
@@ -1184,7 +1213,8 @@ class TestWupaIrqCleanup:
         with proc._lock:
             proc.log_lines.clear()
         uid = "AABBCCDD"
+        uid_dash = dashed(uid)
         ctrl1.add_tag(uid)
-        proc.wait_for(rf"READER1_ON_TAG {uid}", timeout=5)
+        proc.wait_for(rf"READER1_ON_TAG {uid_dash}", timeout=5)
         ctrl1.remove_tag(uid)
-        proc.wait_for(rf"READER1_ON_TAG_REMOVED {uid}", timeout=5)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {uid_dash}", timeout=5)

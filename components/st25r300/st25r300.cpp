@@ -4,6 +4,7 @@
 #include "esphome/components/nfc/nfc_tag.h"
 #include "esphome/components/nfc/nfc_helpers.h"
 #include <algorithm>
+#include <array>
 #include <cstring>
 
 namespace esphome {
@@ -705,11 +706,11 @@ void ST25R300::nfcv_scan_() {
       resp_len >= 10 && !(resp[0] & 0x01)) {
 
     // UID is bytes 2-9, transmitted LSB-first — reverse for display
-    char uid_str[17];
-    for (int j = 0; j < 8; j++) {
-      snprintf(uid_str + j * 2, 3, "%02X", resp[9 - j]);  // reverse: resp[9]..resp[2]
-    }
-    uid_str[16] = '\0';
+    std::array<uint8_t, 8> nfcv_uid;
+    for (int j = 0; j < 8; j++)
+      nfcv_uid[j] = resp[9 - j];  // reverse: resp[9]..resp[2]
+    char uid_str[nfc::FORMAT_UID_BUFFER_SIZE];
+    nfc::format_uid_to(uid_str, nfcv_uid);
     ESP_LOGI(TAG, "NFC-V tag: %s (DSFID=0x%02X)", uid_str, resp[1]);
 
     // Add to tags_this_scan_ — finalize_scan_() handles on_tag_removed
@@ -877,8 +878,9 @@ void ST25R300::nfcb_scan_() {
   if (this->transceive_blocking_(sensb_req, sizeof(sensb_req), resp, resp_len, 20) &&
       resp_len >= 12 && resp[0] == 0x50) {
     // ATQB: uint8_t 0 = 0x50, bytes 1-4 = PUPI
-    char uid_str[9];
-    snprintf(uid_str, sizeof(uid_str), "%02X%02X%02X%02X", resp[1], resp[2], resp[3], resp[4]);
+    std::array<uint8_t, 4> pupi{resp[1], resp[2], resp[3], resp[4]};
+    char uid_str[nfc::FORMAT_UID_BUFFER_SIZE];
+    nfc::format_uid_to(uid_str, pupi);
     ESP_LOGI(TAG, "NFC-B tag: %s (ATQB len=%u)", uid_str, resp_len);
 
     std::string uid_string(uid_str);

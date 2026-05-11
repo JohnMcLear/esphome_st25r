@@ -291,7 +291,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   State state_{STATE_IDLE};
   uint32_t last_state_change_{0};
   uint8_t cascade_level_{0};
-  std::string current_uid_;
+  std::vector<uint8_t> current_uid_bytes_;
   uint8_t last_sak_{0};  // SAK from most recent SELECT (bit5=0x20 → ISO-DEP capable)
 
   // Anticollision loop state

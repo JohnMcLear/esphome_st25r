@@ -4,6 +4,7 @@
 #include "esphome/core/helpers.h"
 #include "esphome/components/nfc/nfc_tag.h"
 #include "esphome/components/nfc/nfc_helpers.h"
+#include <array>
 #include <cinttypes>
 #include <algorithm>
 #include <cstring>
@@ -648,7 +649,7 @@ void ST25R::process_state() {
     case STATE_WUPA: {
       if (this->irq_status_ & (IRQ_RXE | IRQ_COL)) {
           this->cascade_level_ = 0;
-          this->current_uid_ = "";
+          this->current_uid_bytes_.clear();
           if (!this->anticol_resume_) {
             // Fresh scan: start anticol from beginning
             this->anticol_prefix_full_ = 0;
@@ -753,15 +754,11 @@ void ST25R::process_state() {
                                full_uid[0], full_uid[1], full_uid[2], full_uid[3], bcc};
 
           if (full_uid[0] == 0x88) {
-            for (int i = 1; i < 4; i++) {
-              char buf[3]; snprintf(buf, sizeof(buf), "%02X", full_uid[i]); this->current_uid_ += buf;
-            }
+            for (int i = 1; i < 4; i++)
+              this->current_uid_bytes_.push_back(full_uid[i]);
           } else {
-            for (unsigned char i : full_uid) {
-              char buf[3];
-              snprintf(buf, sizeof(buf), "%02X", i);
-              this->current_uid_ += buf;
-            }
+            for (unsigned char b : full_uid)
+              this->current_uid_bytes_.push_back(b);
           }
 
           // Clear anticollision mode before SELECT (ST25R3916: ISO14443A_CONF=0x00;
@@ -801,26 +798,27 @@ void ST25R::process_state() {
             this->state_ = STATE_ANTICOL;
             this->last_state_change_ = millis();
           } else {
-            // Tag fully selected — validate UID length (must be 4 or 7 bytes; 3-byte = CL1 glitch)
-            size_t uid_bytes_len = this->current_uid_.length() / 2;
+            // Tag fully selected — validate UID length (must be 4, 7, or 10 bytes)
+            size_t uid_bytes_len = this->current_uid_bytes_.size();
+            char uid_buf[nfc::FORMAT_UID_BUFFER_SIZE];
+            nfc::format_uid_to(uid_buf, this->current_uid_bytes_);
             if (uid_bytes_len != 4 && uid_bytes_len != 7 && uid_bytes_len != 10) {
-              ESP_LOGW(TAG, "Discarding invalid UID len=%zu (%s)", uid_bytes_len, this->current_uid_.c_str());
+              ESP_LOGW(TAG, "Discarding invalid UID len=%zu (%s)", uid_bytes_len, uid_buf);
               this->state_ = STATE_IDLE;
               this->finalize_scan_();
               return;
             }
 
-            ESP_LOGI(TAG, "Tag selected: %s", this->current_uid_.c_str());
+            ESP_LOGI(TAG, "Tag selected: %s", uid_buf);
+
+            std::string uid_key(uid_buf);
 
             // Read tag data on first detection only (auth + NDEF read if Mifare)
-            if (!this->present_tags_.count(this->current_uid_)) {
-              std::vector<uint8_t> uid_bytes;
-              for (size_t i = 0; i < this->current_uid_.length(); i += 2)  // NOLINT(modernize-loop-convert)
-                uid_bytes.push_back((uint8_t) strtol(this->current_uid_.substr(i, 2).c_str(), nullptr, 16));
-              this->tags_data_[this->current_uid_] = this->read_tag(uid_bytes);
+            if (!this->present_tags_.count(uid_key)) {
+              this->tags_data_[uid_key] = this->read_tag(this->current_uid_bytes_);
             }
 
-            this->tags_this_scan_.insert(this->current_uid_);
+            this->tags_this_scan_.insert(uid_key);
 
             // HALT: send [0x50, 0x00] + CRC via chip-specific send_halt()
             this->send_halt();
@@ -845,7 +843,7 @@ void ST25R::process_state() {
             if (can_resume) {
               // Advance to the next branch in the collision tree
               this->cascade_level_ = 0;
-              this->current_uid_ = "";
+              this->current_uid_bytes_.clear();
               this->anticol_col_pos_ = resume_col_pos;
               this->anticol_prefix_val_ = resume_prefix_val + 1;
               this->apply_anticol_prefix_();
@@ -904,8 +902,9 @@ void ST25R::finalize_scan_() {
   for (const auto &uid : to_remove) {
     ESP_LOGI(TAG, "Tag Removed: %s", uid.c_str());
 
+    // Dash-formatted: "XX-XX-..." → step by 3 (2 hex digits + 1 separator)
     std::vector<uint8_t> uid_bytes;
-    for (size_t i = 0; i < uid.length(); i += 2) {
+    for (size_t i = 0; i < uid.length(); i += 3) {
       uid_bytes.push_back((uint8_t) strtol(uid.substr(i, 2).c_str(), nullptr, 16));
     }
     nfc::NfcTagUid nfc_uid(uid_bytes.begin(), uid_bytes.end());
@@ -1545,8 +1544,9 @@ void ST25R::nfcb_scan_() {
   if (resp_len < 12 || resp[0] != 0x50) return;
 
   // Parse ATQB: octet 0 = 0x50, octets 1-4 = PUPI
-  char uid_str[9];
-  snprintf(uid_str, sizeof(uid_str), "%02X%02X%02X%02X", resp[1], resp[2], resp[3], resp[4]);
+  std::array<uint8_t, 4> pupi{resp[1], resp[2], resp[3], resp[4]};
+  char uid_str[nfc::FORMAT_UID_BUFFER_SIZE];
+  nfc::format_uid_to(uid_str, pupi);
   ESP_LOGI(TAG, "NFC-B tag: %s (ATQB len=%u)", uid_str, resp_len);
 
   std::string uid_string(uid_str);
@@ -1765,10 +1765,11 @@ void ST25R::nfcv_scan_() {
   if (this->transceive_nfcv_stream_(inv_req, sizeof(inv_req), resp, resp_len, 30)) {
     if (resp_len >= 10 && !(resp[0] & 0x01)) {
       // Parse UID (bytes 2-9, LSB-first → reverse for display)
-      char uid_str[17];
+      std::array<uint8_t, 8> nfcv_uid;
       for (int j = 0; j < 8; j++)
-        snprintf(uid_str + j * 2, 3, "%02X", resp[9 - j]);
-      uid_str[16] = '\0';
+        nfcv_uid[j] = resp[9 - j];
+      char uid_str[nfc::FORMAT_UID_BUFFER_SIZE];
+      nfc::format_uid_to(uid_str, nfcv_uid);
       ESP_LOGI(TAG, "NFC-V tag: %s (DSFID=0x%02X)", uid_str, resp[1]);
 
       // Add to tags_this_scan_ — finalize_scan_() handles on_tag/on_tag_removed
@@ -1851,10 +1852,10 @@ void ST25R::nfcv_scan_() {
 }
 
 bool ST25R::ndef_write(nfc::NdefMessage *message, bool format) {
-  // Route to NFC-V write path if a single NFC-V tag is present (16 hex chars = 8-octet UID)
+  // Route to NFC-V write path if a single NFC-V tag is present (8-byte UID → dash-form length 23)
   if (this->present_tags_.size() == 1) {
     const std::string &uid = this->present_tags_.begin()->first;
-    if (uid.length() == 16) {
+    if (uid.length() == 23) {  // 8 bytes * 3 - 1 = 23
       return this->nfcv_ndef_write(message);
     }
   } else if (this->present_tags_.size() > 1) {
@@ -2044,13 +2045,9 @@ void ST25R::dump_config() {
 }
 
 bool ST25RBinarySensor::process(const std::string &uid) {
-  std::string target_uid = "";
-  for (uint8_t b : this->uid_) {
-    char buf[3];
-    snprintf(buf, sizeof(buf), "%02X", b);
-    target_uid += buf;
-  }
-  if (uid == target_uid) {
+  char target_buf[nfc::FORMAT_UID_BUFFER_SIZE];
+  nfc::format_uid_to(target_buf, this->uid_);
+  if (uid == target_buf) {
     this->publish_state(true);
     this->found_ = true;
     return true;
