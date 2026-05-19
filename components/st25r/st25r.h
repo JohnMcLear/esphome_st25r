@@ -189,20 +189,6 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
 
   void register_on_tag_trigger(ST25RTagTrigger *trig) { this->on_tag_triggers_.push_back(trig); }
 
-  /// Fire the on_tag trigger pipeline from an application component
-  /// (e.g. yondoor_unlock) with a synthesised UID. Used when HCE auth has
-  /// resolved a real identity that we want HA's existing trusted-tags
-  /// allowlist to see — the random anticollision UID of a phone is useless
-  /// for that, but a synthetic UID derived from the matching paired
-  /// credential is stable per pairing and HA-compatible.
-  void fire_on_tag_trigger_external(const std::string &uid_str) {
-    for (auto *trig : this->on_tag_triggers_) trig->trigger(uid_str);
-  }
-
-  /// True if at least one on_isodep_tag trigger is registered. Used by
-  /// finalize_scan_ to suppress the default on_tag fire for ISO-DEP tags
-  /// when an application component will handle it.
-  bool has_isodep_handlers() const { return !this->on_isodep_tag_triggers_.empty(); }
   void register_on_tag_removed_trigger(ST25RTagRemovedTrigger *trig) {
     this->on_tag_removed_triggers_.push_back(trig);
   }

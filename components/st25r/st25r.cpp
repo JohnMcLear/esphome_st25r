@@ -945,20 +945,8 @@ void ST25R::finalize_scan_() {
   }
 
   // Fire on_tag for newly seen UIDs.
-  // ISO-DEP tags (HCE phones) deliberately bypass this default firing: their
-  // anticollision UIDs are randomised per-tap by Android and are useless for
-  // HA's trusted-tags allowlist. The on_isodep_tag handler (yondoor_unlock)
-  // runs HCE auth and on success fires on_tag itself with a synthetic UID
-  // derived from the matching paired credential. That synthetic UID is
-  // stable per pairing and HA-compatible. Passive tags fire on_tag as before.
-  bool suppress_for_isodep = (this->last_sak_ & 0x20) && !this->on_isodep_tag_triggers_.empty();
   for (const auto &uid : this->tags_this_scan_) {
     if (!this->present_tags_.count(uid)) {
-      if (suppress_for_isodep) {
-        ESP_LOGD(TAG, "finalize_scan_: NEW ISO-DEP tag %s — suppressing on_tag fire (HCE app will fire with synthetic UID after auth)", uid.c_str());
-        this->present_tags_[uid] = 0;
-        continue;
-      }
       ESP_LOGD(TAG, "finalize_scan_: NEW tag %s, firing %zu on_tag triggers", uid.c_str(), this->on_tag_triggers_.size());
       this->present_tags_[uid] = 0;
       for (auto *trigger : this->on_tag_triggers_) {
