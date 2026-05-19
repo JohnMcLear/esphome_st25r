@@ -56,6 +56,11 @@ ST25RTagTrigger = st25r_ns.class_(
 ST25RTagRemovedTrigger = st25r_ns.class_(
     "ST25RTagRemovedTrigger", automation.Trigger.template(cg.std_string)
 )
+ST25RIsodepTagTrigger = st25r_ns.class_(
+    "ST25RIsodepTagTrigger", automation.Trigger.template(cg.std_string)
+)
+
+CONF_ON_ISODEP_TAG = "on_isodep_tag"
 
 NDEFWriteAction = st25r_ns.class_("NDEFWriteAction", automation.Action)
 CleanTagAction = st25r_ns.class_("CleanTagAction", automation.Action)
@@ -91,6 +96,11 @@ ST25R_SCHEMA = cv.Schema(
         cv.Optional(CONF_ON_TAG_REMOVED): automation.validate_automation(
             {
                 cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(ST25RTagRemovedTrigger),
+            }
+        ),
+        cv.Optional(CONF_ON_ISODEP_TAG): automation.validate_automation(
+            {
+                cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(ST25RIsodepTagTrigger),
             }
         ),
     }
@@ -143,6 +153,13 @@ async def setup_st25r(var, config):
     for conf in config.get(CONF_ON_TAG_REMOVED, []):
         trigger = cg.new_Pvariable(conf[CONF_TRIGGER_ID], var)
         cg.add(var.register_on_tag_removed_trigger(trigger))
+        await automation.build_automation(
+            trigger, [(cg.std_string, "x")], conf
+        )
+
+    for conf in config.get(CONF_ON_ISODEP_TAG, []):
+        trigger = cg.new_Pvariable(conf[CONF_TRIGGER_ID], var)
+        cg.add(var.register_on_isodep_tag_trigger(trigger))
         await automation.build_automation(
             trigger, [(cg.std_string, "x")], conf
         )

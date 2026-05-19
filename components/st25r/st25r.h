@@ -99,6 +99,28 @@ class ST25RTagRemovedTrigger : public Trigger<std::string> {
   ST25R *parent_;
 };
 
+/**
+ * Fires after ISO-DEP activation (RATS) succeeds but BEFORE the default
+ * Type 4 NDEF read chain runs. Use this from an application-layer
+ * component (e.g. yondoor_unlock) to perform a custom AID + APDU
+ * exchange while the tag is still field-coupled and the ISO-DEP block
+ * number is in a known-good state.
+ *
+ * Argument: dash-separated hex UID, same format as on_tag.
+ *
+ * Lambdas called from this trigger may invoke ST25R::send_apdu().
+ * After all triggers have run, the default NDEF read chain proceeds,
+ * which will likely fail (and return cleanly) against a phone HCE
+ * service that doesn't handle the NDEF App AID.
+ */
+class ST25RIsodepTagTrigger : public Trigger<std::string> {
+ public:
+  explicit ST25RIsodepTagTrigger(ST25R *parent) : parent_(parent) {}
+
+ protected:
+  ST25R *parent_;
+};
+
 template<typename... Ts> class NDEFWriteAction : public Action<Ts...> {
  public:
   void set_parent(ST25R *parent) { parent_ = parent; }
@@ -166,8 +188,26 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   void set_aat_enabled(bool v) { this->aat_enabled_ = v; }
 
   void register_on_tag_trigger(ST25RTagTrigger *trig) { this->on_tag_triggers_.push_back(trig); }
+
+  /// Fire the on_tag trigger pipeline from an application component
+  /// (e.g. yondoor_unlock) with a synthesised UID. Used when HCE auth has
+  /// resolved a real identity that we want HA's existing trusted-tags
+  /// allowlist to see — the random anticollision UID of a phone is useless
+  /// for that, but a synthetic UID derived from the matching paired
+  /// credential is stable per pairing and HA-compatible.
+  void fire_on_tag_trigger_external(const std::string &uid_str) {
+    for (auto *trig : this->on_tag_triggers_) trig->trigger(uid_str);
+  }
+
+  /// True if at least one on_isodep_tag trigger is registered. Used by
+  /// finalize_scan_ to suppress the default on_tag fire for ISO-DEP tags
+  /// when an application component will handle it.
+  bool has_isodep_handlers() const { return !this->on_isodep_tag_triggers_.empty(); }
   void register_on_tag_removed_trigger(ST25RTagRemovedTrigger *trig) {
     this->on_tag_removed_triggers_.push_back(trig);
+  }
+  void register_on_isodep_tag_trigger(ST25RIsodepTagTrigger *trig) {
+    this->on_isodep_tag_triggers_.push_back(trig);
   }
   void register_tag(ST25RBinarySensor *tag) { this->binary_sensors_.push_back(tag); }
   void set_status_binary_sensor(binary_sensor::BinarySensor *sensor) { this->status_binary_sensor_ = sensor; }
@@ -212,6 +252,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   bool isodep_transceive_(const uint8_t *apdu, size_t apdu_len, uint8_t *resp, uint8_t &resp_len);
   std::unique_ptr<nfc::NfcTag> read_tag_type4_(std::vector<uint8_t> &uid);
   uint8_t isodep_block_number_{0};
+  bool isodep_active_{false};  // true between RATS and DESELECT
 
   // NFC-B (ISO 14443B) support
   void nfcb_scan_();
@@ -309,6 +350,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
 
   std::vector<ST25RTagTrigger *> on_tag_triggers_;
   std::vector<ST25RTagRemovedTrigger *> on_tag_removed_triggers_;
+  std::vector<ST25RIsodepTagTrigger *> on_isodep_tag_triggers_;
   std::vector<ST25RBinarySensor *> binary_sensors_;
   binary_sensor::BinarySensor *status_binary_sensor_{nullptr};
   sensor::Sensor *field_strength_sensor_{nullptr};

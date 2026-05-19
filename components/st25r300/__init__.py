@@ -4,6 +4,10 @@ import esphome.config_validation as cv
 from esphome.components import binary_sensor as binary_sensor_
 from esphome.components import sensor as sensor_
 from esphome.components import st25r as st25r_
+from esphome.components.st25r import (
+    CONF_ON_ISODEP_TAG,
+    ST25RIsodepTagTrigger,
+)
 from esphome.const import (
     CONF_ID,
     CONF_ON_TAG,
@@ -69,6 +73,13 @@ ST25R300_SCHEMA = cv.Schema(
                 cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(ST25R300TagRemovedTrigger),
             }
         ),
+        # Reuse the canonical ST25RIsodepTagTrigger from st25r — register_on_isodep_tag_trigger
+        # on ST25R300 is the inherited base-class method, so the trigger type is shared.
+        cv.Optional(CONF_ON_ISODEP_TAG): automation.validate_automation(
+            {
+                cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(ST25RIsodepTagTrigger),
+            }
+        ),
     }
 ).extend(cv.polling_component_schema("1s"))
 
@@ -112,6 +123,13 @@ async def setup_st25r300(var, config):
     for conf in config.get(CONF_ON_TAG_REMOVED, []):
         trigger = cg.new_Pvariable(conf[CONF_TRIGGER_ID], var)
         cg.add(var.register_on_tag_removed_trigger(trigger))
+        await automation.build_automation(
+            trigger, [(cg.std_string, "x")], conf
+        )
+
+    for conf in config.get(CONF_ON_ISODEP_TAG, []):
+        trigger = cg.new_Pvariable(conf[CONF_TRIGGER_ID], var)
+        cg.add(var.register_on_isodep_tag_trigger(trigger))
         await automation.build_automation(
             trigger, [(cg.std_string, "x")], conf
         )
