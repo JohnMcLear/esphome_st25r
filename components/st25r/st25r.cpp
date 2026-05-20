@@ -1,4 +1,5 @@
 #include "st25r.h"
+#include "isodep_wtx.h"
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/helpers.h"
@@ -451,8 +452,32 @@ std::unique_ptr<nfc::NfcTag> ST25R::read_tag(std::vector<uint8_t> &uid) {
   uint8_t type = nfc::guess_tag_type(uid.size());
   ESP_LOGI(TAG, "read_tag_: UID length=%zu, guessed type=%d, SAK=0x%02X", uid.size(), type, this->last_sak_);
 
-  // ISO-DEP capable (SAK bit 5 set) → try Type 4 NDEF read
+  // ISO-DEP capable (SAK bit 5 set) → activate ISO-DEP, give app-layer triggers a turn,
+  // then try Type 4 NDEF read
   if (this->last_sak_ & 0x20) {
+    // Fire the on_isodep_tag triggers before the NDEF chain so application
+    // components (e.g. yondoor_unlock) get a tag with a fresh block_number.
+    // Trigger lambdas can call send_apdu() directly.
+    if (!this->on_isodep_tag_triggers_.empty()) {
+      char uid_buf[nfc::FORMAT_UID_BUFFER_SIZE];
+      nfc::format_uid_to(uid_buf, uid);
+      std::string uid_str(uid_buf);
+
+      // Activate ISO-DEP up-front so triggers can send APDUs immediately.
+      uint8_t ats[64];
+      uint8_t ats_len = 0;
+      if (this->isodep_activate_(ats, ats_len)) {
+        this->isodep_active_ = true;
+        for (auto *trig : this->on_isodep_tag_triggers_) {
+          trig->trigger(uid_str);
+        }
+        // After triggers, fall through to NDEF chain (which re-uses the
+        // already-activated ISO-DEP link). If a trigger consumed the tag
+        // and the phone HCE service now rejects the NDEF SELECT, read_tag_type4_
+        // will return cleanly.
+      }
+    }
+
     ESP_LOGI(TAG, "ISO-DEP capable tag (SAK & 0x20) — trying Type 4 NDEF");
     return this->read_tag_type4_(uid);
   }
@@ -919,9 +944,19 @@ void ST25R::finalize_scan_() {
     this->present_tags_.erase(uid);
   }
 
-  // Fire on_tag for newly seen UIDs
+  // Fire on_tag for newly seen UIDs.
   for (const auto &uid : this->tags_this_scan_) {
     if (!this->present_tags_.count(uid)) {
+      // ISO-DEP tag suppression — opt-in via YAML flag. Drops Android HCE
+      // anticol-UID spam (4-byte random per tap) from HA tag logs while
+      // keeping passive tag (NTAG/MIFARE/ISO 15693) firing normal. Mark
+      // the tag as present so we still tracks_remove correctly, but skip
+      // the trigger fire and the tag_on listener notify.
+      if (this->suppress_on_tag_for_isodep_ && (this->last_sak_ & 0x20)) {
+        ESP_LOGD(TAG, "finalize_scan_: NEW ISO-DEP tag %s — suppressing on_tag fire (suppress_on_tag_for_isodep=true)", uid.c_str());
+        this->present_tags_[uid] = 0;
+        continue;
+      }
       ESP_LOGD(TAG, "finalize_scan_: NEW tag %s, firing %zu on_tag triggers", uid.c_str(), this->on_tag_triggers_.size());
       this->present_tags_[uid] = 0;
       for (auto *trigger : this->on_tag_triggers_) {
@@ -1351,45 +1386,50 @@ bool ST25R::isodep_activate_(uint8_t *ats, uint8_t &ats_len) {
 }
 
 bool ST25R::isodep_transceive_(const uint8_t *apdu, size_t apdu_len, uint8_t *resp, uint8_t &resp_len) {
-  // Wrap APDU in I-Block: [PCB][APDU...]
-  uint8_t frame[64];
-  if (apdu_len + 1 > sizeof(frame)) return false;
+  // The S(WTX) state machine itself lives in the header-only helper
+  // isodep_process_loop() (see isodep_wtx.h) so it can be host-unit-tested
+  // without the rest of the driver. We pass a lambda that wraps transceive_()
+  // and emits the debug hex dump that proved load-bearing during the live
+  // Android HCE bring-up on ST25R300.
+  //
+  // Keep the dump at DEBUG: the strings only appear when ESPHome's log level
+  // is raised for diagnostics. On the ESP32-C6 target (4 MB flash, ~45% used)
+  // the format strings are negligible. Remove only if a future audit shows
+  // it actually matters.
+  uint8_t loop_count = 0;
+  auto tx = [this, &loop_count](const uint8_t *frame, uint8_t frame_len,
+                                 uint8_t *raw_resp, uint8_t &raw_len) -> bool {
+    if (!this->transceive_(frame, frame_len, raw_resp, raw_len) || raw_len < 1) {
+      ESP_LOGD(TAG, "ISO-DEP: transceive_ failed (raw_len=%u)", raw_len);
+      return false;
+    }
+    char hex[32 * 3 + 1];
+    uint8_t n = raw_len > 16 ? 16 : raw_len;
+    char *p = hex;
+    for (uint8_t i = 0; i < n; ++i) {
+      p += snprintf(p, hex + sizeof(hex) - p, "%02X ", raw_resp[i]);
+    }
+    ESP_LOGD(TAG, "ISO-DEP rx (loop=%u, len=%u): %s", loop_count, raw_len, hex);
+    ++loop_count;
+    return true;
+  };
 
-  // PCB: I-Block, no chaining, no DID/NAD, must-be-1 bit, block number
-  frame[0] = 0x02 | (this->isodep_block_number_ & 0x01);
-  memcpy(frame + 1, apdu, apdu_len);
-
-  uint8_t raw_resp[64];
-  uint8_t raw_len = 0;
-
-  if (!this->transceive_(frame, apdu_len + 1, raw_resp, raw_len) || raw_len < 3) {
-    return false;
-  }
-
-  // Strip PCB octet, check for I-Block response
-  if ((raw_resp[0] & 0xC0) != 0x00) {
-    // Not an I-Block — might be R-Block or S-Block; don't toggle block number
-    ESP_LOGD(TAG, "ISO-DEP: non-I-Block response PCB=0x%02X", raw_resp[0]);
-    return false;
-  }
-
-  // Valid I-Block received — toggle block number for next exchange
-  this->isodep_block_number_ ^= 1;
-
-  // Response: [PCB][data...][SW1][SW2]  (CRC already stripped by transceive_)
-  resp_len = raw_len - 1;  // strip PCB
-  memcpy(resp, raw_resp + 1, resp_len);
-  return true;
+  return isodep_process_loop(apdu, apdu_len, resp, resp_len,
+                             this->isodep_block_number_, tx);
 }
 
 std::unique_ptr<nfc::NfcTag> ST25R::read_tag_type4_(std::vector<uint8_t> &uid) {
   uint8_t ats[64];
   uint8_t ats_len = 0;
 
-  if (!this->isodep_activate_(ats, ats_len)) {
+  // If a prior on_isodep_tag trigger already activated ISO-DEP, skip the
+  // second RATS — the link is live and block_number is current.
+  if (!this->isodep_active_ && !this->isodep_activate_(ats, ats_len)) {
     nfc::NfcTagUid nfc_uid(uid.begin(), uid.end());
     return make_unique<nfc::NfcTag>(nfc_uid);
   }
+  // Clear the flag for the next scan cycle.
+  this->isodep_active_ = false;
 
   uint8_t resp[64];
   uint8_t resp_len = 0;

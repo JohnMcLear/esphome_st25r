@@ -61,6 +61,7 @@ Flash, open logs — you should see `ST25R initialized successfully` and then a 
 | `nfcv_enabled` | `true` | Enable ISO 15693 (NFC-V) tag detection alongside NFC-A |
 | `nfcb_enabled` | `true` | Enable ISO 14443B (NFC-B) tag detection alongside NFC-A |
 | `aat_enabled` | `true` | Automatic Antenna Tuning — hill-climbing optimizer for max range (requires varicaps) |
+| `suppress_on_tag_for_isodep` | `false` | Skip the `on_tag` fire for ISO-DEP (Type 4A) tags. Recommended `true` for mixed passive + Android HCE deployments — see "Passive tags + HCE phones" below. |
 | `mifare_key_a` | `FFFFFFFFFFFF` | Mifare Classic Key A (12 hex chars) |
 | `mifare_key_b` | `FFFFFFFFFFFF` | Mifare Classic Key B (12 hex chars) |
 | `health_check_enabled` | `true` | Periodically verify chip identity via IC_IDENTITY register |
@@ -251,6 +252,43 @@ Tags with SAK bit 5 set (e.g., DESFire, NTAG424, GlobalPlatform cards) are autom
 **Supported tags:** Any ISO 14443-4 compliant tag (SAK & 0x20). Tags without an NDEF application (e.g., payment cards, GlobalPlatform) will still be detected by UID — only the NDEF read step is skipped.
 
 **Verified on hardware:** GlobalPlatform card SAK=0x28, ATS TL=13 bytes, RATS/ATS + I-Block exchange successful on STEVAL-MB17149B.
+
+### Passive tags + HCE phones at the same reader
+
+Most "smart home NFC" deployments bridge `on_tag` directly to
+Home Assistant's tag scanner integration so that NTAG stickers,
+MIFARE rings, and ISO 15693 cards become first-class tag entities:
+
+```yaml
+on_tag:
+  - homeassistant.tag_scanned: !lambda 'return x;'
+```
+
+Android phones in Host Card Emulation (HCE) mode randomise their
+4-byte NFC-A anticollision UID per tap — this is an OS-level
+privacy feature, not configurable on the phone side. With the
+bridge above, every HCE tap injects a one-shot `08-XX-XX-XX` tag
+entity into HA's tag log that no trusted-tag automation will ever
+match, drowning out real passive credentials.
+
+Set `suppress_on_tag_for_isodep: true` to drop the `on_tag` fire
+for ISO 14443-4 capable tags (SAK bit 5 set) while keeping every
+passive tag firing normally:
+
+```yaml
+st25r_spi:
+  id: my_reader
+  cs_pin: GPIO6
+  suppress_on_tag_for_isodep: true
+  on_tag:
+    - homeassistant.tag_scanned: !lambda 'return x;'
+```
+
+The flag is application-agnostic — `on_isodep_tag` triggers and
+any application-layer component listening to ISO-DEP tags still
+fire as normal. Only the synthetic-UID `on_tag` path is gated.
+Default `false` preserves the historical behaviour for upstream
+users who don't expect HCE phones at their reader.
 
 ### Custom APDU Exchange (Lambda)
 

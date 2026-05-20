@@ -99,6 +99,28 @@ class ST25RTagRemovedTrigger : public Trigger<std::string> {
   ST25R *parent_;
 };
 
+/**
+ * Fires after ISO-DEP activation (RATS) succeeds but BEFORE the default
+ * Type 4 NDEF read chain runs. Use this from an application-layer
+ * component (e.g. yondoor_unlock) to perform a custom AID + APDU
+ * exchange while the tag is still field-coupled and the ISO-DEP block
+ * number is in a known-good state.
+ *
+ * Argument: dash-separated hex UID, same format as on_tag.
+ *
+ * Lambdas called from this trigger may invoke ST25R::send_apdu().
+ * After all triggers have run, the default NDEF read chain proceeds,
+ * which will likely fail (and return cleanly) against a phone HCE
+ * service that doesn't handle the NDEF App AID.
+ */
+class ST25RIsodepTagTrigger : public Trigger<std::string> {
+ public:
+  explicit ST25RIsodepTagTrigger(ST25R *parent) : parent_(parent) {}
+
+ protected:
+  ST25R *parent_;
+};
+
 template<typename... Ts> class NDEFWriteAction : public Action<Ts...> {
  public:
   void set_parent(ST25R *parent) { parent_ = parent; }
@@ -165,9 +187,22 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   void set_nfcb_enabled(bool v) { this->nfcb_enabled_ = v; }
   void set_aat_enabled(bool v) { this->aat_enabled_ = v; }
 
+  // Suppress on_tag firing for ISO-DEP (Type 4A) tags. ISO-DEP phones in
+  // HCE mode randomise their anticollision UID per tap as a privacy
+  // feature, so forwarding those UIDs to HA produces a stream of one-shot
+  // "unknown tag" entries that pollute the tag log. When this flag is true,
+  // finalize_scan_ skips the on_tag fire for tags with SAK bit 5 set
+  // (ISO 14443-4 capable). Passive tags (NTAG, MIFARE, ISO 15693) fire
+  // on_tag uniformly. Default false to preserve historical behaviour.
+  void set_suppress_on_tag_for_isodep(bool v) { this->suppress_on_tag_for_isodep_ = v; }
+
   void register_on_tag_trigger(ST25RTagTrigger *trig) { this->on_tag_triggers_.push_back(trig); }
+
   void register_on_tag_removed_trigger(ST25RTagRemovedTrigger *trig) {
     this->on_tag_removed_triggers_.push_back(trig);
+  }
+  void register_on_isodep_tag_trigger(ST25RIsodepTagTrigger *trig) {
+    this->on_isodep_tag_triggers_.push_back(trig);
   }
   void register_tag(ST25RBinarySensor *tag) { this->binary_sensors_.push_back(tag); }
   void set_status_binary_sensor(binary_sensor::BinarySensor *sensor) { this->status_binary_sensor_ = sensor; }
@@ -212,6 +247,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   bool isodep_transceive_(const uint8_t *apdu, size_t apdu_len, uint8_t *resp, uint8_t &resp_len);
   std::unique_ptr<nfc::NfcTag> read_tag_type4_(std::vector<uint8_t> &uid);
   uint8_t isodep_block_number_{0};
+  bool isodep_active_{false};  // true between RATS and DESELECT
 
   // NFC-B (ISO 14443B) support
   void nfcb_scan_();
@@ -265,6 +301,9 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   bool nfcv_enabled_{true};
   bool nfcb_enabled_{true};
   bool aat_enabled_{true};  // AAT hill-climbing — improves range on boards with varicaps
+  // ISO-DEP on_tag suppression (opt-in via YAML). See setter for rationale.
+  // Default false preserves historical behaviour for upstream users.
+  bool suppress_on_tag_for_isodep_{false};
   uint8_t health_check_failures_{0};
   uint8_t reinitialization_attempts_{0};
   volatile bool irq_triggered_{false};
@@ -309,6 +348,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
 
   std::vector<ST25RTagTrigger *> on_tag_triggers_;
   std::vector<ST25RTagRemovedTrigger *> on_tag_removed_triggers_;
+  std::vector<ST25RIsodepTagTrigger *> on_isodep_tag_triggers_;
   std::vector<ST25RBinarySensor *> binary_sensors_;
   binary_sensor::BinarySensor *status_binary_sensor_{nullptr};
   sensor::Sensor *field_strength_sensor_{nullptr};

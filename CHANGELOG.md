@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`suppress_on_tag_for_isodep` flag** (default `false`): opt-in YAML option on the base ST25R schema (and ST25R300) that skips the `on_tag` fire for ISO 14443-4 capable tags (SAK bit 5 set). Application-agnostic — useful for deployments that bridge `on_tag` to `homeassistant.tag_scanned` and want to drop the Android HCE random anticol UID stream from HA's tag log. Passive tag (NTAG/MIFARE/ISO 15693) firing is unchanged.
 - **Mifare Classic support**: Crypto1 stream cipher (`crypto1.cpp/h`), 3-pass mutual authentication (`mifare_authenticate_()`), and 16-byte block read (`mifare_read_block_()`) with full parity verification
 - **Multi-tag anticollision**: ISO14443A binary tree search — detects all tags in field simultaneously; HALT+WUPA loop resumes tree traversal; per-UID miss-count for reliable removal detection
 - **NDEF read**: Type 2 tags (NTAG / Ultralight) — reads URL and text records into Home Assistant
@@ -31,6 +32,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Mifare Classic NDEF (sector traversal)
 - Write operations
 - Low power / sense mode
+
+### Known limitations (ISO-DEP path)
+
+These apply when an `on_isodep_tag` trigger lambda performs a full
+APDU exchange (e.g. an HMAC challenge/response against an Android
+HCE service) before the default Type 4 NDEF read chain.
+
+- **Component loop watchdog warning during cold-tap WTX.** The
+  `on_isodep_tag` trigger lambda runs synchronously inside the
+  driver's `read_tag()` path, including any `send_apdu()` calls.
+  An Android HCE cold-start binding produces 1-3 successive
+  S(WTX) requests before the I-Block reply lands; the full cold
+  round can take 150-300 ms of wall clock. ESPHome's default
+  50 ms loop-watchdog logs `Component took a long time for an
+  operation (203 ms)` against the ST25R component. Cosmetic — no
+  functional regression. Real fix is an async state machine
+  (suspend after TX, resume on IRQ); out of scope for this PR.
+- **NRT bump on the ST25R300 is phone-dependent.** The
+  `transceive_ex()` path bumps NRT to ~309 ms (16-bit max at the
+  4.72 µs step) while `isodep_active_` is set, to accommodate
+  Android HCE cold-start latency. Verified against a DOOGEE
+  Blade10 Ultra (85-150 ms cold, ~30 ms warm). Over-provisioned
+  for faster phones (Pixel, Samsung) — slower than necessary but
+  correct. Possibly undersized for slower Chinese OEM low-end
+  phones that bind HCE in the 200-300 ms range; would need
+  bumping further into the coarser NRT step family. A per-protocol
+  NRT shadow would let ISO-DEP have its own NRT base without
+  disturbing NFC-A anticol — clean refactor target for a future
+  iteration.
+- **Software CRC strip on the ST25R300 is correctness-critical.**
+  The chip's `RX_CRC` register validates but does not strip the
+  trailing CRC16 (unlike the ST25R3916 where the same bit also
+  strips). Every `with_crc=true` response gets the trailing two
+  bytes removed by `strip_trailing_crc()` in `isodep_wtx.h`. The
+  helper is gated on `with_crc=true` and the chip-level CRC has
+  already validated the frame before we touch the FIFO, so the
+  bytes we strip are guaranteed-CRC-good padding. Covered by
+  unit tests; flagged here because it's a behaviour the
+  ST25R3916 path doesn't need.
+- **No hardware-in-loop CI for the full APDU exchange.** Host-
+  side C++ tests cover the WTX state machine (`isodep_wtx.h`)
+  and the CRC strip; the full Android HCE round runs only on
+  bench hardware. Software emulators that can speak HCE-style
+  APDU with realistic cold-start timing don't exist in any
+  maintained form. The C++ helpers are factored so they're
+  testable without the chip dependency surface
+  (`isodep_process_loop`, `strip_trailing_crc`); anything chip-
+  specific is exercised by the bench config.
 
 ## [1.0.0] - 2024-02-26
 

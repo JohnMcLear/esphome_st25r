@@ -1,4 +1,5 @@
 #include "st25r300.h"
+#include "../st25r/isodep_wtx.h"
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"
 #include "esphome/components/nfc/nfc_tag.h"
@@ -105,6 +106,19 @@ void ST25R300::update() {
   // NFC-B (ISO 14443B) blocking SENSB — runs before NFC-A scan
   if (this->nfcb_enabled_)
     this->nfcb_scan_();
+
+  // If the previous scan activated ISO-DEP (RATS), send S-Block DESELECT to
+  // return the card/phone to IDLE so subsequent WUPAs find it again. Mirrors
+  // ST25R::update() — same protocol, different chip. Uses the base
+  // transceive_ (virtual dispatch through transceive_ex).
+  if (this->last_sak_ & 0x20) {
+    uint8_t deselect[] = {0xC2};  // S-Block DESELECT, no DID
+    uint8_t dsl_resp[4];
+    uint8_t dsl_len = 0;
+    this->transceive_(deselect, 1, dsl_resp, dsl_len, 10);
+    this->last_sak_ = 0;
+    this->isodep_active_ = false;
+  }
 
   this->saved_anticol_valid_ = false;
   this->anticol_resume_ = false;
@@ -227,6 +241,18 @@ bool ST25R300::transceive_ex(const uint8_t *data, size_t len, uint8_t *resp, uin
   this->read_register(ST25R300_REG_IRQ_STATUS3);
   this->read_register(ST25R300_REG_IRQ_STATUS3);
 
+  // During ISO-DEP sessions (Android HCE phones), the chip's NRT is still
+  // configured for the short NFC-A anticollision window (~5ms) and fires
+  // IRQ_NRE well before an HCE service can respond (which takes ~80-150ms
+  // on cold-tap to bind, then more to transmit). Bump NRT to its 16-bit max
+  // (~309ms) for any transceive while ISO-DEP is active so the chip waits
+  // for the phone's response instead of aborting early.
+  if (this->isodep_active_) {
+    this->write_register(ST25R300_REG_NRT_CONF1, 0x00);  // nrt_step=0 → 4.72µs/step
+    this->write_register(ST25R300_REG_NRT_CONF2, 0xFF);  // nrt[15:8]
+    this->write_register(ST25R300_REG_NRT_CONF3, 0xFF);  // nrt[7:0] → 65535 × 4.72µs ≈ 309ms
+  }
+
   this->write_register(ST25R300_REG_TX_FRAME1, (uint8_t)((len >> 5) & 0xFF));
   this->write_register(ST25R300_REG_TX_FRAME2, (uint8_t)((len & 0x1F) << 3));  // full bytes, 0 partial bits
 
@@ -267,20 +293,64 @@ bool ST25R300::transceive_ex(const uint8_t *data, size_t len, uint8_t *resp, uin
         resp_len += to_read;
         start = millis();
       }
-      if (irq1 & ST25R300_IRQ1_RXE) return resp_len > 0;
-      if (irq2 & ST25R300_IRQ2_NRE) return resp_len > 0;
+      if ((irq1 & ST25R300_IRQ1_RXE) || (irq2 & ST25R300_IRQ2_NRE)) {
+        // RX_CRC validates but does not strip; helper extracted to st25r/isodep_wtx.h
+        // so the rule is host-unit-tested. See test_st25r300_crc_strip.cpp.
+        st25r::strip_trailing_crc(resp_len, with_crc);
+        return resp_len > 0;
+      }
     }
     delay(1);
   }
+  st25r::strip_trailing_crc(resp_len, with_crc);
   return resp_len > 0;
 }
 
 // ── read_tag_ ─────────────────────────────────────────────────────────────────
-// ST25R300 supports NFC Forum Type 2 (NTAG) only.
-// Mifare Classic authentication is not implemented for ST25R300 (different MAC engine).
+// ST25R300 supports NFC Forum Type 2 (NTAG) and ISO 14443-4 / ISO-DEP (Type 4A)
+// activation. ISO-DEP detection fires the on_isodep_tag triggers so an
+// application-layer component (e.g. yondoor_unlock) can perform a custom AID +
+// APDU exchange while the tag is still field-coupled. Mifare Classic
+// authentication is not implemented for ST25R300 (different MAC engine).
 std::unique_ptr<nfc::NfcTag> ST25R300::read_tag(std::vector<uint8_t> &uid) {
   uint8_t type = nfc::guess_tag_type(uid.size());
-  ESP_LOGI(TAG, "read_tag_: UID length=%zu, guessed type=%d", uid.size(), type);
+  ESP_LOGI(TAG, "read_tag_: UID length=%zu, guessed type=%d, SAK=0x%02X", uid.size(), type, this->last_sak_);
+
+  // ISO-DEP capable (SAK bit 5 set) → activate ISO-DEP and fire on_isodep_tag
+  // triggers. Mirrors ST25R::read_tag() — last_sak_ is captured by the shared
+  // process_state() at the SELECT step, and isodep_activate_ dispatches through
+  // ST25R::transceive_ → virtual ST25R300::transceive_ex (RATS as 2-byte frame
+  // with CRC, ATS read back through FIFO).
+  if (this->last_sak_ & 0x20) {
+    if (!this->on_isodep_tag_triggers_.empty()) {
+      char uid_buf[nfc::FORMAT_UID_BUFFER_SIZE];
+      nfc::format_uid_to(uid_buf, uid);
+      std::string uid_str(uid_buf);
+
+      uint8_t ats[64];
+      uint8_t ats_len = 0;
+      if (this->isodep_activate_(ats, ats_len)) {
+        this->isodep_active_ = true;
+        ESP_LOGI(TAG, "ISO-DEP activated (ATS len=%u) — firing %zu trigger(s)",
+                 ats_len, this->on_isodep_tag_triggers_.size());
+        for (auto *trig : this->on_isodep_tag_triggers_) {
+          trig->trigger(uid_str);
+        }
+        // Fall through: triggers may have consumed the tag via send_apdu().
+        // The shared process_state() will subsequently call send_halt() which
+        // ends the session cleanly. update() will issue a DESELECT (S-Block
+        // 0xC2) on the next scan cycle while last_sak_ still has bit 5 set.
+      } else {
+        ESP_LOGD(TAG, "ISO-DEP: RATS failed — skipping triggers and Type 4 NDEF");
+      }
+    } else {
+      ESP_LOGD(TAG, "ISO-DEP capable tag, no on_isodep_tag triggers registered");
+    }
+    // ST25R300 does not implement read_tag_type4_ (no NDEF chain). Return the
+    // bare UID-only tag — finalize_scan_() will still fire on_tag for the UID.
+    nfc::NfcTagUid nfc_uid(uid.begin(), uid.end());
+    return make_unique<nfc::NfcTag>(nfc_uid);
+  }
 
   if (type == nfc::TAG_TYPE_2) {
     uint8_t buffer[16];

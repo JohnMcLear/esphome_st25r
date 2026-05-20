@@ -46,6 +46,7 @@ CONF_AUTO_RESET_ON_FAILURE = "auto_reset_on_failure"
 CONF_NFCV_ENABLED = "nfcv_enabled"
 CONF_NFCB_ENABLED = "nfcb_enabled"
 CONF_AAT_ENABLED = "aat_enabled"
+CONF_SUPPRESS_ON_TAG_FOR_ISODEP = "suppress_on_tag_for_isodep"
 
 st25r_ns = cg.esphome_ns.namespace("st25r")
 ST25R = st25r_ns.class_("ST25R", cg.PollingComponent)
@@ -56,6 +57,11 @@ ST25RTagTrigger = st25r_ns.class_(
 ST25RTagRemovedTrigger = st25r_ns.class_(
     "ST25RTagRemovedTrigger", automation.Trigger.template(cg.std_string)
 )
+ST25RIsodepTagTrigger = st25r_ns.class_(
+    "ST25RIsodepTagTrigger", automation.Trigger.template(cg.std_string)
+)
+
+CONF_ON_ISODEP_TAG = "on_isodep_tag"
 
 NDEFWriteAction = st25r_ns.class_("NDEFWriteAction", automation.Action)
 CleanTagAction = st25r_ns.class_("CleanTagAction", automation.Action)
@@ -81,6 +87,7 @@ ST25R_SCHEMA = cv.Schema(
         cv.Optional(CONF_NFCV_ENABLED, default=True): cv.boolean,
         cv.Optional(CONF_NFCB_ENABLED, default=True): cv.boolean,
         cv.Optional(CONF_AAT_ENABLED, default=True): cv.boolean,
+        cv.Optional(CONF_SUPPRESS_ON_TAG_FOR_ISODEP, default=False): cv.boolean,
         cv.Optional(CONF_STATUS): binary_sensor_.binary_sensor_schema(),
         cv.Optional(CONF_FIELD_STRENGTH): sensor_.sensor_schema(),
         cv.Optional(CONF_ON_TAG): automation.validate_automation(
@@ -91,6 +98,11 @@ ST25R_SCHEMA = cv.Schema(
         cv.Optional(CONF_ON_TAG_REMOVED): automation.validate_automation(
             {
                 cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(ST25RTagRemovedTrigger),
+            }
+        ),
+        cv.Optional(CONF_ON_ISODEP_TAG): automation.validate_automation(
+            {
+                cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(ST25RIsodepTagTrigger),
             }
         ),
     }
@@ -124,6 +136,7 @@ async def setup_st25r(var, config):
     cg.add(var.set_nfcv_enabled(config[CONF_NFCV_ENABLED]))
     cg.add(var.set_nfcb_enabled(config[CONF_NFCB_ENABLED]))
     cg.add(var.set_aat_enabled(config[CONF_AAT_ENABLED]))
+    cg.add(var.set_suppress_on_tag_for_isodep(config[CONF_SUPPRESS_ON_TAG_FOR_ISODEP]))
 
     if CONF_STATUS in config:
         sens = await binary_sensor_.new_binary_sensor(config[CONF_STATUS])
@@ -143,6 +156,13 @@ async def setup_st25r(var, config):
     for conf in config.get(CONF_ON_TAG_REMOVED, []):
         trigger = cg.new_Pvariable(conf[CONF_TRIGGER_ID], var)
         cg.add(var.register_on_tag_removed_trigger(trigger))
+        await automation.build_automation(
+            trigger, [(cg.std_string, "x")], conf
+        )
+
+    for conf in config.get(CONF_ON_ISODEP_TAG, []):
+        trigger = cg.new_Pvariable(conf[CONF_TRIGGER_ID], var)
+        cg.add(var.register_on_isodep_tag_trigger(trigger))
         await automation.build_automation(
             trigger, [(cg.std_string, "x")], conf
         )
