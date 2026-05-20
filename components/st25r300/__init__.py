@@ -6,6 +6,7 @@ from esphome.components import sensor as sensor_
 from esphome.components import st25r as st25r_
 from esphome.components.st25r import (
     CONF_ON_ISODEP_TAG,
+    CONF_SUPPRESS_ON_TAG_FOR_ISODEP,
     ST25RIsodepTagTrigger,
 )
 from esphome.const import (
@@ -61,6 +62,7 @@ ST25R300_SCHEMA = cv.Schema(
         cv.Optional(CONF_AUTO_RESET_ON_FAILURE, default=True): cv.boolean,
         cv.Optional(CONF_NFCV_ENABLED, default=True): cv.boolean,
         cv.Optional(CONF_NFCB_ENABLED, default=True): cv.boolean,
+        cv.Optional(CONF_SUPPRESS_ON_TAG_FOR_ISODEP, default=False): cv.boolean,
         cv.Optional(CONF_STATUS): binary_sensor_.binary_sensor_schema(),
         cv.Optional(CONF_FIELD_STRENGTH): sensor_.sensor_schema(),
         cv.Optional(CONF_ON_TAG): automation.validate_automation(
@@ -104,6 +106,7 @@ async def setup_st25r300(var, config):
     cg.add(var.set_auto_reset_on_failure(config[CONF_AUTO_RESET_ON_FAILURE]))
     cg.add(var.set_nfcv_enabled(config[CONF_NFCV_ENABLED]))
     cg.add(var.set_nfcb_enabled(config[CONF_NFCB_ENABLED]))
+    cg.add(var.set_suppress_on_tag_for_isodep(config[CONF_SUPPRESS_ON_TAG_FOR_ISODEP]))
 
     if CONF_STATUS in config:
         sens = await binary_sensor_.new_binary_sensor(config[CONF_STATUS])

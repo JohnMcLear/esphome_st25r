@@ -947,6 +947,16 @@ void ST25R::finalize_scan_() {
   // Fire on_tag for newly seen UIDs.
   for (const auto &uid : this->tags_this_scan_) {
     if (!this->present_tags_.count(uid)) {
+      // ISO-DEP tag suppression — opt-in via YAML flag. Drops Android HCE
+      // anticol-UID spam (4-byte random per tap) from HA tag logs while
+      // keeping passive tag (NTAG/MIFARE/ISO 15693) firing normal. Mark
+      // the tag as present so we still tracks_remove correctly, but skip
+      // the trigger fire and the tag_on listener notify.
+      if (this->suppress_on_tag_for_isodep_ && (this->last_sak_ & 0x20)) {
+        ESP_LOGD(TAG, "finalize_scan_: NEW ISO-DEP tag %s — suppressing on_tag fire (suppress_on_tag_for_isodep=true)", uid.c_str());
+        this->present_tags_[uid] = 0;
+        continue;
+      }
       ESP_LOGD(TAG, "finalize_scan_: NEW tag %s, firing %zu on_tag triggers", uid.c_str(), this->on_tag_triggers_.size());
       this->present_tags_[uid] = 0;
       for (auto *trigger : this->on_tag_triggers_) {

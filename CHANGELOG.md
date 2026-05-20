@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`suppress_on_tag_for_isodep` flag** (default `false`): opt-in YAML option on the base ST25R schema (and ST25R300) that skips the `on_tag` fire for ISO 14443-4 capable tags (SAK bit 5 set). Application-agnostic — useful for deployments that bridge `on_tag` to `homeassistant.tag_scanned` and want to drop the Android HCE random anticol UID stream from HA's tag log. Passive tag (NTAG/MIFARE/ISO 15693) firing is unchanged.
 - **Mifare Classic support**: Crypto1 stream cipher (`crypto1.cpp/h`), 3-pass mutual authentication (`mifare_authenticate_()`), and 16-byte block read (`mifare_read_block_()`) with full parity verification
 - **Multi-tag anticollision**: ISO14443A binary tree search — detects all tags in field simultaneously; HALT+WUPA loop resumes tree traversal; per-UID miss-count for reliable removal detection
 - **NDEF read**: Type 2 tags (NTAG / Ultralight) — reads URL and text records into Home Assistant

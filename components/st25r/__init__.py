@@ -46,6 +46,7 @@ CONF_AUTO_RESET_ON_FAILURE = "auto_reset_on_failure"
 CONF_NFCV_ENABLED = "nfcv_enabled"
 CONF_NFCB_ENABLED = "nfcb_enabled"
 CONF_AAT_ENABLED = "aat_enabled"
+CONF_SUPPRESS_ON_TAG_FOR_ISODEP = "suppress_on_tag_for_isodep"
 
 st25r_ns = cg.esphome_ns.namespace("st25r")
 ST25R = st25r_ns.class_("ST25R", cg.PollingComponent)
@@ -86,6 +87,7 @@ ST25R_SCHEMA = cv.Schema(
         cv.Optional(CONF_NFCV_ENABLED, default=True): cv.boolean,
         cv.Optional(CONF_NFCB_ENABLED, default=True): cv.boolean,
         cv.Optional(CONF_AAT_ENABLED, default=True): cv.boolean,
+        cv.Optional(CONF_SUPPRESS_ON_TAG_FOR_ISODEP, default=False): cv.boolean,
         cv.Optional(CONF_STATUS): binary_sensor_.binary_sensor_schema(),
         cv.Optional(CONF_FIELD_STRENGTH): sensor_.sensor_schema(),
         cv.Optional(CONF_ON_TAG): automation.validate_automation(
@@ -134,6 +136,7 @@ async def setup_st25r(var, config):
     cg.add(var.set_nfcv_enabled(config[CONF_NFCV_ENABLED]))
     cg.add(var.set_nfcb_enabled(config[CONF_NFCB_ENABLED]))
     cg.add(var.set_aat_enabled(config[CONF_AAT_ENABLED]))
+    cg.add(var.set_suppress_on_tag_for_isodep(config[CONF_SUPPRESS_ON_TAG_FOR_ISODEP]))
 
     if CONF_STATUS in config:
         sens = await binary_sensor_.new_binary_sensor(config[CONF_STATUS])

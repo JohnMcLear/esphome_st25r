@@ -187,6 +187,15 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   void set_nfcb_enabled(bool v) { this->nfcb_enabled_ = v; }
   void set_aat_enabled(bool v) { this->aat_enabled_ = v; }
 
+  // Suppress on_tag firing for ISO-DEP (Type 4A) tags. ISO-DEP phones in
+  // HCE mode randomise their anticollision UID per tap as a privacy
+  // feature, so forwarding those UIDs to HA produces a stream of one-shot
+  // "unknown tag" entries that pollute the tag log. When this flag is true,
+  // finalize_scan_ skips the on_tag fire for tags with SAK bit 5 set
+  // (ISO 14443-4 capable). Passive tags (NTAG, MIFARE, ISO 15693) fire
+  // on_tag uniformly. Default false to preserve historical behaviour.
+  void set_suppress_on_tag_for_isodep(bool v) { this->suppress_on_tag_for_isodep_ = v; }
+
   void register_on_tag_trigger(ST25RTagTrigger *trig) { this->on_tag_triggers_.push_back(trig); }
 
   void register_on_tag_removed_trigger(ST25RTagRemovedTrigger *trig) {
@@ -292,6 +301,9 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   bool nfcv_enabled_{true};
   bool nfcb_enabled_{true};
   bool aat_enabled_{true};  // AAT hill-climbing — improves range on boards with varicaps
+  // ISO-DEP on_tag suppression (opt-in via YAML). See setter for rationale.
+  // Default false preserves historical behaviour for upstream users.
+  bool suppress_on_tag_for_isodep_{false};
   uint8_t health_check_failures_{0};
   uint8_t reinitialization_attempts_{0};
   volatile bool irq_triggered_{false};
