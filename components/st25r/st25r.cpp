@@ -949,11 +949,22 @@ void ST25R::finalize_scan_() {
     if (!this->present_tags_.count(uid)) {
       // ISO-DEP tag suppression — opt-in via YAML flag. Drops Android HCE
       // anticol-UID spam (4-byte random per tap) from HA tag logs while
-      // keeping passive tag (NTAG/MIFARE/ISO 15693) firing normal. Mark
-      // the tag as present so we still tracks_remove correctly, but skip
-      // the trigger fire and the tag_on listener notify.
-      if (this->suppress_on_tag_for_isodep_ && (this->last_sak_ & 0x20)) {
-        ESP_LOGD(TAG, "finalize_scan_: NEW ISO-DEP tag %s — suppressing on_tag fire (suppress_on_tag_for_isodep=true)", uid.c_str());
+      // keeping passive tags (NTAG/MIFARE/ISO 15693) AND physical ISO-DEP
+      // cards (payment rings, EMV cards, ITSO/Oyster) firing normal —
+      // those present stable chip serials.
+      //
+      // Per ISO/IEC 14443-3 §6.5.4 Table 9, UIDs whose first byte is
+      // 0x08 are designated "Random Anti-collision UID" (RID) — the
+      // convention Android and iOS HCE follow when randomising the
+      // anticol UID per tap as a privacy feature. Physical ISO-DEP
+      // cards present a stable chip serial (NXP 0x04 prefix, etc.).
+      // So narrow the suppress to RID-prefix UIDs only.
+      //
+      // Mark the tag as present so we still tracks_remove correctly,
+      // but skip the trigger fire and the tag_on listener notify.
+      if (this->suppress_on_tag_for_isodep_ && (this->last_sak_ & 0x20) &&
+          uid.substr(0, 2) == "08") {
+        ESP_LOGD(TAG, "finalize_scan_: NEW ISO-DEP tag %s — random UID prefix (0x08), suppressing on_tag fire", uid.c_str());
         this->present_tags_[uid] = 0;
         continue;
       }
