@@ -672,9 +672,13 @@ void ST25R300::configure_nfcv_mode_() {
   this->write_register(ST25R300_REG_GENERAL_CONF, 0x02);    // nfc_n=2 (NFC-V subcarrier config)
   this->write_register(ST25R300_REG_PROTOCOL1, 0x05);      // om=5: NFC-V/ISO15693
   this->write_register(ST25R300_REG_TX_PROTOCOL1, 0x20);   // tx_crc only (no parity)
+  // 0x30 (was 0x34): SOF+EOF, NO hw CRC strip. The ST25R300's NFC-V CRC
+  // check is unreliable against ISO 15693 noise — RX_ERR is not always
+  // raised on CRC fail, so the chip would silently surface noise frames
+  // as fake 8-byte UIDs (reproduced 2026-05 on pod-lock). Keep the
+  // 2-byte CRC in the FIFO and validate in software via iso13239_crc16.
   this->write_register(ST25R300_REG_RX_PROTOCOL1,
-                       ST25R300_RX_PROT1_B_RX_SOF | ST25R300_RX_PROT1_B_RX_EOF |
-                       ST25R300_RX_PROT1_RX_CRC);  // 0x34: SOF+EOF+CRC (no parity, no antcl)
+                       ST25R300_RX_PROT1_B_RX_SOF | ST25R300_RX_PROT1_B_RX_EOF);  // 0x30
   // TX modulation: OOK (97% ASK) for NFC-V 26kbps — RFAL analogConfigTbl
   this->write_register(ST25R300_REG_TX_MOD1, 0x00);  // am_mod=0 → OOK
   // RX analog + correlator: RFAL ST25R500 NFC-V 26kbps profile
@@ -733,17 +737,31 @@ bool ST25R300::transceive_blocking_(const uint8_t *data, size_t len, uint8_t *re
   this->irq_triggered_ = false;
   this->write_command(ST25R300_CMD_TRANSMIT_DATA);
 
-  // Wait for response — use ISR flag if available, fallback to polling
+  // Wait for response — use ISR flag if available, fallback to polling.
+  //
+  // IRQ status registers are READ-TO-CLEAR. If RX_ERR fires on poll N and
+  // RXE fires on poll N+1, reading at N clears RX_ERR and we'd otherwise
+  // miss it. Accumulate bits across iterations so we see every IRQ that
+  // fires during the wait window.
+  uint8_t acc1 = 0, acc2 = 0;
   uint32_t start = millis();
   while (millis() - start < timeout_ms) {
     if (this->irq_triggered_) {
       this->irq_triggered_ = false;
     }
     // Always poll IRQ registers (ISR may not fire if pin not configured or edge missed)
-    uint8_t r1 = this->read_register(ST25R300_REG_IRQ_STATUS1);
-    uint8_t r2 = this->read_register(ST25R300_REG_IRQ_STATUS2);
-  this->read_register(ST25R300_REG_IRQ_STATUS3);
-    if (r1 & ST25R300_IRQ1_RXE) {
+    acc1 |= this->read_register(ST25R300_REG_IRQ_STATUS1);
+    acc2 |= this->read_register(ST25R300_REG_IRQ_STATUS2);
+    this->read_register(ST25R300_REG_IRQ_STATUS3);
+    // RX_ERR (CRC / parity / framing) must be checked BEFORE RXE — RXE
+    // can fire alongside RX_ERR for a frame the chip detected but
+    // couldn't validate. Treating that as a valid response was the
+    // source of the 8-byte NFC-V noise spam on pod-lock (2026-05).
+    if (acc1 & ST25R300_IRQ1_RX_ERR) {
+      ESP_LOGV(TAG, "transceive_blocking_: RX_ERR (IRQ1=0x%02X)", acc1);
+      return false;
+    }
+    if (acc1 & ST25R300_IRQ1_RXE) {
       uint8_t fifo_len = this->read_register(ST25R300_REG_FIFO_STATUS1);
       if (fifo_len > 0 && fifo_len <= 64) {
         resp_len = fifo_len;
@@ -752,12 +770,26 @@ bool ST25R300::transceive_blocking_(const uint8_t *data, size_t len, uint8_t *re
       }
       return false;
     }
-    if (r2 & ST25R300_IRQ2_NRE) {
+    if (acc2 & ST25R300_IRQ2_NRE) {
       return false;
     }
     delay(1);
   }
   return false;
+}
+
+// ISO/IEC 13239 CRC-16 — used for ISO 15693 frame integrity validation in
+// software, since the ST25R300's hardware NFC-V CRC check is unreliable
+// against noise frames. Polynomial 0x8408 (reflected 0x1021), seed 0xFFFF,
+// final XOR with 0xFFFF (i.e. ~crc). Standard ISO 15693 / 14443-B CRC.
+static uint16_t iso13239_crc16(const uint8_t *data, size_t len) {
+  uint16_t crc = 0xFFFF;
+  for (size_t i = 0; i < len; i++) {
+    crc ^= data[i];
+    for (int b = 0; b < 8; b++)
+      crc = (crc & 1) ? (uint16_t) ((crc >> 1) ^ 0x8408) : (uint16_t) (crc >> 1);
+  }
+  return (uint16_t) ~crc;
 }
 
 void ST25R300::nfcv_scan_() {
@@ -771,9 +803,18 @@ void ST25R300::nfcv_scan_() {
   uint8_t resp[12];
   uint8_t resp_len = 0;
 
-  // Single-tag inventory (multi-tag requires STAY_QUIET + field cycling)
+  // Single-tag inventory (multi-tag requires STAY_QUIET + field cycling).
+  //
+  // Validation:
+  //   - resp_len == 12: 10-byte payload (flags + DSFID + 8-byte UID) +
+  //     2-byte CRC trailer (we disabled hw CRC strip in
+  //     configure_nfcv_mode_).
+  //   - resp[0] error flag clear (bit 0 of flags byte).
+  //   - Software CRC-16/ISO 13239 over the 10-byte payload must match
+  //     the 2-byte CRC in resp[10..11] (LSB-first per spec).
   if (this->transceive_blocking_(inv_req, sizeof(inv_req), resp, resp_len, 25) &&
-      resp_len >= 10 && !(resp[0] & 0x01)) {
+      resp_len == 12 && !(resp[0] & 0x01) &&
+      iso13239_crc16(resp, 10) == (uint16_t) (resp[10] | (resp[11] << 8))) {
 
     // UID is bytes 2-9, transmitted LSB-first — reverse for display
     std::array<uint8_t, 8> nfcv_uid;
