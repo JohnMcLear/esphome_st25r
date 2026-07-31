@@ -622,6 +622,31 @@ bool ST25R300::reset_chip() {
 }
 
 // ── reinitialize_ ─────────────────────────────────────────────────────────────
+// Runtime RF field control. Mirrors the field-on sequence used by reset_chip()
+// so a field brought back up here is indistinguishable from one raised at boot.
+void ST25R300::set_rf_field(bool on) {
+  // Set the flag first -- loop() can re-enter the scan path between here and
+  // the register write, and would re-energise the antenna if it still read true.
+  this->rf_field_enabled_ = on;
+
+  if (on) {
+    this->write_register(ST25R300_REG_OPERATION,
+                         ST25R300_OP_EN | ST25R300_OP_VDDDR_EN | ST25R300_OP_TX_EN);
+    delay(5);
+    this->write_command(ST25R300_CMD_FIELD_ON);
+    delay(10);
+    this->write_register(ST25R300_REG_OPERATION, ST25R300_OP_ALL_ON);
+  } else {
+    // Stop-all before cutting the drivers, so nothing is mid-transmit when the
+    // TX stage goes away; otherwise FIFO/IRQ state is left dirty and shows up
+    // as phantom interrupts the next time the field is raised.
+    this->write_command(ST25R300_CMD_STOP_ALL);
+    delay(1);
+    this->write_register(ST25R300_REG_OPERATION, 0x00);
+  }
+  ESP_LOGI(TAG, "RF field %s", ONOFF(on));
+}
+
 void ST25R300::reinitialize() {
   this->reinitialization_attempts_++;
   ESP_LOGW(TAG, "Reinitializing ST25R300 (attempt %u)...", this->reinitialization_attempts_);

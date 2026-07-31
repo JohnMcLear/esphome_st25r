@@ -26,15 +26,37 @@ Test vectors (Key=FFFFFFFFFFFF, UID=DEA30D00, NT=009080A2, NR=12345678):
 
 ### Python — Schema validators
 
-Tests the YAML config validators (UID format, Mifare key hex validation, rf_power range) and a pure-Python PRNG cross-check.
+Tests the YAML config validators (UID format, Mifare key hex validation, rf_power range), the `set_rf_field` action schema, and a pure-Python PRNG cross-check.
 
 ```bash
 pytest tests/python/ -v
 ```
 
-Expected: `40 passed`
+Expected: `110 passed`
 
 Requires: `pip install esphome pytest`
+
+`test_set_rf_field.py` pins down the shorthand form in particular
+(`st25r.set_rf_field: false`). That spelling depends on `maybe_simple_value()`,
+and a refactor that dropped it would still validate the verbose mapping form
+while silently breaking every config using the short one.
+
+### Compile coverage — `set_rf_field` action
+
+`tests/ci-test-spi.yaml` and `tests/ci-test-st25r300-spi.yaml` each exercise
+both spellings of the action plus the templated lambda form.
+
+```bash
+esphome compile tests/ci-test-spi.yaml
+esphome compile tests/ci-test-st25r300-spi.yaml
+```
+
+Both are needed, not just one: the ST25R300 **overrides** `set_rf_field()` in
+C++ because its enable bits sit in `REG_OPERATION` (0x00) rather than the
+ST25R3916's `OP_CONTROL` (0x02). Only the ST25R300 config builds that override.
+The lambda form matters separately — it is what instantiates
+`TEMPLATABLE_VALUE`, so it fails to compile if the action's value type ever
+drifts from `bool`.
 
 ### CI
 
