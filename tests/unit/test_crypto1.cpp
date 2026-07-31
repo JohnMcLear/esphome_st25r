@@ -17,6 +17,11 @@
 #include <cstdint>
 #include <cstring>
 
+// crypto1.h declares everything inside namespace esphome::st25r, but the tests
+// below reference Crypto1State / crypto1_* unqualified. Pull the namespace in
+// here rather than qualifying ~200 call sites.
+using namespace esphome::st25r;
+
 // ── Minimal test framework ────────────────────────────────────────────────────
 
 static int g_pass = 0;
