@@ -51,3 +51,25 @@ binary_sensor:
     st25r_id: st25r_board
     name: "Test Badge SPI"
     uid: "01-02-03-04"
+
+# Compile coverage for st25r.set_rf_field. Exercises both spellings, since
+# they take different paths through maybe_simple_value(), and the templated
+# lambda form, which is the one that instantiates TEMPLATABLE_VALUE and so
+# fails to compile if the action's value type ever drifts from bool.
+switch:
+  - platform: template
+    name: "RF Field"
+    optimistic: true
+    turn_on_action:
+      - st25r.set_rf_field: true
+    turn_off_action:
+      - st25r.set_rf_field:
+          id: st25r_board
+          field_on: false
+
+interval:
+  - interval: 60s
+    then:
+      - st25r.set_rf_field:
+          id: st25r_board
+          field_on: !lambda 'return true;'

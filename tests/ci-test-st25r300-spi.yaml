@@ -51,3 +51,25 @@ binary_sensor:
     st25r_id: st25r300_board
     name: "Test Badge ST25R300 SPI"
     uid: "01-02-03-04"
+
+# Compile coverage for st25r300.set_rf_field. Worth having separately from the
+# st25r twin in ci-test-spi.yaml: the ST25R300 overrides set_rf_field() in C++
+# because its enable bits sit in REG_OPERATION (0x00) rather than the 3916's
+# OP_CONTROL (0x02), so this is the config that actually builds the override.
+switch:
+  - platform: template
+    name: "RF Field"
+    optimistic: true
+    turn_on_action:
+      - st25r300.set_rf_field: true
+    turn_off_action:
+      - st25r300.set_rf_field:
+          id: st25r300_board
+          field_on: false
+
+interval:
+  - interval: 60s
+    then:
+      - st25r300.set_rf_field:
+          id: st25r300_board
+          field_on: !lambda 'return true;'

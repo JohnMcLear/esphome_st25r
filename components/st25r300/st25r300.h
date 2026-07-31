@@ -17,6 +17,12 @@ class ST25R300 : public st25r::ST25R {
   void update() override;
   void loop() override;
 
+  // Must be overridden rather than inherited: the ST25R300 keeps its enable
+  // bits in REG_OPERATION (0x00) with a different bit layout to the 3916's
+  // OP_CONTROL (0x02), so the base implementation would write a plausible
+  // value to the wrong register.
+  void set_rf_field(bool on) override;
+
  protected:
   // Hardware abstraction — implemented by st25r300_spi (pure virtual, inherited from ST25R)
   uint8_t read_register(uint8_t reg) override = 0;
@@ -86,6 +92,11 @@ template<typename... Ts> class NDEFWriteAction : public st25r::NDEFWriteAction<T
 };
 
 template<typename... Ts> class CleanTagAction : public st25r::CleanTagAction<Ts...> {
+ public:
+  void set_parent(st25r::ST25R *parent) { this->parent_ = parent; }
+};
+
+template<typename... Ts> class SetRfFieldAction : public st25r::SetRfFieldAction<Ts...> {
  public:
   void set_parent(st25r::ST25R *parent) { this->parent_ = parent; }
 };

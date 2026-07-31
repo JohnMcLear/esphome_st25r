@@ -171,6 +171,26 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   void set_reset_pin(GPIOPin *reset_pin) { this->reset_pin_ = reset_pin; }
   void set_irq_pin(InternalGPIOPin *irq_pin) { this->irq_pin_ = irq_pin; }
   void set_rf_field_enabled(bool enabled) { this->rf_field_enabled_ = enabled; }
+
+  /// Turn the RF field on or off at runtime, driving the hardware immediately.
+  ///
+  /// This is NOT the same as set_rf_field_enabled() above, and the difference
+  /// matters. set_rf_field_enabled() only moves a flag that the scan path
+  /// consults before it re-asserts the field; calling it with false leaves the
+  /// operation register at whatever was last written, so an already-energised
+  /// antenna keeps drawing current indefinitely. That is a real problem for a
+  /// deep-sleep design, where the host MCU drops to microamps while the reader
+  /// carries on burning tens of milliamps.
+  ///
+  /// set_rf_field() writes the register too, and also updates the flag so the
+  /// scan loop does not simply switch the field back on at the next update().
+  /// Both halves are required -- either one alone is ineffective.
+  ///
+  /// Off writes the operation register to zero (minimum draw). The SPI
+  /// interface is independent of the enable bits, so registers remain
+  /// readable while the field is down, and set_rf_field(true) runs the full
+  /// field-on sequence to restore service.
+  virtual void set_rf_field(bool on);
   void set_rf_power(uint8_t power) { this->rf_power_ = power; }
   void set_supply_3v3(bool supply_3v3) { this->supply_3v3_ = supply_3v3; }
   void set_rx_gain_boost(bool boost) { this->rx_gain_boost_ = boost; }
@@ -237,6 +257,7 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   virtual uint8_t read_collision_display();  // read the chip's collision position register
 
   void field_on_();
+  void field_off_();
   void finalize_scan_();
 
   // Automatic Antenna Tuning — hill-climbing optimizer for ANT_TUNE_A/B
@@ -365,6 +386,18 @@ template<typename... Ts> class CleanTagAction : public Action<Ts...> {
  public:
   void set_parent(ST25R *parent) { parent_ = parent; }
   void play(const Ts &...x) override { this->parent_->clean_tag(); }
+
+ protected:
+  ST25R *parent_;
+};
+
+// Defined once on the base rather than per-chip: set_rf_field() is virtual, so
+// the same action dispatches correctly to the ST25R300 override.
+template<typename... Ts> class SetRfFieldAction : public Action<Ts...> {
+ public:
+  void set_parent(ST25R *parent) { parent_ = parent; }
+  TEMPLATABLE_VALUE(bool, field_on)
+  void play(const Ts &...x) override { this->parent_->set_rf_field(this->field_on_.value(x...)); }
 
  protected:
   ST25R *parent_;

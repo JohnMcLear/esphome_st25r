@@ -65,6 +65,7 @@ CONF_ON_ISODEP_TAG = "on_isodep_tag"
 
 NDEFWriteAction = st25r_ns.class_("NDEFWriteAction", automation.Action)
 CleanTagAction = st25r_ns.class_("CleanTagAction", automation.Action)
+SetRfFieldAction = st25r_ns.class_("SetRfFieldAction", automation.Action)
 
 ST25R_SCHEMA = cv.Schema(
     {
@@ -204,4 +205,40 @@ async def st25r_clean_tag_to_code(config, action_id, template_arg, args):
     var = cg.new_Pvariable(action_id, template_arg)
     parent = await cg.get_variable(config[CONF_ID])
     cg.add(var.set_parent(parent))
+    return var
+
+
+# st25r.set_rf_field: drive the antenna on/off at runtime.
+#
+# Distinct from the rf_field_enabled config option, which only seeds a flag the
+# scan loop reads. This action writes the hardware register as well, which is
+# what a deep-sleep design needs -- call it with false before deep_sleep.enter,
+# or the reader keeps its field energised through the sleep and draws tens of
+# mA while the host MCU sits at microamps.
+#
+# maybe_simple_value accepts both spellings:
+#   - st25r.set_rf_field: false
+#   - st25r.set_rf_field: {id: reader, field_on: false}
+#
+# synchronous=True is correct: play() calls set_rf_field() and returns, so
+# play_next_() always runs before the initial play() call returns. Nothing is
+# deferred to a callback, timer or loop().
+@automation.register_action(
+    "st25r.set_rf_field",
+    SetRfFieldAction,
+    cv.maybe_simple_value(
+        {
+            cv.GenerateID(): cv.use_id(ST25R),
+            cv.Required("field_on"): cv.templatable(cv.boolean),
+        },
+        key="field_on",
+    ),
+    synchronous=True,
+)
+async def st25r_set_rf_field_to_code(config, action_id, template_arg, args):
+    var = cg.new_Pvariable(action_id, template_arg)
+    parent = await cg.get_variable(config[CONF_ID])
+    cg.add(var.set_parent(parent))
+    template_ = await cg.templatable(config["field_on"], args, bool)
+    cg.add(var.set_field_on(template_))
     return var

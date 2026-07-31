@@ -1257,6 +1257,30 @@ void ST25R::field_on_() {
   this->write_command(ST25R_CMD_ADJUST_REGULATORS);
 }
 
+// Collapse the field. Stop-all first so any transmission, reception or timer
+// in flight is torn down before the drivers are cut -- dropping tx_en out from
+// under an active transmit leaves the FIFO and IRQ state dirty, which then
+// surfaces as phantom IRQs on the next field_on_().
+void ST25R::field_off_() {
+  this->write_command(ST25R_CMD_STOP_ALL);
+  delay(1);
+  this->write_register(OP_CONTROL, 0x00); // en=0, rx_en=0, tx_en=0
+}
+
+void ST25R::set_rf_field(bool on) {
+  // Order is deliberate: set the flag BEFORE touching the hardware. loop()
+  // polls the IRQ registers and can re-enter the scan path between these two
+  // statements; if the flag were still true it would re-assert the field the
+  // moment after we cleared it.
+  this->rf_field_enabled_ = on;
+  if (on) {
+    this->field_on_();
+  } else {
+    this->field_off_();
+  }
+  ESP_LOGI(TAG, "RF field %s", ONOFF(on));
+}
+
 // ── AAT (Automatic Antenna Tuning) hill-climbing optimizer ───────────────────
 // Based on RFAL st25r3916AatTune() (AN5322). Iteratively adjusts ANT_TUNE_A/B
 // to maximize RF field amplitude (AD_CONV_RESULT). Runs once after field_on_()

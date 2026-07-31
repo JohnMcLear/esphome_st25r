@@ -47,6 +47,7 @@ ST25R300TagRemovedTrigger = st25r300_ns.class_(
 
 NDEFWriteAction = st25r300_ns.class_("NDEFWriteAction", automation.Action)
 CleanTagAction = st25r300_ns.class_("CleanTagAction", automation.Action)
+SetRfFieldAction = st25r300_ns.class_("SetRfFieldAction", automation.Action)
 
 ST25R300_SCHEMA = cv.Schema(
     {
@@ -175,4 +176,28 @@ async def st25r300_clean_tag_to_code(config, action_id, template_arg, args):
     var = cg.new_Pvariable(action_id, template_arg)
     parent = await cg.get_variable(config[CONF_ID])
     cg.add(var.set_parent(parent))
+    return var
+
+
+# st25r300.set_rf_field — see the st25r.set_rf_field twin for full rationale.
+# The ST25R300 overrides set_rf_field() in C++ because its enable bits live in
+# REG_OPERATION (0x00) rather than the 3916's OP_CONTROL (0x02).
+@automation.register_action(
+    "st25r300.set_rf_field",
+    SetRfFieldAction,
+    cv.maybe_simple_value(
+        {
+            cv.GenerateID(): cv.use_id(ST25R300),
+            cv.Required("field_on"): cv.templatable(cv.boolean),
+        },
+        key="field_on",
+    ),
+    synchronous=True,
+)
+async def st25r300_set_rf_field_to_code(config, action_id, template_arg, args):
+    var = cg.new_Pvariable(action_id, template_arg)
+    parent = await cg.get_variable(config[CONF_ID])
+    cg.add(var.set_parent(parent))
+    template_ = await cg.templatable(config["field_on"], args, bool)
+    cg.add(var.set_field_on(template_))
     return var

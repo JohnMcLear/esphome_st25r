@@ -29,6 +29,8 @@ See `memory/st25r_variant_comparison.md` for comprehensive variant details and `
 - [Variant Support Overview](#variant-support-overview)
 - [Component API](#component-api)
 - [YAML Configuration](#yaml-configuration)
+- [Actions](#actions)
+- [Deep sleep and power](#deep-sleep-and-power)
 - [ISO14443A Protocol](#iso14443a-protocol)
 - [Mifare Classic / Crypto1](#mifare-classic--crypto1)
 - [Register Map](#register-map)
@@ -60,6 +62,31 @@ Write an NDEF message to a Type 2 tag (NTAG / Ultralight). Set `format = true` t
 bool clean_tag()
 ```
 Erase all NDEF content from the tag currently in field.
+
+#### `set_rf_field()`
+```cpp
+virtual void set_rf_field(bool on)
+```
+Turn the RF field on or off at runtime, driving the hardware immediately.
+
+**This is not the same as the `rf_field_enabled` config option**, and the
+difference is easy to get wrong. `rf_field_enabled` (and its
+`set_rf_field_enabled()` setter) only seeds a flag that the scan path consults
+before re-asserting the field. Setting it false leaves the operation register
+at whatever was last written, so an antenna that is already energised keeps
+drawing current. `set_rf_field()` writes the register *and* updates the flag —
+both halves are required, since either alone is ineffective.
+
+Turning the field off writes the operation register to zero. The SPI interface
+is independent of the enable bits, so registers stay readable while the field
+is down, and `set_rf_field(true)` runs the full field-on sequence to restore
+service.
+
+The ST25R300 overrides this method: its enable bits live in `REG_OPERATION`
+(0x00), not the ST25R3916's `OP_CONTROL` (0x02).
+
+Primarily useful for battery and deep-sleep designs — see
+[Deep sleep and power](#deep-sleep-and-power).
 
 ### Configuration Setters (called by generated code)
 
@@ -193,6 +220,69 @@ st25r_spi:
   field_strength:
     name: "NFC Field Strength"  # sensor: raw amplitude ADC value
 ```
+
+### Actions
+
+#### `st25r.set_rf_field` / `st25r300.set_rf_field`
+
+Turns the RF field on or off at runtime. Use the prefix matching your
+component: `st25r.` for `st25r_spi` / `st25r_i2c`, `st25r300.` for
+`st25r300_spi`.
+
+```yaml
+# Shorthand
+- st25r.set_rf_field: false
+
+# Explicit, required when more than one reader is configured
+- st25r.set_rf_field:
+    id: my_st25r
+    field_on: false
+
+# Templated
+- st25r.set_rf_field:
+    id: my_st25r
+    field_on: !lambda 'return some_condition;'
+```
+
+### Deep sleep and power
+
+On a battery design the reader, not the MCU, dominates draw. An ESP32 in deep
+sleep falls to roughly 10 µA, but the ST25R is a separate chip on its own
+supply — nothing about the host sleeping turns its antenna off. Left alone it
+keeps driving the field at tens of mA, swamping the MCU's saving by three
+orders of magnitude.
+
+Setting `rf_field_enabled: false` does **not** fix this: it only stops the scan
+loop re-asserting the field, leaving an already-energised antenna running. Call
+the action instead, immediately before sleeping:
+
+```yaml
+interval:
+  - interval: 10s
+    then:
+      - st25r.set_rf_field:
+          id: my_st25r
+          field_on: false
+      - deep_sleep.enter: deep_sleep_ctl
+```
+
+The field is restored automatically on wake, since a wake is a fresh boot and
+setup runs the normal init sequence. Verified on hardware: the reader resumes
+scanning and reads tags normally on the wake following a field-off sleep.
+
+Two ESPHome-level traps are worth knowing when building this:
+
+- **`safe_mode` will eventually brick a deep-sleep device at defaults.** Each
+  wake counts as a boot, and the counter only clears after `boot_is_good_after`
+  (default 1 min). If the device sleeps before that, the count climbs every
+  wake until `num_attempts` (default 10) drops it into safe mode instead of
+  your firmware. Set `boot_is_good_after` well under the awake duration.
+- **`deep_sleep.enter` ignores the prevent flag.** It maps to
+  `begin_sleep(manual=true)`, and the component's guard reads
+  `if (this->prevent_ && !manual)`. If you drive sleep manually — which you
+  must, in order to sequence the field-off first, as `deep_sleep` has no
+  `on_enter` trigger — check any "prevent sleep" switch yourself, or your OTA
+  escape hatch silently does nothing.
 
 ---
 
