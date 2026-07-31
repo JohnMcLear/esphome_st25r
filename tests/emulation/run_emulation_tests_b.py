@@ -304,10 +304,11 @@ class TestBVersionAat:
         with proc._lock:
             proc.log_lines.clear()
         uid = "11223344"
+        uid_dash = dashed(uid)
         ctrl3.add_tag(uid)
-        proc.wait_for(rf"READER1_B_ON_TAG {uid}", timeout=10)
+        proc.wait_for(rf"READER1_B_ON_TAG {uid_dash}", timeout=10)
         ctrl3.remove_tag(uid)
-        proc.wait_for(rf"READER1_B_ON_TAG_REMOVED {uid}", timeout=10)
+        proc.wait_for(rf"READER1_B_ON_TAG_REMOVED {uid_dash}", timeout=10)
 
 
 class TestBVersionHealthCheck:
@@ -346,7 +347,8 @@ class TestBVersionHealthCheck:
         with proc._lock:
             proc.log_lines.clear()
         uid = "AABBCCDD"
+        uid_dash = dashed(uid)
         ctrl3.add_tag(uid)
-        proc.wait_for(rf"READER1_B_ON_TAG {uid}", timeout=10)
+        proc.wait_for(rf"READER1_B_ON_TAG {uid_dash}", timeout=10)
         ctrl3.remove_tag(uid)
-        proc.wait_for(rf"READER1_B_ON_TAG_REMOVED {uid}", timeout=10)
+        proc.wait_for(rf"READER1_B_ON_TAG_REMOVED {uid_dash}", timeout=10)

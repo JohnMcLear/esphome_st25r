@@ -983,6 +983,7 @@ class TestIsoDepType4:
     """
 
     UID_T4 = "F0F0F0F0"  # 4-byte, unique for TYPE4 tests
+    UID_T4_DASH = dashed(UID_T4)
 
     def test_type4_tag_detected_and_isodep(self, sim):
         """TYPE4 tag (SAK=0x20) triggers RATS/ATS and Type 4 NDEF attempt."""
@@ -991,7 +992,7 @@ class TestIsoDepType4:
             proc.log_lines.clear()
         ctrl1.add_tag(self.UID_T4, tag_type="TYPE4")
         # Wait for tag detection
-        proc.wait_for(rf"READER1_ON_TAG {self.UID_T4}", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG {self.UID_T4_DASH}", timeout=10)
         # All ISO-DEP logs should be in the buffer now
         with proc._lock:
             logs = list(proc.log_lines)
@@ -1005,7 +1006,7 @@ class TestIsoDepType4:
         with proc._lock:
             proc.log_lines.clear()
         ctrl1.remove_tag(self.UID_T4)
-        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.UID_T4}", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {self.UID_T4_DASH}", timeout=10)
 
 
 class TestAatTuning:
@@ -1126,10 +1127,11 @@ class TestHealthCheck:
         with proc._lock:
             proc.log_lines.clear()
         uid = "12345678"
+        uid_dash = dashed(uid)
         ctrl1.add_tag(uid)
-        proc.wait_for(rf"READER1_ON_TAG {uid}", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG {uid_dash}", timeout=10)
         ctrl1.remove_tag(uid)
-        proc.wait_for(rf"READER1_ON_TAG_REMOVED {uid}", timeout=10)
+        proc.wait_for(rf"READER1_ON_TAG_REMOVED {uid_dash}", timeout=10)
 
 
 class TestWupaIrqCleanup:

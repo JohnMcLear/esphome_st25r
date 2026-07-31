@@ -712,7 +712,17 @@ void ST25R::process_state() {
     }
 
     case STATE_ANTICOL: {
-      if (millis() - this->last_state_change_ > 20) {
+      // The 20 ms budget is a *no-response* timeout, so it must only be
+      // consulted when nothing came back.  Checking it first would throw away
+      // an anticollision response that already sits in the FIFO whenever the
+      // main loop happened to be slower than 20 ms — which is routine on a
+      // busy device (ESPHome's host/idle loop alone is ~16 ms, and a second
+      // ST25R reader doing a blocking SELECT in the same iteration pushes it
+      // past 30 ms).  The symptom was a tag being detected once and then
+      // spuriously "removed" because every later scan aborted here.
+      bool anticol_response = (this->irq_status_ & (IRQ_RXE | IRQ_COL | IRQ_TXE)) != 0;
+
+      if (!anticol_response && millis() - this->last_state_change_ > 20) {
         uint8_t max_prefix_val = (1 << (this->anticol_col_pos_ + 1)) - 1;
         if (this->anticol_col_pos_ > 0 && this->anticol_prefix_val_ < max_prefix_val) {
           this->anticol_prefix_val_++;
@@ -730,7 +740,7 @@ void ST25R::process_state() {
         return;
       }
 
-      if (this->irq_status_ != 0 && (this->irq_status_ & (IRQ_RXE | IRQ_COL | IRQ_TXE))) {
+      if (anticol_response) {
         delay(5);
         uint8_t f1 = this->read_fifo_status1();
         bool has_collision = (this->irq_status_ & IRQ_COL) != 0;
