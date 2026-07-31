@@ -47,7 +47,7 @@ st25r_sim:
     on_tag:
       - lambda: |-
           ESP_LOGI("emulation_test", "READER1_ON_TAG %s", x.c_str());
-          if (x == "CCDDEE11223344") {
+          if (x == "CC-DD-EE-11-22-33-44") {
             bool ok = id(reader1).clean_tag();
             if (ok) { ESP_LOGI("emulation_test", "READER1_CLEAN_TAG_OK"); }
             else    { ESP_LOGW("emulation_test", "READER1_CLEAN_TAG_FAIL"); }
