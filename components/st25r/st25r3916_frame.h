@@ -26,9 +26,20 @@ static constexpr uint8_t kSt25r3916RegFifoStatus2 = 0x1F;
 static constexpr size_t kSt25r3916RxCapacity = 64;
 
 // NUM_TX_BYTES1 (0x22) / NUM_TX_BYTES2 (0x23) for a frame of whole bytes.
-inline void st25r3916_encode_num_tx(size_t n_bytes, bool with_crc, uint8_t &reg1, uint8_t &reg2) {
-  reg1 = static_cast<uint8_t>((n_bytes >> 8) & 0xFF);
-  reg2 = with_crc ? static_cast<uint8_t>((n_bytes & 0x1F) << 3) : 0x00;
+//
+// DS12484 4.5.42/4.5.43: the byte count is one 13-bit field, ntx[12:0].
+// NUM_TX_BYTES1 holds ntx[12:5]; NUM_TX_BYTES2 holds ntx[4:0] in bits 7:3 and
+// the partial-bit count nbtx[2:0] below them. So the split is >> 5, not >> 8,
+// which silently dropped 32 bytes for every multiple of 32 in the frame.
+//
+// The count excludes the CRC the chip appends on Transmit With CRC, so it is
+// the same with and without CRC. The no-CRC path used to write 0 into
+// NUM_TX_BYTES2, which is a length of zero for any frame under 32 bytes.
+// `with_crc` stays in the signature so the call site states which command
+// follows; it deliberately does not change the encoding.
+inline void st25r3916_encode_num_tx(size_t n_bytes, bool /*with_crc*/, uint8_t &reg1, uint8_t &reg2) {
+  reg1 = static_cast<uint8_t>((n_bytes >> 5) & 0xFF);
+  reg2 = static_cast<uint8_t>((n_bytes & 0x1F) << 3);
 }
 
 // Number of bytes currently in the FIFO.

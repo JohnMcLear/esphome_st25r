@@ -14,4 +14,5 @@ debug.yaml
 *.txt
 *.txt
 tests/unit/test_crypto1
+tests/unit/test_st25r3916_frame
 tests/.esphome

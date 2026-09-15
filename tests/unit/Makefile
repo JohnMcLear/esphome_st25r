@@ -1,17 +1,20 @@
 CXX      ?= g++
 CXXFLAGS  = -std=c++11 -Wall -Wextra -I../../components/st25r
-SRCS      = test_crypto1.cpp ../../components/st25r/crypto1.cpp
-TARGET    = test_crypto1
+TARGETS   = test_crypto1 test_st25r3916_frame
 
 .PHONY: all run clean
 
-all: $(TARGET)
+all: $(TARGETS)
 
-$(TARGET): $(SRCS)
+test_crypto1: test_crypto1.cpp ../../components/st25r/crypto1.cpp
 	$(CXX) $(CXXFLAGS) $^ -o $@
 
-run: $(TARGET)
-	./$(TARGET)
+test_st25r3916_frame: test_st25r3916_frame.cpp ../../components/st25r/st25r3916_frame.h
+	$(CXX) $(CXXFLAGS) $< -o $@
+
+run: $(TARGETS)
+	./test_crypto1
+	./test_st25r3916_frame
 
 clean:
-	rm -f $(TARGET)
+	rm -f $(TARGETS)
