@@ -269,6 +269,10 @@ class ST25R : public PollingComponent, public nfc::Nfcc {
   std::unique_ptr<nfc::NfcTag> read_tag_type4_(std::vector<uint8_t> &uid);
   uint8_t isodep_block_number_{0};
   bool isodep_active_{false};  // true between RATS and DESELECT
+  // ST25R3916 transceive_ex(): keep the two trailing FIFO bytes of a with-CRC
+  // exchange instead of stripping them as CRC. Only for responses that carry
+  // no CRC, i.e. the Mifare Classic AUTH nonce.
+  bool rx_keep_crc_{false};
 
   // NFC-B (ISO 14443B) support
   void nfcb_scan_();

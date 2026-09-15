@@ -262,7 +262,7 @@ bool ST25R::transceive_ex(const uint8_t *data, size_t len, uint8_t *resp, uint8_
   }
 
   bool overflow = false;
-  bool ok = st25r3916_finish_rx(received, kSt25r3916RxCapacity, with_crc, resp_len, &overflow);
+  bool ok = st25r3916_finish_rx(received, kSt25r3916RxCapacity, with_crc && !this->rx_keep_crc_, resp_len, &overflow);
   if (overflow) {
     ESP_LOGW(TAG, "transceive_: %zu-byte response exceeds the %zu-byte buffer, dropped", received,
              kSt25r3916RxCapacity);
@@ -347,7 +347,13 @@ bool ST25R::mifare_authenticate_(uint8_t block, bool key_b, uint64_t key,
   uint8_t auth_cmd[2] = {(uint8_t)(key_b ? 0x61 : 0x60), block};
   uint8_t nt_raw[4] = {};
   uint8_t nt_len = 0;
-  if (!this->transceive_(auth_cmd, 2, nt_raw, nt_len, 20) || nt_len < 4) {
+  // The tag nonce is 4 bytes with no CRC. The chip still checks the last two
+  // bytes as one and leaves them in the FIFO, so ask transceive_ex() to keep
+  // them rather than strip them as it does for every other with-CRC response.
+  this->rx_keep_crc_ = true;
+  bool got_nt = this->transceive_(auth_cmd, 2, nt_raw, nt_len, 20);
+  this->rx_keep_crc_ = false;
+  if (!got_nt || nt_len < 4) {
     ESP_LOGW(TAG, "Mifare auth: no NT from tag (block %u)", block);
     return false;
   }

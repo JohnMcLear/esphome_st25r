@@ -246,6 +246,44 @@ static void test_status2_flags_do_not_inflate_count() {
   PASS("FIFO_STATUS2 flag bits do not change the byte count");
 }
 
+// ── Bug 3: CRC left in the FIFO ──────────────────────────────────────────────
+
+static void test_isodep_iblock_status_word() {
+  // I-Block: PCB 0x02, some response data, SW1 SW2 = 90 00; CRC follows in FIFO.
+  std::vector<uint8_t> iblock = {0x02, 0xDE, 0xAD, 0xBE, 0xEF, 0x90, 0x00};
+  uint8_t resp[kSt25r3916RxCapacity];
+  RxResult r = receive(frame_with_crc(iblock), 1, true, resp);
+  CHECK(r.ok, "I-Block not received");
+  CHECK(r.resp_len == iblock.size(), "I-Block resp_len=%u, want %zu", r.resp_len, iblock.size());
+  CHECK(resp[r.resp_len - 2] == 0x90 && resp[r.resp_len - 1] == 0x00, "SW1 SW2 read as %02X %02X, want 90 00",
+        resp[r.resp_len - 2], resp[r.resp_len - 1]);
+  PASS("ISO-DEP I-Block ending 90 00 + CRC: status word is 90 00");
+}
+
+static void test_ntag_read_is_16_bytes() {
+  // NTAG READ returns 16 bytes + CRC; callers use a 16-byte buffer and check len >= 16.
+  RxResult r = receive(frame_with_crc(pattern(16)), 1, true);
+  CHECK(r.ok && r.resp_len == 16, "NTAG READ resp_len=%u, want 16", r.resp_len);
+  PASS("NTAG READ: 16 data bytes, CRC removed");
+}
+
+static void test_keep_crc_when_not_stripping() {
+  // Mifare Classic AUTH: the 4-byte tag nonce carries no CRC, so the caller
+  // asks for the frame untouched.
+  std::vector<uint8_t> nt = {0x01, 0x23, 0x45, 0x67};
+  uint8_t resp[kSt25r3916RxCapacity];
+  RxResult r = receive(nt, 1, false, resp);
+  CHECK(r.ok && r.resp_len == 4 && memcmp(resp, nt.data(), 4) == 0, "nonce resp_len=%u", r.resp_len);
+  PASS("strip_crc=false: 4-byte Mifare nonce returned intact");
+}
+
+static void test_short_frame_not_stripped() {
+  // NTAG WRITE ACK is a 4-bit frame with no CRC: one byte in the FIFO.
+  RxResult r = receive({0x0A}, 1, true);
+  CHECK(r.ok && r.resp_len == 1, "1-byte ACK resp_len=%u, want 1", r.resp_len);
+  PASS("1-byte frame (NTAG ACK) survives CRC strip");
+}
+
 int main() {
   printf("\n=== ST25R3916 frame helper tests ===\n\n");
 
@@ -264,6 +302,20 @@ int main() {
     test_rx_too_long(n, 1, false);
     test_rx_too_long(n, 4, false);
   }
+
+  printf("\n[RX CRC]\n");
+  for (size_t n : {1, 31, 32, 33, 62, 63, 64}) {
+    test_rx_fits(n, 1, true);
+    test_rx_fits(n, 3, true);
+  }
+  for (size_t n : {65, 255, 256, 257}) {
+    test_rx_too_long(n, 1, true);
+    test_rx_too_long(n, 4, true);
+  }
+  test_isodep_iblock_status_word();
+  test_ntag_read_is_16_bytes();
+  test_keep_crc_when_not_stripping();
+  test_short_frame_not_stripped();
 
   printf("\n=== Results: %d passed, %d failed ===\n", g_pass, g_fail);
   return g_fail > 0 ? 1 : 0;

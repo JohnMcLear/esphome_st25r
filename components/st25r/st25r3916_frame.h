@@ -88,8 +88,19 @@ inline size_t st25r3916_drain_fifo(ReadReg read_reg, ReadFifo read_fifo, uint8_t
 // End of frame. Sets resp_len to the bytes in resp and returns true only for a
 // non-empty response that fitted. `overflow`, if given, reports a frame that
 // was longer than capacity.
-inline bool st25r3916_finish_rx(size_t received, size_t capacity, bool /*strip_crc*/, uint8_t &resp_len,
+//
+// strip_crc: on the ST25R3916 the received CRC-A stays in the FIFO after the
+// chip has checked it. DS12484 2.2.13: SOF, EOF, CRC and parity "are
+// automatically checked, all of them (except the CRC bit) are removed". Unlike
+// the ST25R3911/3914 there is no crc_2_fifo bit to turn that off (AUX bit 6 is
+// RFU), and ST's RFAL drops the last two bytes in software unless the caller
+// sets RFAL_TXRX_FLAGS_CRC_RX_KEEP. Do the same here, so an ISO-DEP response
+// ends in SW1 SW2 rather than the CRC. A one-byte frame (the 4-bit NTAG ACK)
+// carries no CRC and is left alone.
+inline bool st25r3916_finish_rx(size_t received, size_t capacity, bool strip_crc, uint8_t &resp_len,
                                 bool *overflow = nullptr) {
+  if (strip_crc && received >= 2)
+    received -= 2;
   bool too_long = received > capacity;
   if (overflow != nullptr)
     *overflow = too_long;
