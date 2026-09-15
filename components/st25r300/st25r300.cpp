@@ -113,7 +113,7 @@ void ST25R300::update() {
   // transceive_ (virtual dispatch through transceive_ex).
   if (this->last_sak_ & 0x20) {
     uint8_t deselect[] = {0xC2};  // S-Block DESELECT, no DID
-    uint8_t dsl_resp[4];
+    uint8_t dsl_resp[kSt25r300RxCapacity];  // transceive_ex() may fill up to 64 bytes
     uint8_t dsl_len = 0;
     this->transceive_(deselect, 1, dsl_resp, dsl_len, 10);
     this->last_sak_ = 0;
@@ -353,7 +353,9 @@ std::unique_ptr<nfc::NfcTag> ST25R300::read_tag(std::vector<uint8_t> &uid) {
   }
 
   if (type == nfc::TAG_TYPE_2) {
-    uint8_t buffer[16];
+    // READ returns 16 bytes plus 2 of CRC in the FIFO, and transceive_ex()
+    // copies all 18 before it strips the CRC, so 16 is too small.
+    uint8_t buffer[kSt25r300RxCapacity];
     uint8_t len;
     std::vector<uint8_t> data;
 
@@ -825,7 +827,7 @@ void ST25R300::nfcv_scan_() {
 
   // 1-slot INVENTORY: [flags=0x26, cmd=0x01, mask_len=0x00]
   uint8_t inv_req[] = {NFCV_INV_FLAG_1SLOT, NFCV_CMD_INVENTORY, 0x00};
-  uint8_t resp[12];
+  uint8_t resp[kSt25r300RxCapacity];  // transceive_blocking_() may fill up to 64 bytes
   uint8_t resp_len = 0;
 
   // Single-tag inventory (multi-tag requires STAY_QUIET + field cycling).
@@ -861,7 +863,7 @@ void ST25R300::nfcv_scan_() {
 
     // Read block 0 (Capability Container)
     uint8_t blk_req[] = {0x02, 0x20, 0x00};  // flags, READ_SINGLE_BLOCK, block=0
-    uint8_t blk_resp[8];
+    uint8_t blk_resp[kSt25r300RxCapacity];  // transceive_blocking_() may fill up to 64 bytes
     uint8_t blk_len = 0;
     std::vector<uint8_t> ndef_data;
 
@@ -950,7 +952,7 @@ bool ST25R300::nfcv_ndef_write(nfc::NdefMessage *message) {
   uint8_t cc_size = (payload.size() + 4) / 8;
   if (cc_size == 0) cc_size = 1;
   uint8_t write_req[7] = {0x02, 0x21, 0x00, 0xE1, 0x40, cc_size, 0x00};
-  uint8_t resp[4];
+  uint8_t resp[kSt25r300RxCapacity];  // transceive_blocking_() may fill up to 64 bytes
   uint8_t resp_len = 0;
 
   if (!this->transceive_blocking_(write_req, sizeof(write_req), resp, resp_len, 25)) {
@@ -1008,7 +1010,7 @@ void ST25R300::nfcb_scan_() {
 
   // SENSB_REQ (ALLB): cmd=0x05, AFI=0x00, PARAM=0x08 (1 slot + WUPB)
   uint8_t sensb_req[] = {0x05, 0x00, 0x08};
-  uint8_t resp[16];
+  uint8_t resp[kSt25r300RxCapacity];  // transceive_blocking_() may fill up to 64 bytes
   uint8_t resp_len = 0;
 
   if (this->transceive_blocking_(sensb_req, sizeof(sensb_req), resp, resp_len, 20) &&
