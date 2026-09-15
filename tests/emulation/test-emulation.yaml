@@ -63,6 +63,36 @@ st25r_sim:
           level: INFO
           format: "READER1_ON_TAG_REMOVED_ACTION %s"
           args: ['x.c_str()']
+    # ISO-DEP framing at the ST25R3916 length boundaries. The sim's test-only
+    # ECHO APDU (80 EE 00 <n> [Lc data]) answers n bytes + 9000, or 6700 if the
+    # command arrived shorter than its Lc says. Frame = PCB + APDU (+ CRC-A on
+    # the reply), so these cover 31/32/33/63-byte commands and 63/64/65-byte
+    # replies against the 64-byte receive buffer.
+    on_isodep_tag:
+      - lambda: |-
+          auto run = [](const char *name, const std::vector<uint8_t> &apdu) {
+            uint8_t resp[64];
+            uint8_t len = 0;
+            bool ok = id(reader1).send_apdu(apdu.data(), apdu.size(), resp, len);
+            uint8_t sw1 = (ok && len >= 2) ? resp[len - 2] : 0;
+            uint8_t sw2 = (ok && len >= 2) ? resp[len - 1] : 0;
+            ESP_LOGI("emulation_test", "ISODEP_APDU %s ok=%d len=%u sw=%02X%02X", name, (int) ok, len, sw1, sw2);
+          };
+          auto echo = [](uint8_t reply_len, uint8_t lc) {
+            std::vector<uint8_t> apdu = {0x80, 0xEE, 0x00, reply_len};
+            if (lc > 0) {
+              apdu.push_back(lc);
+              for (uint8_t i = 0; i < lc; i++) apdu.push_back((uint8_t) (0xA0 + i));
+            }
+            return apdu;
+          };
+          run("tx31", echo(4, 25));
+          run("tx32", echo(4, 26));
+          run("tx33", echo(4, 27));
+          run("tx63", echo(4, 57));
+          run("rx63", echo(60, 0));
+          run("rx64", echo(61, 0));
+          run("rx65", echo(62, 0));
 
   # Reader 2 — separate socket path; used to test multiple-reader scenarios
   - id: reader2

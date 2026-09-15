@@ -96,6 +96,8 @@ class ST25RSim : public st25r::ST25R {
   void on_wupa_();
   void on_anticol_();
   void on_transmit_crc_();
+  void apply_num_tx_bytes_();  // truncate the TX FIFO to NUM_TX_BYTES1/2
+  void append_crc_a_();        // leave CRC-A behind a response, as the chip does
   void on_nfcv_transmit_();  // Handle NFC-V streaming mode transceive
   void on_nfcb_sensb_();    // Handle NFC-B SENSB_REQ
 

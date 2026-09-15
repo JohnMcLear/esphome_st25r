@@ -24,6 +24,16 @@ Test vectors (Key=FFFFFFFFFFFF, UID=DEA30D00, NT=009080A2, NR=12345678):
 - AR par: `01 00 00 01`
 - AT: `51D37655`
 
+### C++ / ST25R3916 transceive framing
+
+Runs the `st25r3916_frame.h` helpers that `ST25R::transceive_ex()` uses against a mock FIFO: `NUM_TX_BYTES1/2` encoding at 31/32/33/64/65/255/256/257 bytes, the 10-bit FIFO count, responses at and over the 64-byte receive buffer (with a canary behind it), CRC-A stripping, an ISO-DEP I-Block ending `90 00`, and the Mifare nonce kept whole.
+
+```bash
+make -C tests/unit run
+```
+
+Expected: `48 passed, 0 failed`
+
 ### Python — Schema validators
 
 Tests the YAML config validators (UID format, Mifare key hex validation, rf_power range), the `set_rf_field` action schema, and a pure-Python PRNG cross-check.

@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Test YAML configs moved to `tests/` folder
 
 ### Fixed
+- **ST25R3916 transmit length** (`st25r`, `st25r_spi`, `st25r_i2c`): `transceive_ex()` wrote `len >> 8` into `NUM_TX_BYTES1`, which holds `ntx[12:5]`, so every frame of 32 bytes or more went out 32, 64, ... bytes short, and the no-CRC path programmed a length of 0 for frames under 32 bytes. Now `len >> 5` / `(len & 0x1F) << 3` on both paths (DS12484 4.5.42/43). ISO-DEP APDUs of 31 bytes or more are the visible case.
+- **ST25R3916 receive length** (`st25r`, `st25r_spi`, `st25r_i2c`): the FIFO count now includes `fifo_b[9:8]` from `FIFO_STATUS2`, and a response longer than the 64-byte receive buffer fails with a warning instead of coming back truncated and reported as a success. Responses that fit are unchanged.
+- **ST25R3916 received CRC** (`st25r`, `st25r_spi`, `st25r_i2c`): the chip checks CRC-A but leaves both bytes in the FIFO (DS12484 2.2.13; there is no `crc_2_fifo` bit as on the ST25R3911/3914). `transceive_ex()` now strips them for with-CRC exchanges, as ST's RFAL does, so `send_apdu()` responses end in SW1 SW2 and the Type 4 NDEF chain gets past SELECT. The Mifare Classic AUTH nonce, which carries no CRC, is kept whole. **Behaviour change:** on ST25R3916 readers every with-CRC response, including `send_apdu()`, is now 2 bytes shorter. Code that compensated for the trailing CRC, or stored values derived from it (for example a SEID string from the README example, which used to end in `9000`), needs updating.
+- **Stack overrun on ST25R3916 NTAG reads**: the Type 2 read passed a 16-byte buffer for a reply that is 18 bytes in the FIFO. Callers of `transceive_()` now pass buffers sized for the 64-byte receive limit.
+- The ST25R300 components (`st25r300`, `st25r300_spi`) are unaffected by the above: they have their own `transceive_ex()`, which already encoded the length correctly and stripped the CRC.
 - `RESET_RX_GAIN` (0xD5) issued before each transceive to reset AGC/squelch
 - Crypto1 parity bits correctly advance LFSR state via `crypto1_bit()` (not `crypto1_filter()`)
 - Anticollision prefix bits correctly restored after `read_fifo()` (chip zeros them)
@@ -64,14 +69,14 @@ HCE service) before the default Type 4 NDEF read chain.
   iteration.
 - **Software CRC strip on the ST25R300 is correctness-critical.**
   The chip's `RX_CRC` register validates but does not strip the
-  trailing CRC16 (unlike the ST25R3916 where the same bit also
-  strips). Every `with_crc=true` response gets the trailing two
-  bytes removed by `strip_trailing_crc()` in `isodep_wtx.h`. The
+  trailing CRC16. Every `with_crc=true` response gets the trailing
+  two bytes removed by `strip_trailing_crc()` in `isodep_wtx.h`. The
   helper is gated on `with_crc=true` and the chip-level CRC has
   already validated the frame before we touch the FIFO, so the
-  bytes we strip are guaranteed-CRC-good padding. Covered by
-  unit tests; flagged here because it's a behaviour the
-  ST25R3916 path doesn't need.
+  bytes we strip are guaranteed-CRC-good padding. The ST25R3916
+  behaves the same way (an earlier version of this note said it
+  strips in hardware; it does not) and is handled by
+  `st25r3916_finish_rx()` in `st25r3916_frame.h`.
 - **No hardware-in-loop CI for the full APDU exchange.** Host-
   side C++ tests cover the WTX state machine (`isodep_wtx.h`)
   and the CRC strip; the full Android HCE round runs only on

@@ -1,5 +1,6 @@
 #include "st25r.h"
 #include "isodep_wtx.h"
+#include "st25r3916_frame.h"
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/helpers.h"
@@ -182,7 +183,7 @@ void ST25R::update() {
   // the card to IDLE state. Without this, ISO-DEP cards ignore subsequent WUPAs.
   if (this->last_sak_ & 0x20) {
     uint8_t deselect[] = {0xC2};  // S-Block DESELECT, no DID
-    uint8_t dsl_resp[4];
+    uint8_t dsl_resp[kSt25r3916RxCapacity];  // transceive_ex() may fill up to 64 bytes
     uint8_t dsl_len = 0;
     this->transceive_(deselect, 1, dsl_resp, dsl_len, 10);
     this->last_sak_ = 0;  // Clear so we don't deselect again if tag is gone
@@ -215,12 +216,10 @@ bool ST25R::transceive_ex(const uint8_t *data, size_t len, uint8_t *resp, uint8_
   this->read_register(IRQ_TIMER);
   this->read_register(IRQ_ERROR);
 
-  this->write_register(NUM_TX_BYTES1, (len >> 8) & 0xFF);
-  if (with_crc) {
-    this->write_register(NUM_TX_BYTES2, (len & 0x1F) << 3);
-  } else {
-    this->write_register(NUM_TX_BYTES2, 0x00); // Whole bytes
-  }
+  uint8_t ntx1, ntx2;
+  st25r3916_encode_num_tx(len, with_crc, ntx1, ntx2);
+  this->write_register(NUM_TX_BYTES1, ntx1);
+  this->write_register(NUM_TX_BYTES2, ntx2);
 
   this->write_fifo(data, len);
 
@@ -235,7 +234,10 @@ bool ST25R::transceive_ex(const uint8_t *data, size_t len, uint8_t *resp, uint8_
 
   uint32_t start = millis();
   resp_len = 0;
+  size_t received = 0;
   bool tx_done = false;
+  auto read_reg = [this](uint8_t reg) { return this->read_register(reg); };
+  auto read_fifo = [this](uint8_t *buf, size_t n) { this->read_fifo(buf, n); };
 
   while (millis() - start < timeout_ms) {
     uint8_t irq;
@@ -251,20 +253,21 @@ bool ST25R::transceive_ex(const uint8_t *data, size_t len, uint8_t *resp, uint8_
     if (irq & IRQ_TXE) tx_done = true;
 
     if (tx_done) {
-      uint8_t f1 = this->read_register(FIFO_STATUS1);
-      if (f1 > 0) {
-        uint8_t to_read = std::min((uint8_t)(64 - resp_len), f1);
-        this->read_fifo(resp + resp_len, to_read);
-        resp_len += to_read;
+      if (st25r3916_drain_fifo(read_reg, read_fifo, resp, kSt25r3916RxCapacity, received) > 0)
         start = millis();
-      }
-      if (irq & IRQ_RXE) {
-        return resp_len > 0;
-      }
+      if (irq & IRQ_RXE)
+        break;
     }
     delay(1);
   }
-  return resp_len > 0;
+
+  bool overflow = false;
+  bool ok = st25r3916_finish_rx(received, kSt25r3916RxCapacity, with_crc && !this->rx_keep_crc_, resp_len, &overflow);
+  if (overflow) {
+    ESP_LOGW(TAG, "transceive_: %zu-byte response exceeds the %zu-byte buffer, dropped", received,
+             kSt25r3916RxCapacity);
+  }
+  return ok;
 }
 
 // ── transceive_mifare_ ───────────────────────────────────────────────────────
@@ -342,9 +345,15 @@ bool ST25R::mifare_authenticate_(uint8_t block, bool key_b, uint64_t key,
                                   struct Crypto1State *cs) {
   // ── Step 1: send AUTHENT command (plain text, with CRC) ──────────────────
   uint8_t auth_cmd[2] = {(uint8_t)(key_b ? 0x61 : 0x60), block};
-  uint8_t nt_raw[4] = {};
+  uint8_t nt_raw[kSt25r3916RxCapacity] = {};  // transceive_ex() may fill up to 64 bytes
   uint8_t nt_len = 0;
-  if (!this->transceive_(auth_cmd, 2, nt_raw, nt_len, 20) || nt_len < 4) {
+  // The tag nonce is 4 bytes with no CRC. The chip still checks the last two
+  // bytes as one and leaves them in the FIFO, so ask transceive_ex() to keep
+  // them rather than strip them as it does for every other with-CRC response.
+  this->rx_keep_crc_ = true;
+  bool got_nt = this->transceive_(auth_cmd, 2, nt_raw, nt_len, 20);
+  this->rx_keep_crc_ = false;
+  if (!got_nt || nt_len < 4) {
     ESP_LOGW(TAG, "Mifare auth: no NT from tag (block %u)", block);
     return false;
   }
@@ -539,7 +548,9 @@ std::unique_ptr<nfc::NfcTag> ST25R::read_tag(std::vector<uint8_t> &uid) {
 
   if (type == nfc::TAG_TYPE_2) {
     std::vector<uint8_t> data;
-    uint8_t buffer[16];
+    // READ returns 16 bytes plus 2 of CRC in the FIFO, and transceive_ex()
+    // may copy up to 64 before it strips the CRC, so 16 is too small.
+    uint8_t buffer[kSt25r3916RxCapacity];
     uint8_t len;
 
     uint8_t read_cmd[2] = {0x30, 0x00};
@@ -800,7 +811,7 @@ void ST25R::process_state() {
           // ST25R300: no-op here — handled via RX_PROTOCOL1 inside transceive_ex()).
           this->pre_select();
 
-          uint8_t sak_buf[3];
+          uint8_t sak_buf[kSt25r3916RxCapacity];  // transceive_ex() may fill up to 64 bytes
           uint8_t sak_len = 0;
           if (!this->transceive_(sel_pk, 7, sak_buf, sak_len) || sak_len == 0) {
             ESP_LOGW(TAG, "SELECT failed (no SAK)");
@@ -1415,7 +1426,7 @@ bool ST25R::isodep_activate_(uint8_t *ats, uint8_t &ats_len) {
       if (pps_dsi > 0 || pps_dri > 0) {
         // PPS: PPSS(0xD0|CID) + PPS0(0x11) + PPS1(DSI<<2|DRI)
         uint8_t pps[] = {0xD0, 0x11, (uint8_t)((pps_dsi << 2) | pps_dri)};
-        uint8_t pps_resp[4];
+        uint8_t pps_resp[kSt25r3916RxCapacity];  // transceive_ex() may fill up to 64 bytes
         uint8_t pps_len = 0;
         if (this->transceive_(pps, sizeof(pps), pps_resp, pps_len) && pps_len >= 1 && (pps_resp[0] & 0xF0) == 0xD0) {
           // Update BIT_RATE register for the negotiated speed
@@ -1949,7 +1960,7 @@ bool ST25R::ndef_write(nfc::NdefMessage *message, bool format) {
   }
 
   // NFC-A Type 2 NDEF write (NTAG / Ultralight)
-  uint8_t buffer[16];
+  uint8_t buffer[kSt25r3916RxCapacity];  // transceive_ex() may fill up to 64 bytes
   uint8_t len;
 
   if (format) {
