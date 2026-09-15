@@ -1001,6 +1001,42 @@ class TestIsoDepType4:
         assert any("SAK=0x20" in l for l in logs), "SAK=0x20 not logged"
         assert any("T4T" in l for l in logs), "T4T NDEF read not attempted"
 
+    def test_type4_ndef_chain_reads_status_words(self, sim):
+        """The T4T chain gets past SELECT app, SELECT CC and READ CC.
+
+        Each step checks SW1 SW2 at the end of the response. The sim, like the
+        chip, leaves CRC-A behind every reply, so this only passes when
+        transceive_ex() strips it.
+        """
+        proc, _, _ = sim
+        proc.wait_for(r"T4T CC: NDEF file=0xE104", timeout=10)
+
+    def test_isodep_long_commands_arrive_whole(self, sim):
+        """31/32/33/63-byte I-Block commands reach the tag at full length.
+
+        With NUM_TX_BYTES1 written as len >> 8, 32 bytes and over went out
+        32 bytes short and the sim answered 6700 (wrong length).
+        """
+        proc, _, _ = sim
+        for name in ("tx31", "tx32", "tx33", "tx63"):
+            line = proc.wait_for(rf"ISODEP_APDU {name} ", timeout=10)
+            assert "ok=1 len=6 sw=9000" in line, line
+
+    def test_isodep_replies_up_to_buffer(self, sim):
+        """63 and 64-byte I-Block replies (+ CRC) come back whole, 90 00 last."""
+        proc, _, _ = sim
+        line = proc.wait_for(r"ISODEP_APDU rx63 ", timeout=10)
+        assert "ok=1 len=62 sw=9000" in line, line
+        line = proc.wait_for(r"ISODEP_APDU rx64 ", timeout=10)
+        assert "ok=1 len=63 sw=9000" in line, line
+
+    def test_isodep_reply_over_buffer_fails(self, sim):
+        """A 65-byte reply is refused, not returned truncated as a success."""
+        proc, _, _ = sim
+        line = proc.wait_for(r"ISODEP_APDU rx65 ", timeout=10)
+        assert "ok=0" in line, line
+        proc.wait_for(r"exceeds the 64-byte buffer", timeout=5)
+
     def test_type4_tag_removed(self, sim):
         proc, ctrl1, ctrl2 = sim
         with proc._lock:
