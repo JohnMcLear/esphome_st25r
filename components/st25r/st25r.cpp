@@ -255,13 +255,19 @@ bool ST25R::transceive_ex(const uint8_t *data, size_t len, uint8_t *resp, uint8_
     if (tx_done) {
       if (st25r3916_drain_fifo(read_reg, read_fifo, resp, kSt25r3916RxCapacity, received) > 0)
         start = millis();
-      if (irq & IRQ_RXE) {
-        return st25r3916_finish_rx(received, kSt25r3916RxCapacity, with_crc, resp_len);
-      }
+      if (irq & IRQ_RXE)
+        break;
     }
     delay(1);
   }
-  return st25r3916_finish_rx(received, kSt25r3916RxCapacity, with_crc, resp_len);
+
+  bool overflow = false;
+  bool ok = st25r3916_finish_rx(received, kSt25r3916RxCapacity, with_crc, resp_len, &overflow);
+  if (overflow) {
+    ESP_LOGW(TAG, "transceive_: %zu-byte response exceeds the %zu-byte buffer, dropped", received,
+             kSt25r3916RxCapacity);
+  }
+  return ok;
 }
 
 // ── transceive_mifare_ ───────────────────────────────────────────────────────

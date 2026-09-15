@@ -43,28 +43,58 @@ inline void st25r3916_encode_num_tx(size_t n_bytes, bool /*with_crc*/, uint8_t &
 }
 
 // Number of bytes currently in the FIFO.
-inline uint16_t st25r3916_fifo_count(uint8_t status1, uint8_t /*status2*/) { return status1; }
+//
+// DS12484 4.5.36/4.5.37: the FIFO holds 512 bytes, so the count is 10 bits.
+// FIFO_STATUS1 is fifo_b[7:0]; FIFO_STATUS2 carries fifo_b[9:8] in bits 7:6,
+// with fifo_ovr, fifo_lb[2:0] and np_lb below them.
+inline uint16_t st25r3916_fifo_count(uint8_t status1, uint8_t status2) {
+  return static_cast<uint16_t>((static_cast<uint16_t>((status2 >> 6) & 0x03) << 8) | status1);
+}
 
 // One receive poll: move whatever the FIFO holds into resp.
 //
-// `received` counts bytes taken out of the FIFO for this frame. Returns the
-// FIFO count seen, so the caller can tell that the tag is still talking.
+// `received` counts every byte taken out of the FIFO for this frame, including
+// any that did not fit in resp. Those are still read, into a scratch buffer and
+// dropped, so the FIFO empties and the next poll does not count them again.
+// st25r3916_finish_rx() then sees received > capacity and fails the frame
+// instead of handing back a truncated one as if it were whole.
+//
+// Returns the FIFO count seen, so the caller can tell that the tag is still
+// talking.
 template<typename ReadReg, typename ReadFifo>
 inline size_t st25r3916_drain_fifo(ReadReg read_reg, ReadFifo read_fifo, uint8_t *resp, size_t capacity,
-                                 size_t &received) {
-  uint8_t f1 = read_reg(kSt25r3916RegFifoStatus1);
-  if (f1 == 0)
+                                   size_t &received) {
+  uint8_t status1 = read_reg(kSt25r3916RegFifoStatus1);
+  uint8_t status2 = read_reg(kSt25r3916RegFifoStatus2);
+  size_t count = st25r3916_fifo_count(status1, status2);
+  if (count == 0)
     return 0;
-  size_t to_read = std::min(capacity - received, static_cast<size_t>(f1));
-  read_fifo(resp + received, to_read);
-  received += to_read;
-  return f1;
+
+  size_t store = received < capacity ? std::min(capacity - received, count) : 0;
+  if (store > 0)
+    read_fifo(resp + received, store);
+
+  uint8_t scratch[32];
+  for (size_t left = count - store; left > 0;) {
+    size_t n = std::min(left, sizeof(scratch));
+    read_fifo(scratch, n);
+    left -= n;
+  }
+
+  received += count;
+  return count;
 }
 
-// End of frame. Sets resp_len and returns whether the caller got a response.
-inline bool st25r3916_finish_rx(size_t received, size_t /*capacity*/, bool /*strip_crc*/, uint8_t &resp_len) {
-  resp_len = static_cast<uint8_t>(received);
-  return resp_len > 0;
+// End of frame. Sets resp_len to the bytes in resp and returns true only for a
+// non-empty response that fitted. `overflow`, if given, reports a frame that
+// was longer than capacity.
+inline bool st25r3916_finish_rx(size_t received, size_t capacity, bool /*strip_crc*/, uint8_t &resp_len,
+                                bool *overflow = nullptr) {
+  bool too_long = received > capacity;
+  if (overflow != nullptr)
+    *overflow = too_long;
+  resp_len = static_cast<uint8_t>(too_long ? capacity : received);
+  return !too_long && resp_len > 0;
 }
 
 }  // namespace st25r
