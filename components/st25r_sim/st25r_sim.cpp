@@ -248,8 +248,14 @@ uint8_t ST25RSim::read_register(uint8_t reg) {
     case REG_IRQ_MAIN:      { uint8_t v = pending_irq_main_;  pending_irq_main_  = 0; return v; }
     case REG_IRQ_TIMER:     { uint8_t v = pending_irq_timer_; pending_irq_timer_ = 0; return v; }
     case REG_IRQ_ERROR:     return 0;
-    case REG_FIFO_STATUS1:  return (uint8_t)std::min(fifo_out_.size(), (size_t)255);
-    case REG_FIFO_STATUS2:  { uint8_t v = fifo_status2_; fifo_status2_ = 0; return v; }
+    // FIFO byte count is 10 bits: fifo_b[7:0] in FIFO_STATUS1, fifo_b[9:8] in
+    // FIFO_STATUS2 bits 7:6 (DS12484 4.5.36/37). The flag bits sit below.
+    case REG_FIFO_STATUS1:  return (uint8_t)(fifo_out_.size() & 0xFF);
+    case REG_FIFO_STATUS2:  {
+      uint8_t v = (uint8_t)(((fifo_out_.size() >> 8) & 0x03) << 6) | (fifo_status2_ & 0x3F);
+      fifo_status2_ = 0;
+      return v;
+    }
     case REG_COLLISION_DISPLAY: return collision_display_;
     case REG_AD_CONV_RESULT:    return ad_conv_result_;
     default:
@@ -317,6 +323,7 @@ void ST25RSim::write_command(uint8_t command) {
       if ((regs_[0x03] & 0x78) == 0x70) {  // MODE om=0x0E → subcarrier_stream (NFC-V)
         on_nfcv_transmit_();
       } else {
+        apply_num_tx_bytes_();
         on_anticol_();
       }
       break;
@@ -325,6 +332,7 @@ void ST25RSim::write_command(uint8_t command) {
       if ((regs_[0x03] & 0xF8) == 0x90) {  // MODE om=0x02 + tr_am=1 → NFC-B
         on_nfcb_sensb_();
       } else {
+        apply_num_tx_bytes_();
         on_transmit_crc_();
       }
       break;
@@ -347,6 +355,29 @@ void ST25RSim::write_command(uint8_t command) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
+
+// The chip transmits the length programmed in NUM_TX_BYTES1/2, not whatever
+// happens to be in the FIFO. ntx[12:0] is split as NUM_TX_BYTES1 = ntx[12:5],
+// NUM_TX_BYTES2 = ntx[4:0] << 3 | nbtx[2:0]; a non-zero nbtx sends one more,
+// partial, byte. Anything past that stays behind and never reaches the tag.
+void ST25RSim::apply_num_tx_bytes_() {
+  size_t ntx = ((size_t)regs_[0x22] << 5) | (size_t)(regs_[0x23] >> 3);
+  size_t on_air = ntx + ((regs_[0x23] & 0x07) ? 1 : 0);
+  if (fifo_in_.size() > on_air) {
+    ESP_LOGW(TAG, "SIM TX: FIFO holds %u bytes but NUM_TX_BYTES programs %u; sending %u",
+             (unsigned)fifo_in_.size(), (unsigned)on_air, (unsigned)on_air);
+    fifo_in_.resize(on_air);
+  }
+}
+
+// A with-CRC response lands in the ST25R3916 FIFO with its CRC-A still behind
+// it (DS12484 2.2.13). Frames that carry no CRC (the Mifare Classic nonce, the
+// 4-bit NTAG ACK) are left as they are.
+void ST25RSim::append_crc_a_() {
+  uint16_t crc = mifare_crc_a(fifo_out_.data(), fifo_out_.size());
+  fifo_out_.push_back((uint8_t)(crc & 0xFF));
+  fifo_out_.push_back((uint8_t)(crc >> 8));
+}
 
 std::array<uint8_t, 4> ST25RSim::uid_at_cl_(const VirtualTag &tag,
                                              uint8_t cl) const {
@@ -770,6 +801,7 @@ void ST25RSim::on_transmit_crc_() {
         last_selected_valid_ = true;
         last_selected_full_uid_ = virtual_tags_[i].uid;
         fifo_out_ = {sak};
+        append_crc_a_();
         pending_irq_main_ = IRQ_TXE | IRQ_RXE;
         ESP_LOGV(TAG, "SIM SELECT CL%u → SAK=0x%02X", cl, sak);
         return;
@@ -904,6 +936,7 @@ void ST25RSim::on_transmit_crc_() {
     }
 
     fifo_out_.assign(response, response + 16);
+    append_crc_a_();
     pending_irq_main_ = IRQ_TXE | IRQ_RXE;
     ESP_LOGV(TAG, "SIM PAGE READ page=%u", page);
     return;
@@ -913,6 +946,7 @@ void ST25RSim::on_transmit_crc_() {
   if (cmd == 0xE0 && frame.size() >= 2) {
     // Respond with basic ATS: TL=5, T0=0x75, TA=0x31, TB=0x02, TC=0x51
     fifo_out_ = {0x05, 0x75, 0x31, 0x02, 0x51};
+    append_crc_a_();
     pending_irq_main_ = IRQ_TXE | IRQ_RXE;
     ESP_LOGV(TAG, "SIM RATS → ATS (TL=5)");
     return;
@@ -923,7 +957,22 @@ void ST25RSim::on_transmit_crc_() {
     // I-Block with APDU. Check for SELECT NDEF app (INS=0xA4, P1=0x04)
     // Respond with 9000 (success) for known commands, 6A82 (not found) for others
     uint8_t pcb_resp = 0x02 | ((cmd ^ 0x01) & 0x01);  // toggle block number
-    if (frame.size() >= 6 && frame[1] == 0x00 && frame[2] == 0xA4 && frame[3] == 0x04) {
+    // APDU = frame[1..]. With a body, Lc (frame[5]) must be matched by that
+    // many data bytes, or the command was cut short in transmission: answer
+    // 6700 (wrong length) as a card would.
+    size_t apdu_len = frame.size() - 1;
+    if (apdu_len > 5 && apdu_len < 5u + frame[5]) {
+      fifo_out_ = {pcb_resp, 0x67, 0x00};
+    } else if (frame.size() >= 5 && frame[1] == 0x80 && frame[2] == 0xEE) {
+      // Test-only ECHO: 80 EE 00 <n> [Lc data...] → n bytes 0x00..n-1 + 9000.
+      // Lets the emulation suite drive long commands and long responses.
+      uint8_t n = frame[4];
+      fifo_out_.clear();
+      fifo_out_.push_back(pcb_resp);
+      for (uint8_t i = 0; i < n; i++) fifo_out_.push_back(i);
+      fifo_out_.push_back(0x90);
+      fifo_out_.push_back(0x00);
+    } else if (frame.size() >= 6 && frame[1] == 0x00 && frame[2] == 0xA4 && frame[3] == 0x04) {
       // SELECT by name — respond success
       fifo_out_ = {pcb_resp, 0x90, 0x00};
     } else if (frame.size() >= 6 && frame[1] == 0x00 && frame[2] == 0xA4 && frame[3] == 0x00) {
@@ -951,6 +1000,7 @@ void ST25RSim::on_transmit_crc_() {
       // Unknown APDU — respond 6A82 (file not found)
       fifo_out_ = {pcb_resp, 0x6A, 0x82};
     }
+    append_crc_a_();
     pending_irq_main_ = IRQ_TXE | IRQ_RXE;
     ESP_LOGV(TAG, "SIM I-Block → response (%u bytes)", (unsigned)fifo_out_.size());
     return;
