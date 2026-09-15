@@ -183,7 +183,7 @@ void ST25R::update() {
   // the card to IDLE state. Without this, ISO-DEP cards ignore subsequent WUPAs.
   if (this->last_sak_ & 0x20) {
     uint8_t deselect[] = {0xC2};  // S-Block DESELECT, no DID
-    uint8_t dsl_resp[4];
+    uint8_t dsl_resp[kSt25r3916RxCapacity];  // transceive_ex() may fill up to 64 bytes
     uint8_t dsl_len = 0;
     this->transceive_(deselect, 1, dsl_resp, dsl_len, 10);
     this->last_sak_ = 0;  // Clear so we don't deselect again if tag is gone
@@ -345,7 +345,7 @@ bool ST25R::mifare_authenticate_(uint8_t block, bool key_b, uint64_t key,
                                   struct Crypto1State *cs) {
   // ── Step 1: send AUTHENT command (plain text, with CRC) ──────────────────
   uint8_t auth_cmd[2] = {(uint8_t)(key_b ? 0x61 : 0x60), block};
-  uint8_t nt_raw[4] = {};
+  uint8_t nt_raw[kSt25r3916RxCapacity] = {};  // transceive_ex() may fill up to 64 bytes
   uint8_t nt_len = 0;
   // The tag nonce is 4 bytes with no CRC. The chip still checks the last two
   // bytes as one and leaves them in the FIFO, so ask transceive_ex() to keep
@@ -548,7 +548,9 @@ std::unique_ptr<nfc::NfcTag> ST25R::read_tag(std::vector<uint8_t> &uid) {
 
   if (type == nfc::TAG_TYPE_2) {
     std::vector<uint8_t> data;
-    uint8_t buffer[16];
+    // READ returns 16 bytes plus 2 of CRC in the FIFO, and transceive_ex()
+    // may copy up to 64 before it strips the CRC, so 16 is too small.
+    uint8_t buffer[kSt25r3916RxCapacity];
     uint8_t len;
 
     uint8_t read_cmd[2] = {0x30, 0x00};
@@ -809,7 +811,7 @@ void ST25R::process_state() {
           // ST25R300: no-op here — handled via RX_PROTOCOL1 inside transceive_ex()).
           this->pre_select();
 
-          uint8_t sak_buf[3];
+          uint8_t sak_buf[kSt25r3916RxCapacity];  // transceive_ex() may fill up to 64 bytes
           uint8_t sak_len = 0;
           if (!this->transceive_(sel_pk, 7, sak_buf, sak_len) || sak_len == 0) {
             ESP_LOGW(TAG, "SELECT failed (no SAK)");
@@ -1424,7 +1426,7 @@ bool ST25R::isodep_activate_(uint8_t *ats, uint8_t &ats_len) {
       if (pps_dsi > 0 || pps_dri > 0) {
         // PPS: PPSS(0xD0|CID) + PPS0(0x11) + PPS1(DSI<<2|DRI)
         uint8_t pps[] = {0xD0, 0x11, (uint8_t)((pps_dsi << 2) | pps_dri)};
-        uint8_t pps_resp[4];
+        uint8_t pps_resp[kSt25r3916RxCapacity];  // transceive_ex() may fill up to 64 bytes
         uint8_t pps_len = 0;
         if (this->transceive_(pps, sizeof(pps), pps_resp, pps_len) && pps_len >= 1 && (pps_resp[0] & 0xF0) == 0xD0) {
           // Update BIT_RATE register for the negotiated speed
@@ -1958,7 +1960,7 @@ bool ST25R::ndef_write(nfc::NdefMessage *message, bool format) {
   }
 
   // NFC-A Type 2 NDEF write (NTAG / Ultralight)
-  uint8_t buffer[16];
+  uint8_t buffer[kSt25r3916RxCapacity];  // transceive_ex() may fill up to 64 bytes
   uint8_t len;
 
   if (format) {
