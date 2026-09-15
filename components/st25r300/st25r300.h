@@ -6,6 +6,11 @@
 namespace esphome {
 namespace st25r300 {
 
+// Bytes transceive_ex() and transceive_blocking_() will write into a caller's
+// response buffer, whatever the reply's expected length. A noisy or longer than
+// expected reply still lands in full, so every receive buffer is this size.
+static constexpr size_t kSt25r300RxCapacity = 64;
+
 // ST25R300 inherits the full shared state machine, NDEF, multi-tag, and
 // finalize_scan_ logic from st25r::ST25R. Only chip-specific hardware
 // differences (init, IRQ mapping, anticol framing, transceive) are overridden here.
