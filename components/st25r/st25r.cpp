@@ -1,5 +1,6 @@
 #include "st25r.h"
 #include "isodep_wtx.h"
+#include "st25r3916_frame.h"
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/helpers.h"
@@ -215,12 +216,10 @@ bool ST25R::transceive_ex(const uint8_t *data, size_t len, uint8_t *resp, uint8_
   this->read_register(IRQ_TIMER);
   this->read_register(IRQ_ERROR);
 
-  this->write_register(NUM_TX_BYTES1, (len >> 8) & 0xFF);
-  if (with_crc) {
-    this->write_register(NUM_TX_BYTES2, (len & 0x1F) << 3);
-  } else {
-    this->write_register(NUM_TX_BYTES2, 0x00); // Whole bytes
-  }
+  uint8_t ntx1, ntx2;
+  st25r3916_encode_num_tx(len, with_crc, ntx1, ntx2);
+  this->write_register(NUM_TX_BYTES1, ntx1);
+  this->write_register(NUM_TX_BYTES2, ntx2);
 
   this->write_fifo(data, len);
 
@@ -235,7 +234,10 @@ bool ST25R::transceive_ex(const uint8_t *data, size_t len, uint8_t *resp, uint8_
 
   uint32_t start = millis();
   resp_len = 0;
+  size_t received = 0;
   bool tx_done = false;
+  auto read_reg = [this](uint8_t reg) { return this->read_register(reg); };
+  auto read_fifo = [this](uint8_t *buf, size_t n) { this->read_fifo(buf, n); };
 
   while (millis() - start < timeout_ms) {
     uint8_t irq;
@@ -251,20 +253,15 @@ bool ST25R::transceive_ex(const uint8_t *data, size_t len, uint8_t *resp, uint8_
     if (irq & IRQ_TXE) tx_done = true;
 
     if (tx_done) {
-      uint8_t f1 = this->read_register(FIFO_STATUS1);
-      if (f1 > 0) {
-        uint8_t to_read = std::min((uint8_t)(64 - resp_len), f1);
-        this->read_fifo(resp + resp_len, to_read);
-        resp_len += to_read;
+      if (st25r3916_drain_fifo(read_reg, read_fifo, resp, kSt25r3916RxCapacity, received) > 0)
         start = millis();
-      }
       if (irq & IRQ_RXE) {
-        return resp_len > 0;
+        return st25r3916_finish_rx(received, kSt25r3916RxCapacity, with_crc, resp_len);
       }
     }
     delay(1);
   }
-  return resp_len > 0;
+  return st25r3916_finish_rx(received, kSt25r3916RxCapacity, with_crc, resp_len);
 }
 
 // ── transceive_mifare_ ───────────────────────────────────────────────────────
