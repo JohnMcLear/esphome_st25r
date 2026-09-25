@@ -1,5 +1,6 @@
 #include "st25r.h"
 #include "isodep_wtx.h"
+#include "scan_step.h"
 #include "st25r3916_frame.h"
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"
@@ -198,6 +199,7 @@ void ST25R::update() {
   delay(1);
   this->state_ = STATE_WUPA;
   this->last_state_change_ = millis();
+  this->scan_started_ms_ = this->last_state_change_;
 }
 
 bool ST25R::transceive_(const uint8_t *data, size_t len, uint8_t *resp, uint8_t &resp_len, uint32_t timeout_ms) {
@@ -678,6 +680,20 @@ void ST25R::loop() {
 }
 
 void ST25R::process_state() {
+  // Backstop: update() skips the scan and the health check while a scan is in
+  // flight, so a scan that never finishes silences the reader while the status
+  // sensor keeps saying healthy. Every state has its own timeout; this catches
+  // a path that does not.
+  if ((this->state_ == STATE_WUPA || this->state_ == STATE_ANTICOL || this->state_ == STATE_SELECT) &&
+      scan_overran(millis(), this->scan_started_ms_)) {
+    ESP_LOGW(TAG, "Scan stuck in state %d for over %" PRIu32 " ms, aborting it", (int) this->state_,
+             kScanWatchdogMs);
+    this->irq_status_ = 0;
+    this->state_ = STATE_IDLE;
+    this->finalize_scan_();
+    return;
+  }
+
   switch (this->state_) {
     case STATE_IDLE:
       break;
@@ -723,17 +739,28 @@ void ST25R::process_state() {
     }
 
     case STATE_ANTICOL: {
-      // The 20 ms budget is a *no-response* timeout, so it must only be
-      // consulted when nothing came back.  Checking it first would throw away
-      // an anticollision response that already sits in the FIFO whenever the
-      // main loop happened to be slower than 20 ms — which is routine on a
-      // busy device (ESPHome's host/idle loop alone is ~16 ms, and a second
-      // ST25R reader doing a blocking SELECT in the same iteration pushes it
-      // past 30 ms).  The symptom was a tag being detected once and then
-      // spuriously "removed" because every later scan aborted here.
-      bool anticol_response = (this->irq_status_ & (IRQ_RXE | IRQ_COL | IRQ_TXE)) != 0;
+      // An IRQ is not an answer: TXE fires for our own frame and RXE can end a
+      // truncated frame. On the ST25R300 the bits also stay set until the next
+      // frame goes out. So anything short of a collision or a full UID falls
+      // through to the no-response timeout; otherwise a tag that answers WUPA
+      // and then goes quiet leaves the scan here forever, update() never runs
+      // again, and the status sensor keeps saying healthy. A full answer is
+      // still taken after the budget, so a slow main loop (9ce68af) cannot
+      // throw it away. The decision lives in scan_step.h so it is unit tested.
+      bool irq_seen = (this->irq_status_ & (IRQ_RXE | IRQ_COL | IRQ_TXE)) != 0;
+      uint8_t f1 = 0;
+      bool has_collision = false;
+      if (irq_seen) {
+        delay(5);
+        f1 = this->read_fifo_status1();
+        has_collision = (this->irq_status_ & IRQ_COL) != 0;
+      }
+      AnticolStep step = anticol_step(irq_seen, has_collision, f1, millis() - this->last_state_change_);
 
-      if (!anticol_response && millis() - this->last_state_change_ > 20) {
+      if (step == AnticolStep::WAIT)
+        break;
+
+      if (step == AnticolStep::TIMEOUT) {
         uint8_t max_prefix_val = (1 << (this->anticol_col_pos_ + 1)) - 1;
         if (this->anticol_col_pos_ > 0 && this->anticol_prefix_val_ < max_prefix_val) {
           this->anticol_prefix_val_++;
@@ -751,170 +778,164 @@ void ST25R::process_state() {
         return;
       }
 
-      if (anticol_response) {
-        delay(5);
-        uint8_t f1 = this->read_fifo_status1();
-        bool has_collision = (this->irq_status_ & IRQ_COL) != 0;
+      if (step == AnticolStep::COLLISION) {
+        uint8_t col_raw = this->read_collision_display();
+        uint8_t c_byte = (col_raw >> 4) & 0x0F;
+        uint8_t c_bit  = (col_raw >> 1) & 0x07;
+        // col_pos_abs is from start of TX frame (SEL + NVB = 2 bytes = 16 bits)
+        int uid_col_pos = (int)(c_byte * 8 + c_bit) - 16;
+        if (uid_col_pos < 0) uid_col_pos = 0;
+        // Drain any garbage FIFO bytes
+        if (f1 > 0) { uint8_t tmp[8]; this->read_fifo(tmp, std::min(f1, (uint8_t)8)); }
 
-        if (has_collision) {
-          uint8_t col_raw = this->read_collision_display();
-          uint8_t c_byte = (col_raw >> 4) & 0x0F;
-          uint8_t c_bit  = (col_raw >> 1) & 0x07;
-          // col_pos_abs is from start of TX frame (SEL + NVB = 2 bytes = 16 bits)
-          int uid_col_pos = (int)(c_byte * 8 + c_bit) - 16;
-          if (uid_col_pos < 0) uid_col_pos = 0;
-          // Drain any garbage FIFO bytes
-          if (f1 > 0) { uint8_t tmp[8]; this->read_fifo(tmp, std::min(f1, (uint8_t)8)); }
+        // FIFO bytes during collision are unreliable — brute-force all 2^(col_pos+1) prefixes
+        this->anticol_col_pos_ = uid_col_pos;
+        this->anticol_prefix_val_ = 0;
+        this->apply_anticol_prefix_();
 
-          // FIFO bytes during collision are unreliable — brute-force all 2^(col_pos+1) prefixes
-          this->anticol_col_pos_ = uid_col_pos;
-          this->anticol_prefix_val_ = 0;
-          this->apply_anticol_prefix_();
+        this->send_anticol_frame();
+        this->last_state_change_ = millis();
 
-          this->send_anticol_frame();
-          this->last_state_change_ = millis();
+      } else {  // AnticolStep::ANSWER
+        // Clean response — full UID received
+        uint8_t resp[5];
+        this->read_fifo(resp, 5);
 
-        } else if (f1 >= 5) {
-          // Clean response — full UID received
-          uint8_t resp[5];
-          this->read_fifo(resp, 5);
+        // The tag only sends bits NOT covered by the prefix. The FIFO stores the
+        // tag's response bits with zeros in the first anticol_prefix_bits_ positions.
+        // Reconstruct the full UID by OR-ing the prefix bits back in.
+        uint8_t full_uid[4];
+        memcpy(full_uid, resp, 4);
+        for (int k = 0; k < (int) this->anticol_prefix_full_; k++) {
+          full_uid[k] = this->anticol_prefix_[k];
+        }
+        if (this->anticol_prefix_bits_ > 0) {
+          uint8_t mask = (uint8_t)((1 << this->anticol_prefix_bits_) - 1);
+          full_uid[this->anticol_prefix_full_] =
+              (this->anticol_prefix_[this->anticol_prefix_full_] & mask) |
+              (resp[this->anticol_prefix_full_] & (uint8_t)(~mask));
+        }
+        uint8_t bcc = full_uid[0] ^ full_uid[1] ^ full_uid[2] ^ full_uid[3];
 
-          // The tag only sends bits NOT covered by the prefix. The FIFO stores the
-          // tag's response bits with zeros in the first anticol_prefix_bits_ positions.
-          // Reconstruct the full UID by OR-ing the prefix bits back in.
-          uint8_t full_uid[4];
-          memcpy(full_uid, resp, 4);
-          for (int k = 0; k < (int) this->anticol_prefix_full_; k++) {
-            full_uid[k] = this->anticol_prefix_[k];
+        uint8_t sel_cmds[] = {0x93, 0x95, 0x97};
+        uint8_t sel_pk[7] = {sel_cmds[this->cascade_level_], 0x70,
+                             full_uid[0], full_uid[1], full_uid[2], full_uid[3], bcc};
+
+        if (full_uid[0] == 0x88) {
+          for (int i = 1; i < 4; i++)
+            this->current_uid_bytes_.push_back(full_uid[i]);
+        } else {
+          for (unsigned char b : full_uid)
+            this->current_uid_bytes_.push_back(b);
+        }
+
+        // Clear anticollision mode before SELECT (ST25R3916: ISO14443A_CONF=0x00;
+        // ST25R300: no-op here — handled via RX_PROTOCOL1 inside transceive_ex()).
+        this->pre_select();
+
+        uint8_t sak_buf[kSt25r3916RxCapacity];  // transceive_ex() may fill up to 64 bytes
+        uint8_t sak_len = 0;
+        if (!this->transceive_(sel_pk, 7, sak_buf, sak_len) || sak_len == 0) {
+          ESP_LOGW(TAG, "SELECT failed (no SAK)");
+          this->state_ = STATE_IDLE;
+          this->finalize_scan_();
+          return;
+        }
+        uint8_t sak = sak_buf[0];
+        this->last_sak_ = sak;
+
+        if (sak & 0x04) {  // Cascade bit — need another anticollision level
+          // Save CL1 collision state before overwriting for CL2
+          if (this->cascade_level_ == 0) {
+            this->saved_col_pos_ = this->anticol_col_pos_;
+            this->saved_prefix_val_ = this->anticol_prefix_val_;
+            this->saved_anticol_valid_ = (this->anticol_col_pos_ > 0 || this->anticol_prefix_bits_ > 0);
           }
-          if (this->anticol_prefix_bits_ > 0) {
-            uint8_t mask = (uint8_t)((1 << this->anticol_prefix_bits_) - 1);
-            full_uid[this->anticol_prefix_full_] =
-                (this->anticol_prefix_[this->anticol_prefix_full_] & mask) |
-                (resp[this->anticol_prefix_full_] & (uint8_t)(~mask));
-          }
-          uint8_t bcc = full_uid[0] ^ full_uid[1] ^ full_uid[2] ^ full_uid[3];
-
-          uint8_t sel_cmds[] = {0x93, 0x95, 0x97};
-          uint8_t sel_pk[7] = {sel_cmds[this->cascade_level_], 0x70,
-                               full_uid[0], full_uid[1], full_uid[2], full_uid[3], bcc};
-
-          if (full_uid[0] == 0x88) {
-            for (int i = 1; i < 4; i++)
-              this->current_uid_bytes_.push_back(full_uid[i]);
-          } else {
-            for (unsigned char b : full_uid)
-              this->current_uid_bytes_.push_back(b);
-          }
-
-          // Clear anticollision mode before SELECT (ST25R3916: ISO14443A_CONF=0x00;
-          // ST25R300: no-op here — handled via RX_PROTOCOL1 inside transceive_ex()).
-          this->pre_select();
-
-          uint8_t sak_buf[kSt25r3916RxCapacity];  // transceive_ex() may fill up to 64 bytes
-          uint8_t sak_len = 0;
-          if (!this->transceive_(sel_pk, 7, sak_buf, sak_len) || sak_len == 0) {
-            ESP_LOGW(TAG, "SELECT failed (no SAK)");
+          this->cascade_level_++;
+          if (this->cascade_level_ > 2) {
+            ESP_LOGE(TAG, "Too many cascade levels");
             this->state_ = STATE_IDLE;
             this->finalize_scan_();
             return;
           }
-          uint8_t sak = sak_buf[0];
-          this->last_sak_ = sak;
-
-          if (sak & 0x04) {  // Cascade bit — need another anticollision level
-            // Save CL1 collision state before overwriting for CL2
-            if (this->cascade_level_ == 0) {
-              this->saved_col_pos_ = this->anticol_col_pos_;
-              this->saved_prefix_val_ = this->anticol_prefix_val_;
-              this->saved_anticol_valid_ = (this->anticol_col_pos_ > 0 || this->anticol_prefix_bits_ > 0);
-            }
-            this->cascade_level_++;
-            if (this->cascade_level_ > 2) {
-              ESP_LOGE(TAG, "Too many cascade levels");
-              this->state_ = STATE_IDLE;
-              this->finalize_scan_();
-              return;
-            }
-            this->anticol_prefix_full_ = 0;
-            this->anticol_prefix_bits_ = 0;
-            this->anticol_col_pos_ = 0;
-            this->anticol_prefix_val_ = 0;
-            this->send_anticol_frame();
-            this->state_ = STATE_ANTICOL;
-            this->last_state_change_ = millis();
-          } else {
-            // Tag fully selected — validate UID length (must be 4, 7, or 10 bytes)
-            size_t uid_bytes_len = this->current_uid_bytes_.size();
-            char uid_buf[nfc::FORMAT_UID_BUFFER_SIZE];
-            nfc::format_uid_to(uid_buf, this->current_uid_bytes_);
-            if (uid_bytes_len != 4 && uid_bytes_len != 7 && uid_bytes_len != 10) {
-              ESP_LOGW(TAG, "Discarding invalid UID len=%zu (%s)", uid_bytes_len, uid_buf);
-              this->state_ = STATE_IDLE;
-              this->finalize_scan_();
-              return;
-            }
-
-            ESP_LOGI(TAG, "Tag selected: %s", uid_buf);
-
-            std::string uid_key(uid_buf);
-
-            // Read tag data on first detection only (auth + NDEF read if Mifare)
-            if (!this->present_tags_.count(uid_key)) {
-              this->tags_data_[uid_key] = this->read_tag(this->current_uid_bytes_);
-            }
-
-            this->tags_this_scan_.insert(uid_key);
-
-            // HALT: send [0x50, 0x00] + CRC via chip-specific send_halt()
-            this->send_halt();
-
-            // Determine the CL1 collision state so we can resume the multi-tag tree traversal.
-            // If we went through cascade (CL2), restore the saved CL1 state.
-            // Otherwise use the current CL1 state directly.
-            uint8_t resume_col_pos;
-            uint8_t resume_prefix_val;
-            bool can_resume;
-            if (this->saved_anticol_valid_) {
-              resume_col_pos = this->saved_col_pos_;
-              resume_prefix_val = this->saved_prefix_val_;
-              can_resume = true;
-              this->saved_anticol_valid_ = false;
-            } else {
-              resume_col_pos = this->anticol_col_pos_;
-              resume_prefix_val = this->anticol_prefix_val_;
-              can_resume = (this->anticol_col_pos_ > 0 || this->anticol_prefix_bits_ > 0);
-            }
-
-            if (can_resume) {
-              // Advance to the next branch in the collision tree
-              this->cascade_level_ = 0;
-              this->current_uid_bytes_.clear();
-              this->anticol_col_pos_ = resume_col_pos;
-              this->anticol_prefix_val_ = resume_prefix_val + 1;
-              this->apply_anticol_prefix_();
-
-              uint8_t max_val = (1 << (resume_col_pos + 1)) - 1;
-              if (this->anticol_prefix_val_ > max_val) {
-                // All branches at this collision level exhausted — done
-                this->state_ = STATE_IDLE;
-                this->finalize_scan_();
-                return;
-              }
-              // Send WUPA (not REQA) so all tags — including those in HALT — wake up.
-              // Some cards (e.g. Mifare Classic) return to HALT after a non-matching SELECT,
-              // so REQA would not wake them.
-              this->anticol_resume_ = true;
-              this->start_wupa();
-            } else {
-              // No prior collision: this was the only tag — scan complete
-              this->state_ = STATE_IDLE;
-              this->finalize_scan_();
-              return;
-            }
-            this->state_ = STATE_WUPA;
-            this->last_state_change_ = millis();
+          this->anticol_prefix_full_ = 0;
+          this->anticol_prefix_bits_ = 0;
+          this->anticol_col_pos_ = 0;
+          this->anticol_prefix_val_ = 0;
+          this->send_anticol_frame();
+          this->state_ = STATE_ANTICOL;
+          this->last_state_change_ = millis();
+        } else {
+          // Tag fully selected — validate UID length (must be 4, 7, or 10 bytes)
+          size_t uid_bytes_len = this->current_uid_bytes_.size();
+          char uid_buf[nfc::FORMAT_UID_BUFFER_SIZE];
+          nfc::format_uid_to(uid_buf, this->current_uid_bytes_);
+          if (uid_bytes_len != 4 && uid_bytes_len != 7 && uid_bytes_len != 10) {
+            ESP_LOGW(TAG, "Discarding invalid UID len=%zu (%s)", uid_bytes_len, uid_buf);
+            this->state_ = STATE_IDLE;
+            this->finalize_scan_();
+            return;
           }
+
+          ESP_LOGI(TAG, "Tag selected: %s", uid_buf);
+
+          std::string uid_key(uid_buf);
+
+          // Read tag data on first detection only (auth + NDEF read if Mifare)
+          if (!this->present_tags_.count(uid_key)) {
+            this->tags_data_[uid_key] = this->read_tag(this->current_uid_bytes_);
+          }
+
+          this->tags_this_scan_.insert(uid_key);
+
+          // HALT: send [0x50, 0x00] + CRC via chip-specific send_halt()
+          this->send_halt();
+
+          // Determine the CL1 collision state so we can resume the multi-tag tree traversal.
+          // If we went through cascade (CL2), restore the saved CL1 state.
+          // Otherwise use the current CL1 state directly.
+          uint8_t resume_col_pos;
+          uint8_t resume_prefix_val;
+          bool can_resume;
+          if (this->saved_anticol_valid_) {
+            resume_col_pos = this->saved_col_pos_;
+            resume_prefix_val = this->saved_prefix_val_;
+            can_resume = true;
+            this->saved_anticol_valid_ = false;
+          } else {
+            resume_col_pos = this->anticol_col_pos_;
+            resume_prefix_val = this->anticol_prefix_val_;
+            can_resume = (this->anticol_col_pos_ > 0 || this->anticol_prefix_bits_ > 0);
+          }
+
+          if (can_resume) {
+            // Advance to the next branch in the collision tree
+            this->cascade_level_ = 0;
+            this->current_uid_bytes_.clear();
+            this->anticol_col_pos_ = resume_col_pos;
+            this->anticol_prefix_val_ = resume_prefix_val + 1;
+            this->apply_anticol_prefix_();
+
+            uint8_t max_val = (1 << (resume_col_pos + 1)) - 1;
+            if (this->anticol_prefix_val_ > max_val) {
+              // All branches at this collision level exhausted — done
+              this->state_ = STATE_IDLE;
+              this->finalize_scan_();
+              return;
+            }
+            // Send WUPA (not REQA) so all tags — including those in HALT — wake up.
+            // Some cards (e.g. Mifare Classic) return to HALT after a non-matching SELECT,
+            // so REQA would not wake them.
+            this->anticol_resume_ = true;
+            this->start_wupa();
+          } else {
+            // No prior collision: this was the only tag — scan complete
+            this->state_ = STATE_IDLE;
+            this->finalize_scan_();
+            return;
+          }
+          this->state_ = STATE_WUPA;
+          this->last_state_change_ = millis();
         }
       }
       break;
