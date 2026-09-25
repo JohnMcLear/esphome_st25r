@@ -136,6 +136,7 @@ void ST25R300::update() {
   delay(1);
   this->state_ = STATE_WUPA;
   this->last_state_change_ = millis();
+  this->scan_started_ms_ = this->last_state_change_;
 }
 
 // ── loop ──────────────────────────────────────────────────────────────────────

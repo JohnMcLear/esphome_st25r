@@ -34,6 +34,16 @@ make -C tests/unit run
 
 Expected: `48 passed, 0 failed`
 
+### C++ — Scan state machine timeouts
+
+Runs `scan_step.h`, the `STATE_ANTICOL` decision and whole-scan watchdog used by `ST25R::process_state()`. The key case is a sticky TXE with an empty FIFO (a tag that answered WUPA and then went quiet): it must time out in about 20 ms, not wait forever. Also checks that short frames time out, that a full answer is still taken after the budget (9ce68af), and that the watchdog is correct across the `millis()` wrap.
+
+```bash
+make -C tests/unit run
+```
+
+Expected: `9 passed, 0 failed`
+
 ### Python — Schema validators
 
 Tests the YAML config validators (UID format, Mifare key hex validation, rf_power range), the `set_rf_field` action schema, and a pure-Python PRNG cross-check.
@@ -201,6 +211,7 @@ binary_sensor:
 | **I2C Recovery** | **Readers:** Empty. **Action:** Briefly disconnect I2C SDA wire. | `hub_i2c` enters backoff. `hub_spi` unaffected. Reconnect to see recovery. |
 | **SPI Recovery** | **Readers:** Empty. **Action:** Briefly disconnect SPI CS wire. | `hub_spi` enters backoff. `hub_i2c` unaffected. Reconnect to see recovery. |
 | **Health Check** | **Readers:** Empty. **Action:** Leave idle for 60s. | Both log periodic version/health checks. |
+| **Half-answered scan** | **Action:** Move a tag slowly in and out at the very edge of the field for a minute, then tap it properly. | The tap reads. `Sent WUPA` keeps appearing once per `update_interval` throughout. A `Scan stuck in state` warning means the backstop caught something the per-state timeouts missed, so report it. |
 | **Silent ACK Fail**| **Action:** Simulate a partial response failure. | Component tracks failure in loop(), increments consecutive_failures_, and eventually triggers re-init. |
 
 ### Phase 2: Card Detection & Logic
