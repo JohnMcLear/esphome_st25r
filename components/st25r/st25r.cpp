@@ -976,9 +976,11 @@ void ST25R::finalize_scan_() {
     }
     nfc::NfcTagUid nfc_uid(uid_bytes.begin(), uid_bytes.end());
     nfc::NfcTag nfc_tag(nfc_uid);
+#ifdef ST25R_HAS_TAG_LISTENERS
     for (auto *listener : this->tag_listeners_) {
       listener->tag_off(nfc_tag);
     }
+#endif
     for (auto *trigger : this->on_tag_removed_triggers_) {
       trigger->trigger(uid);
     }
@@ -1017,9 +1019,11 @@ void ST25R::finalize_scan_() {
       }
       // Fire tag_on for NFC listeners (e.g. ndef_write action)
       if (this->tags_data_.count(uid) && this->tags_data_[uid]) {
+#ifdef ST25R_HAS_TAG_LISTENERS
         for (auto *listener : this->tag_listeners_) {
           listener->tag_on(*this->tags_data_[uid]);
         }
+#endif
       }
     }
   }
@@ -1674,8 +1678,10 @@ void ST25R::nfcb_scan_() {
     std::vector<uint8_t> uid_bytes = {resp[1], resp[2], resp[3], resp[4]};
     nfc::NfcTagUid nfc_uid(uid_bytes.begin(), uid_bytes.end());
     auto tag = make_unique<nfc::NfcTag>(nfc_uid);
+#ifdef ST25R_HAS_TAG_LISTENERS
     for (auto *listener : this->tag_listeners_)
       listener->tag_on(*tag);
+#endif
     for (auto *trigger : this->on_tag_triggers_)
       trigger->trigger(uid_string);
   }
@@ -1957,8 +1963,10 @@ void ST25R::nfcv_scan_() {
           this->tags_data_[uid_string] = std::move(tag);
         }
 
+#ifdef ST25R_HAS_TAG_LISTENERS
         for (auto *listener : this->tag_listeners_)
           listener->tag_on(*this->tags_data_[uid_string]);
+#endif
         for (auto *trigger : this->on_tag_triggers_)
           trigger->trigger(uid_string);
       }

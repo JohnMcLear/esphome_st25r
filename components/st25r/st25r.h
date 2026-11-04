@@ -6,6 +6,15 @@
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/nfc/nfc.h"
+#include "esphome/core/macros.h"
+#include "esphome/core/version.h"
+
+// ESPHome 2026.10.0 made nfc::Nfcc::tag_listeners_ optional: it is only
+// declared when an nfc binary_sensor requests a slot (NFC_TAG_LISTENER_COUNT).
+// Older releases always declare it. Guard every listener loop with this.
+#if defined(NFC_TAG_LISTENER_COUNT) || ESPHOME_VERSION_CODE < VERSION_CODE(2026, 10, 0)
+#define ST25R_HAS_TAG_LISTENERS 1
+#endif
 #include "crypto1.h"
 #include <map>
 #include <set>
